@@ -1,7 +1,8 @@
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
-use shv::{RpcMessage, RpcValue};
+use shvproto::{RpcValue};
+use shvrpc::{RpcMessage};
 
 pub struct KillProcessGuard {
     pub child: Child,
@@ -27,27 +28,27 @@ impl Drop for KillProcessGuard {
     }
 }
 
-pub fn rpcmsg_from_output(output: Output) -> shv::Result<RpcMessage> {
+pub fn rpcmsg_from_output(output: Output) -> shvrpc::Result<RpcMessage> {
     let rv = rpcvalue_from_output(output)?;
     Ok(RpcMessage::from_rpcvalue(rv)?)
 }
-pub fn rpcvalue_from_output(output: Output) -> shv::Result<RpcValue> {
+pub fn rpcvalue_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     let out = bytes_from_output(output)?;
     let cpon = std::str::from_utf8(&out)?;
     Ok(RpcValue::from_cpon(cpon)?)
 }
-pub fn bytes_from_output(output: Output) -> shv::Result<Vec<u8>> {
+pub fn bytes_from_output(output: Output) -> shvrpc::Result<Vec<u8>> {
     if !output.status.success() {
         let errmsg = std::str::from_utf8(&output.stderr)?;
         return Err(format!("Process exited with error code {:?}, stderr: {}", output.status.code(), errmsg).into());
     }
     Ok(output.stdout)
 }
-pub fn text_from_output(output: Output) -> shv::Result<String> {
+pub fn text_from_output(output: Output) -> shvrpc::Result<String> {
     let bytes = bytes_from_output(output)?;
     Ok(String::from_utf8(bytes)?)
 }
-pub fn string_list_from_output(output: Output) -> shv::Result<Vec<String>> {
+pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     let bytes = text_from_output(output)?;
     let mut values = Vec::new();
     for cpon in bytes.split(|b| b == '\n').filter(|line| !line.is_empty()) {
@@ -68,7 +69,7 @@ pub fn string_list_from_output(output: Output) -> shv::Result<Vec<String>> {
 //    }
 //    Ok(values)
 //}
-pub fn result_from_output(output: Output) -> shv::Result<RpcValue> {
+pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     let msg = rpcmsg_from_output(output)?;
     let result = msg.result()?;
     //println!("cpon: {}, expected: {}", result, expected_value.to_cpon());
@@ -92,21 +93,27 @@ impl ShvCallOutputFormat {
         }
     }
 }
-pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv::Result<RpcValue> {
+pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcValue> {
     let port = port.unwrap_or(3755);
     println!("shvcall port: {port} {path}:{method} param: {}", param);
-    let output = Command::new("target/debug/shvcall")
+    let shvcall_binary = "target/debug/shvcall";
+    let output = match Command::new(shvcall_binary)
         .arg("-v").arg(".:T")
         .arg("--url").arg(format!("tcp://admin@localhost:{port}?password=admin"))
         .arg("--path").arg(path)
         .arg("--method").arg(method)
         .arg("--param").arg(param)
         //.arg("--output-format").arg(output_format.as_str())
-        .output()?;
+        .output() {
+        Ok(output) => {output}
+        Err(e) => {
+            panic!("{shvcall_binary} exec error: {e}");
+        }
+    };
 
     result_from_output(output)
 }
-pub fn shv_call_many(calls: Vec<String>, output_format: ShvCallOutputFormat, port: Option<i32>) -> shv::Result<Vec<String>> {
+pub fn shv_call_many(calls: Vec<String>, output_format: ShvCallOutputFormat, port: Option<i32>) -> shvrpc::Result<Vec<String>> {
     let port = port.unwrap_or(3755);
     let mut cmd = Command::new("target/debug/shvcall");
     cmd.stdin(Stdio::piped())

@@ -1,2 +1,2 @@
-# shv-rs
-SHV implementation in rust
+# shvbroker-rs
+Rust implementation of SHV broker

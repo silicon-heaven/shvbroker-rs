@@ -1,16 +1,15 @@
-extern crate shv;
-
 use std::process::{Command};
 use std::{thread, time::Duration};
-use shv::{metamethod, RpcValue, rpcvalue};
-use shv::metamethod::{Flag, MetaMethod};
-use shv::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
+use shvproto::{RpcValue, rpcvalue};
+use shvrpc::metamethod;
+use shvrpc::metamethod::{Flag, MetaMethod};
 use crate::common::{KillProcessGuard, shv_call, shv_call_many, ShvCallOutputFormat};
+use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
 
 mod common;
 
 #[test]
-fn test_broker() -> shv::Result<()> {
+fn test_broker() -> shvrpc::Result<()> {
     let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
         .arg("-v").arg(".:W")
         //.arg("-v").arg("Acc")
@@ -25,10 +24,10 @@ fn test_broker() -> shv::Result<()> {
     thread::sleep(Duration::from_millis(100));
     assert!(child_broker_process_guard.is_running());
 
-    pub fn shv_call_parent(path: &str, method: &str, param: &str) -> shv::Result<RpcValue> {
+    pub fn shv_call_parent(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
         shv_call(path, method, param, None)
     }
-    pub fn shv_call_child(path: &str, method: &str, param: &str) -> shv::Result<RpcValue> {
+    pub fn shv_call_child(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
         shv_call(path, method, param, Some(3756))
     }
 
@@ -114,7 +113,7 @@ fn test_broker() -> shv::Result<()> {
     println!("---broker---: .app/broker:mounts()");
     assert_eq!(shv_call_child(".app/broker", "mounts", "")?, vec![RpcValue::from("test/device")].into());
     println!("====== subscriptions =====");
-    fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shv::Result<()> {
+    fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shvrpc::Result<()> {
         //let info = shv_call_child(".app/broker/currentClient", "info", "")?;
         //println!("INFO: {info}");
         let calls: Vec<String> = vec![

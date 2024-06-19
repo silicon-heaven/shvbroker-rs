@@ -1,4 +1,4 @@
-use crate::metamethod::{AccessLevel, Flag, MetaMethod};
+use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
 use crate::shvnode::{META_METHOD_DIR, META_METHOD_LS, ShvNode};
 
 pub const DIR_APP_BROKER: &str = ".app/broker";

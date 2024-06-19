@@ -1,26 +1,21 @@
 use async_std::{task};
+use async_std::channel::Sender;
 use async_std::net::TcpListener;
-use crate::broker::config::{AccessControl, BrokerConfig};
-use crate::metamethod::AccessLevel;
-use async_std::channel::{Sender};
+use crate::config::{AccessControl, BrokerConfig};
+use shvrpc::metamethod::AccessLevel;
 use glob::{Pattern};
 use log::{debug, info, warn};
-use crate::{MetaMap, RpcMessage, RpcValue};
-use crate::rpc::{SubscriptionPattern};
-use crate::rpcframe::RpcFrame;
-use crate::rpcmessage::{CliId, RpcError, RqId};
+use shvproto::{MetaMap, RpcValue};
+use shvrpc::rpc::{SubscriptionPattern};
+use shvrpc::rpcframe::RpcFrame;
+use shvrpc::rpcmessage::{CliId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
 use async_std::stream::StreamExt;
 use futures::select;
 use futures::FutureExt;
-use crate::broker::brokerimpl::BrokerImpl;
-
-pub mod config;
-pub mod peer;
-pub mod node;
-#[cfg(test)]
-mod test;
-mod brokerimpl;
+use shvrpc::RpcMessage;
+use crate::brokerimpl::BrokerImpl;
+use crate::peer;
 
 #[derive(Debug)]
 pub(crate) enum BrokerCommand {
@@ -77,17 +72,17 @@ pub enum PeerKind {
 }
 
 #[derive(Debug)]
-struct Peer {
-    sender: Sender<BrokerToPeerMessage>,
-    user: String,
-    mount_point: Option<String>,
-    subscriptions: Vec<SubscriptionPattern>,
-    peer_kind: PeerKind,
-    subscribe_path: Option<SubscribePath>,
+pub(crate) struct Peer {
+    pub(crate) sender: Sender<BrokerToPeerMessage>,
+    pub(crate) user: String,
+    pub(crate) mount_point: Option<String>,
+    pub(crate) subscriptions: Vec<SubscriptionPattern>,
+    pub(crate) peer_kind: PeerKind,
+    pub(crate) subscribe_path: Option<SubscribePath>,
 }
 
 impl Peer {
-    fn new(peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> Self {
+    pub(crate) fn new(peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> Self {
         Self {
             sender,
             user: "".to_string(),
@@ -97,7 +92,7 @@ impl Peer {
             subscribe_path: None,
         }
     }
-    fn is_signal_subscribed(&self, path: &str, method: &str) -> bool {
+    pub(crate) fn is_signal_subscribed(&self, path: &str, method: &str) -> bool {
         for subs in self.subscriptions.iter() {
             if subs.match_shv_method(path, method) {
                 return true;
@@ -105,7 +100,7 @@ impl Peer {
         }
         false
     }
-    pub fn is_broker(&self) -> crate::Result<bool> {
+    pub fn is_broker(&self) -> shvrpc::Result<bool> {
         match &self.subscribe_path {
             None => { Err(format!("Device mounted on: {:?} - not checked for broker capability yet.", self.mount_point).into()) }
             Some(path) => {
@@ -116,7 +111,7 @@ impl Peer {
             }
         }
     }
-    pub fn broker_subscribe_path(&self) -> crate::Result<String> {
+    pub fn broker_subscribe_path(&self) -> shvrpc::Result<String> {
         match &self.subscribe_path {
             None => { Err(format!("Device mounted on: {:?} - not checked for broker capability yet.", self.mount_point).into()) }
             Some(path) => {
@@ -135,29 +130,29 @@ pub(crate) enum SubscribePath {
     CanSubscribe(String),
 }
 
-struct Device {
-    peer_id: CliId,
+pub(crate) struct Device {
+    pub(crate) peer_id: CliId,
 }
 
 impl Device {
 }
 
 
-enum Mount {
+pub(crate) enum Mount {
     Peer(Device),
     Node(ShvNode),
 }
 
-struct ParsedAccessRule {
-    path_method: SubscriptionPattern,
+pub(crate) struct ParsedAccessRule {
+    pub(crate) path_method: SubscriptionPattern,
     // Needed in order to pass 'dot-local' in 'Access' meta-attribute
     // to support the dot-local hack on older brokers
-    grant_str: String,
-    grant_lvl: AccessLevel,
+    pub(crate) grant_str: String,
+    pub(crate) grant_lvl: AccessLevel,
 }
 
 impl ParsedAccessRule {
-    pub fn new(path: &str, method: &str, grant: &str) -> crate::Result<Self> {
+    pub fn new(path: &str, method: &str, grant: &str) -> shvrpc::Result<Self> {
         let method = if method.is_empty() { "?*" } else { method };
         let path = if path.is_empty() { "**" } else { path };
         match Pattern::new(method) {
@@ -188,10 +183,10 @@ impl ParsedAccessRule {
 //        None
 //    }
 //}
-struct PendingRpcCall {
-    client_id: CliId,
-    request_id: RqId,
-    response_sender: Sender<RpcFrame>,
+pub(crate) struct PendingRpcCall {
+    pub(crate) client_id: CliId,
+    pub(crate) request_id: RqId,
+    pub(crate) response_sender: Sender<RpcFrame>,
 }
 
 pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
@@ -211,7 +206,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
     }
 }
 
-pub async fn accept_loop(config: BrokerConfig, access: AccessControl) -> crate::Result<()> {
+pub async fn accept_loop(config: BrokerConfig, access: AccessControl) -> shvrpc::Result<()> {
     if let Some(address) = config.listen.tcp.clone() {
         let broker = BrokerImpl::new(access);
         let broker_sender = broker.command_sender.clone();

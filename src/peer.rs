@@ -1,4 +1,5 @@
 use async_std::{channel, future};
+use async_std::channel::Sender;
 use async_std::io::BufReader;
 use async_std::net::TcpStream;
 use futures::select;
@@ -6,21 +7,21 @@ use futures::FutureExt;
 use futures::io::BufWriter;
 use log::{debug, error, info};
 use rand::distributions::{Alphanumeric, DistString};
+use shvproto::RpcValue;
 use url::Url;
-use crate::metamethod::AccessLevel;
-use crate::rpcmessage::Tag;
-use crate::{client, RpcMessage, RpcMessageMetaTags, RpcValue};
-use crate::client::LoginParams;
-use crate::rpcframe::RpcFrame;
+use shvrpc::metamethod::AccessLevel;
+use shvrpc::rpcmessage::Tag;
+use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
+use shvrpc::client::LoginParams;
+use shvrpc::rpcframe::RpcFrame;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, METH_PING, DOT_LOCAL_GRANT};
-use crate::util::{join_path, login_from_url, sha1_hash};
+use shvrpc::util::{join_path, login_from_url, sha1_hash};
 use crate::broker::{BrokerCommand, BrokerToPeerMessage, PeerKind};
-use crate::broker::config::ParentBrokerConfig;
-use crate::broker::Sender;
-use crate::framerw::{FrameReader, FrameWriter};
-use crate::streamrw::{StreamFrameReader, StreamFrameWriter};
+use crate::config::ParentBrokerConfig;
+use shvrpc::framerw::{FrameReader, FrameWriter};
+use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 
-pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> crate::Result<()> {
+pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
     debug!("Entreing peer loop client ID: {client_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -45,7 +46,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
             }
             debug!("Client ID: {client_id}, hello received.");
             let nonce = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
-            let mut result = crate::Map::new();
+            let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
             frame_writer.send_result(resp_meta, result.into()).await?;
             nonce
@@ -89,7 +90,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                     };
                     if chkpwd() {
                         debug!("Client ID: {client_id}, password OK.");
-                        let mut result = crate::Map::new();
+                        let mut result = shvproto::Map::new();
                         result.insert("clientId".into(), RpcValue::from(client_id));
                         frame_writer.send_result(resp_meta, result.into()).await?;
                         if let Some(options) = params.get("options") {
@@ -167,7 +168,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
     info!("Client loop exit, client id: {}", client_id);
     Ok(())
 }
-pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> crate::Result<()> {
+pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = Url::parse(&config.client.url)?;
     if url.scheme() != "tcp" {
         return Err(format!("Scheme {} is not supported yet.", url.scheme()).into());
@@ -209,7 +210,7 @@ fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
         None
     }
 }
-async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> crate::Result<()> {
+async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = Url::parse(&config.client.url)?;
     let (scheme, host, port) = (url.scheme(), url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
     if scheme != "tcp" {

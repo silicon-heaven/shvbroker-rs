@@ -1,11 +1,11 @@
 use std::{fs};
 use std::path::Path;
-use async_std::{task};
+use async_std::task;
 use log::*;
 use simple_logger::SimpleLogger;
-use shv::util::{join_path, parse_log_verbosity};
-use shv::broker::config::{AccessControl, BrokerConfig};
+use shvrpc::util::{join_path, parse_log_verbosity};
 use clap::{Parser};
+use shvbroker::config::AccessControl;
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -20,7 +20,7 @@ struct CliOpts {
     verbose: Option<String>,
 }
 
-pub(crate) fn main() -> shv::Result<()> {
+pub(crate) fn main() -> shvrpc::Result<()> {
     let cli_opts = CliOpts::parse();
 
     let mut logger = SimpleLogger::new();
@@ -45,7 +45,7 @@ pub(crate) fn main() -> shv::Result<()> {
     log!(target: "Acc", Level::Debug, "Access control message");
 
     let config = if let Some(config_file) = &cli_opts.config {
-        BrokerConfig::from_file_or_default(config_file, cli_opts.create_default_config)?
+        shvbroker::config::BrokerConfig::from_file_or_default(config_file, cli_opts.create_default_config)?
     } else {
         Default::default()
     };
@@ -78,7 +78,7 @@ pub(crate) fn main() -> shv::Result<()> {
         info!("Creating access file {access_file}");
         fs::write(access_file, serde_yaml::to_string(&access)?)?;
     }
-    task::block_on(shv::broker::accept_loop(config, access))
+    task::block_on(shvbroker::broker::accept_loop(config, access))
 }
 
 

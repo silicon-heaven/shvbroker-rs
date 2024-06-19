@@ -2,17 +2,19 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use async_std::channel::{Receiver, Sender, unbounded};
 use async_std::task;
 use log::{debug, error, info, log, warn};
-use crate::broker::{BrokerToPeerMessage, Device, Mount, ParsedAccessRule, Peer, PeerKind, BrokerCommand, PendingRpcCall, SubscribePath, node};
-use crate::broker::config::{AccessControl, Password};
-use crate::rpcframe::RpcFrame;
-use crate::rpcmessage::{CliId, RpcError, RpcErrorCode, Tag};
-use crate::{List, RpcMessage, RpcMessageMetaTags, RpcValue, rpcvalue, shvnode, util};
-use crate::rpc::{Subscription, SubscriptionPattern};
+use crate::broker::{BrokerToPeerMessage, Device, Mount, ParsedAccessRule, Peer, PeerKind, BrokerCommand, PendingRpcCall, SubscribePath};
+use crate::config::{AccessControl, Password};
+use shvrpc::rpcframe::RpcFrame;
+use shvrpc::rpcmessage::{CliId, RpcError, RpcErrorCode, Tag};
+use shvproto::{List, RpcValue, rpcvalue};
+use shvrpc::rpc::{Subscription, SubscriptionPattern};
 use crate::shvnode::{DIR_APP, AppNode, find_longest_prefix, METH_DIR, METH_LS, process_local_dir_ls, ShvNode};
-use crate::util::{sha1_hash, split_glob_on_match};
+use shvrpc::util::{sha1_hash, split_glob_on_match};
 use log::Level;
-use crate::broker::node::{DIR_APP_BROKER_CURRENTCLIENT, DIR_APP_BROKER, AppBrokerCurrentClientNode, AppBrokerNode, METH_SUBSCRIBE};
-use crate::metamethod::{MetaMethod, AccessLevel};
+use crate::node::{DIR_APP_BROKER_CURRENTCLIENT, DIR_APP_BROKER, AppBrokerCurrentClientNode, AppBrokerNode, METH_SUBSCRIBE};
+use shvrpc::metamethod::{MetaMethod, AccessLevel};
+use shvrpc::{RpcMessage, RpcMessageMetaTags};
+use crate::{node, shvnode};
 
 pub struct BrokerImpl {
     peers: HashMap<CliId, Peer>,
@@ -71,7 +73,7 @@ impl BrokerImpl {
         broker
     }
 
-    pub(crate) async fn process_rpc_frame(&mut self, peer_id: CliId, frame: RpcFrame) -> crate::Result<()> {
+    pub(crate) async fn process_rpc_frame(&mut self, peer_id: CliId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
             let method = frame.method().unwrap_or_default().to_string();
@@ -136,7 +138,7 @@ impl BrokerImpl {
             }
         } else if frame.is_signal() {
             if let Some(mount_point) = self.client_id_to_mount_point(peer_id) {
-                let new_path = util::join_path(&mount_point, frame.shv_path().unwrap_or_default());
+                let new_path = shvrpc::util::join_path(&mount_point, frame.shv_path().unwrap_or_default());
                 for (cli_id, peer) in self.peers.iter() {
                     if &peer_id != cli_id && peer.is_signal_subscribed(&new_path, frame.method().unwrap_or_default()) {
                         let mut frame = frame.clone();
@@ -148,7 +150,7 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    async fn start_broker_rpc_call(&mut self, request: RpcMessage, pending_call: PendingRpcCall) -> crate::Result<()> {
+    async fn start_broker_rpc_call(&mut self, request: RpcMessage, pending_call: PendingRpcCall) -> shvrpc::Result<()> {
         //self.pending_calls.retain(|r| !r.sender.is_closed());
         let peer = self.peers.get(&pending_call.client_id).ok_or(format!("Invalid client ID: {}", pending_call.client_id))?;
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
@@ -156,7 +158,7 @@ impl BrokerImpl {
         self.pending_rpc_calls.push(pending_call);
         Ok(())
     }
-    async fn process_pending_broker_rpc_call(&mut self, client_id: CliId, response_frame: RpcFrame) -> crate::Result<()> {
+    async fn process_pending_broker_rpc_call(&mut self, client_id: CliId, response_frame: RpcFrame) -> shvrpc::Result<()> {
         assert!(response_frame.is_response());
         assert!(response_frame.caller_ids().is_empty());
         let rqid = response_frame.request_id().ok_or("Request ID must be set.")?;
@@ -173,7 +175,7 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    pub async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> crate::Result<()> {
+    pub async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived { client_id, frame } => {
                 if let Err(err) = self.process_rpc_frame(client_id, frame).await {
@@ -237,7 +239,7 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    pub(crate) fn set_subscribe_path(&mut self, client_id: CliId, subscribe_path: SubscribePath) -> crate::Result<()> {
+    pub(crate) fn set_subscribe_path(&mut self, client_id: CliId, subscribe_path: SubscribePath) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         log!(target: "Subscr", Level::Debug, "Device mounted on: {:?}, client ID: {client_id} has subscribe method path set to: {:?}", peer.mount_point, subscribe_path);
         peer.subscribe_path = Some(subscribe_path);
@@ -258,7 +260,7 @@ impl BrokerImpl {
             }
         }
     }
-    pub(crate) async fn mount_device(&mut self, client_id: i32, device_id: Option<String>, mount_point: Option<String>, subscribe_path: Option<SubscribePath>) -> crate::Result<()> {
+    pub(crate) async fn mount_device(&mut self, client_id: i32, device_id: Option<String>, mount_point: Option<String>, subscribe_path: Option<SubscribePath>) -> shvrpc::Result<()> {
         let client_path = format!(".app/broker/client/{}", client_id);
         self.mounts.insert(client_path, Mount::Peer(Device { peer_id: client_id }));
         let mount_point = 'mount_point: {
@@ -300,7 +302,7 @@ impl BrokerImpl {
         };
         Ok(())
     }
-    fn propagate_subscription_to_matching_devices(&mut self, new_subscription: &Subscription) -> crate::Result<()> {
+    fn propagate_subscription_to_matching_devices(&mut self, new_subscription: &Subscription) -> shvrpc::Result<()> {
         // compare new_subscription with all mount-points to check
         // whether it should be propagated also to mounted device
         let mut to_subscribe = vec![];
@@ -321,12 +323,12 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    fn device_capabilities_discovery_async(&mut self, client_id: i32) -> crate::Result<()> {
+    fn device_capabilities_discovery_async(&mut self, client_id: i32) -> shvrpc::Result<()> {
         // let peer = self.peers.get(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         // let mount_point = peer.mount_point.clone().ok_or_else(|| format!("Mount point is missing, client ID: {client_id}"))?;
         let broker_command_sender = self.command_sender.clone();
         task::spawn(async move {
-            async fn check_path(client_id: CliId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> crate::Result<bool> {
+            async fn check_path(client_id: CliId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<bool> {
                 let (response_sender, response_receiver) = unbounded();
                 let request = RpcMessage::new_request(path, METH_DIR, Some(METH_SUBSCRIBE.into()));
                 let cmd = BrokerCommand::RpcCall {
@@ -365,7 +367,7 @@ impl BrokerImpl {
         });
         Ok(())
     }
-    async fn propagate_subscriptions_to_mounted_device(&mut self, client_id: CliId) -> crate::Result<()> {
+    async fn propagate_subscriptions_to_mounted_device(&mut self, client_id: CliId) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         //let subscribe_path = peer.broker_subscribe_path()?;
         let mount_point = peer.mount_point.clone().ok_or_else(|| format!("Mount point is missing, client ID: {client_id}"))?;
@@ -388,14 +390,14 @@ impl BrokerImpl {
         self.call_subscribe_async(client_id, to_subscribe)?;
         Ok(())
     }
-    fn call_subscribe_async(&mut self, client_id: CliId, subscriptions: Vec<Subscription>) -> crate::Result<()> {
+    fn call_subscribe_async(&mut self, client_id: CliId, subscriptions: Vec<Subscription>) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let mount_point = peer.mount_point.clone();
         let broker_command_sender = self.command_sender.clone();
         //info!("call_subscribe_async mount: {:?} client_id {:?} subscriptions {:?}", mount_point, client_id, subscriptions);
         let subscribe_path = peer.broker_subscribe_path()?;
         task::spawn(async move {
-            async fn call_subscribe(client_id: CliId, subscribe_path: &str, subscription: Subscription, broker_command_sender: &Sender<BrokerCommand>) -> crate::Result<()> {
+            async fn call_subscribe(client_id: CliId, subscribe_path: &str, subscription: Subscription, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<()> {
                 let (response_sender, response_receiver) = unbounded();
                 let cmd = BrokerCommand::RpcCall {
                     client_id,
@@ -494,7 +496,7 @@ impl BrokerImpl {
     fn client_info(&mut self, client_id: CliId) -> Option<rpcvalue::Map> {
         self.peers.get(&client_id).map(|peer| BrokerImpl::peer_to_info(client_id, peer))
     }
-    async fn disconnect_client(&mut self, client_id: CliId) -> crate::Result<()> {
+    async fn disconnect_client(&mut self, client_id: CliId) -> shvrpc::Result<()> {
         let peer = self.peers.get(&client_id).ok_or("Invalid client ID")?;
         peer.sender.send(BrokerToPeerMessage::DisconnectByBroker).await?;
         Ok(())
@@ -509,14 +511,14 @@ impl BrokerImpl {
         }
         None
     }
-    async fn subscribe(&mut self, client_id: CliId, subscription: &Subscription) -> crate::Result<()> {
+    async fn subscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<()> {
         log!(target: "Subscr", Level::Debug, "New subscription for client id: {} - {}", client_id, subscription);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         peer.subscriptions.push(SubscriptionPattern::from_subscription(subscription)?);
         self.propagate_subscription_to_matching_devices(subscription)?;
         Ok(())
     }
-    fn unsubscribe(&mut self, client_id: CliId, subscription: &Subscription) -> crate::Result<bool> {
+    fn unsubscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {}", client_id, subscription);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let cnt = peer.subscriptions.len();
@@ -524,13 +526,13 @@ impl BrokerImpl {
         peer.subscriptions.retain(|subscr| subscr != &subscr_pattern);
         Ok(cnt != peer.subscriptions.len())
     }
-    fn subscriptions(&self, client_id: CliId) -> crate::Result<List> {
+    fn subscriptions(&self, client_id: CliId) -> shvrpc::Result<List> {
         let peer = self.peers.get(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let subs: List = peer.subscriptions.iter().map(|subs| subs.to_rpcvalue()).collect();
         Ok(subs)
     }
-    async fn process_node_request(&mut self, frame: RpcFrame, ctx: NodeRequestContext) -> crate::Result<()> {
-        let response_meta = crate::rpcframe::RpcFrame::prepare_response_meta(&frame.meta)?;
+    async fn process_node_request(&mut self, frame: RpcFrame, ctx: NodeRequestContext) -> shvrpc::Result<()> {
+        let response_meta = shvrpc::rpcframe::RpcFrame::prepare_response_meta(&frame.meta)?;
         let send_result_cmd = |result: Result<RpcValue, RpcError>| -> BrokerCommand {
             BrokerCommand::SendResponse {
                 peer_id: ctx.peer_id,
