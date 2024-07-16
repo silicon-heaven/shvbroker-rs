@@ -35,14 +35,13 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     log::info!("=====================================================");
     log::info!("{} starting", std::module_path!());
     log::info!("=====================================================");
-
     //trace!("trace message");
     //debug!("debug message");
     //info!("info message");
     //warn!("warn message");
     //error!("error message");
     log!(target: "RpcMsg", Level::Debug, "RPC message");
-    log!(target: "Acc", Level::Debug, "Access control message");
+    log!(target: "Access", Level::Debug, "Access control message");
 
     let config = if let Some(config_file) = &cli_opts.config {
         shvbroker::config::BrokerConfig::from_file_or_default(config_file, cli_opts.create_default_config)?
