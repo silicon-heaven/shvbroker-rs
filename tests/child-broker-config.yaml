@@ -40,22 +40,22 @@ access:
       - client
       access:
       - paths: test/**
-        methods: ''
+        signal: ''
         grant: cfg
     browse:
       roles: []
       access:
       - paths: '**'
-        methods: ''
+        signal: ''
         grant: bws
     subscribe:
       roles: []
       access:
       - paths: .app/broker/currentClient
-        methods: subscribe
+        signal: subscribe
         grant: wr
       - paths: .app/broker/currentClient
-        methods: unsubscribe
+        signal: unsubscribe
         grant: wr
     device:
       roles:
@@ -71,13 +71,13 @@ access:
       roles: []
       access:
       - paths: .app
-        methods: ping
+        signal: ping
         grant: wr
     su:
       roles: []
       access:
       - paths: '**'
-        methods: ''
+        signal: ''
         grant: su
     child-broker:
       roles:

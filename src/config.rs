@@ -58,7 +58,9 @@ pub struct Role {
 pub struct AccessRule {
     pub paths: String,
     #[serde(default)]
-    pub methods: String,
+    pub signal: String,
+    #[serde(default)]
+    pub source: String,
     pub grant: String,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -124,7 +126,7 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { paths: "**".to_string(), methods: "".to_string(), grant: "su,dot-local".to_string() },
+                            AccessRule { paths: "**".to_string(), signal: "".to_string(), source: "".to_string(), grant: "su,dot-local".to_string() },
                         ],
                     }),
                     ("client".to_string(), Role { roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()], access: vec![] }),
@@ -140,26 +142,26 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
-                            AccessRule { paths: "test/**".to_string(), methods: "".to_string(), grant: "cfg".to_string() },
+                            AccessRule { paths: "test/**".to_string(), signal: "".to_string(), source: "".to_string(), grant: "cfg".to_string() },
                         ],
                     }),
                     ("ping".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { paths: ".app".to_string(), methods: "ping".to_string(), grant: "wr".to_string() },
+                            AccessRule { paths: ".app".to_string(), signal: "ping".to_string(), source: "".to_string(), grant: "wr".to_string() },
                         ],
                     }),
                     ("subscribe".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { paths: ".app/broker/currentClient".to_string(), methods: "subscribe".to_string(), grant: "wr".to_string() },
-                            AccessRule { paths: ".app/broker/currentClient".to_string(), methods: "unsubscribe".to_string(), grant: "wr".to_string() },
+                            AccessRule { paths: ".app/broker/currentClient".to_string(), signal: "subscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
+                            AccessRule { paths: ".app/broker/currentClient".to_string(), signal: "unsubscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
                         ],
                     }),
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { paths: "**".to_string(), methods: "".to_string(), grant: "bws".to_string() },
+                            AccessRule { paths: "**".to_string(), signal: "".to_string(), source: "".to_string(), grant: "bws".to_string() },
                         ],
                     }),
                 ]),

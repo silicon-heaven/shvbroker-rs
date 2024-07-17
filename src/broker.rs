@@ -3,7 +3,6 @@ use async_std::channel::Sender;
 use async_std::net::TcpListener;
 use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
-use glob::{Pattern};
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
 use shvrpc::rpc::{SubscriptionPattern};
@@ -92,9 +91,9 @@ impl Peer {
             subscribe_path: None,
         }
     }
-    pub(crate) fn is_signal_subscribed(&self, path: &str, method: &str) -> bool {
+    pub(crate) fn is_signal_subscribed(&self, path: &str, signal: &str, source: &str) -> bool {
         for subs in self.subscriptions.iter() {
-            if subs.match_shv_method(path, method) {
+            if subs.match_shv_method(path, signal, source) {
                 return true;
             }
         }
@@ -144,7 +143,7 @@ pub(crate) enum Mount {
 }
 
 pub(crate) struct ParsedAccessRule {
-    pub(crate) path_method: SubscriptionPattern,
+    pub(crate) path_signal_source: SubscriptionPattern,
     // Needed in order to pass 'dot-local' in 'Access' meta-attribute
     // to support the dot-local hack on older brokers
     pub(crate) grant_str: String,
@@ -152,27 +151,16 @@ pub(crate) struct ParsedAccessRule {
 }
 
 impl ParsedAccessRule {
-    pub fn new(path: &str, method: &str, grant: &str) -> shvrpc::Result<Self> {
-        let method = if method.is_empty() { "?*" } else { method };
-        let path = if path.is_empty() { "**" } else { path };
-        match Pattern::new(method) {
-            Ok(method) => {
-                match Pattern::new(path) {
-                    Ok(path) => {
-                        Ok(Self {
-                            path_method: SubscriptionPattern { paths: path, methods: method },
-                            grant_str: grant.to_string(),
-                            grant_lvl: grant
-                                .split(',')
-                                .find_map(AccessLevel::from_str)
-                                .unwrap_or_else(|| panic!("Invalid access grant `{grant}`")),
-                        })
-                    }
-                    Err(err) => { Err(format!("{}", &err).into()) }
-                }
-            }
-            Err(err) => { Err(format!("{}", &err).into()) }
-        }
+    pub fn new(paths: &str, signal: &str, source: &str, grant: &str) -> shvrpc::Result<Self> {
+        let subpat = SubscriptionPattern::new(paths, signal, source)?;
+        Ok(Self {
+            path_signal_source: subpat,
+            grant_str: grant.to_string(),
+            grant_lvl: grant
+                .split(',')
+                .find_map(AccessLevel::from_str)
+                .unwrap_or_else(|| panic!("Invalid access grant `{grant}`")),
+        })
     }
 }
 

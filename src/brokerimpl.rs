@@ -38,7 +38,7 @@ impl BrokerImpl {
         for (name, role) in &access.roles {
             let mut list: Vec<ParsedAccessRule> = Default::default();
             for rule in &role.access {
-                match ParsedAccessRule::new(&rule.paths, &rule.methods, &rule.grant) {
+                match ParsedAccessRule::new(&rule.paths, &rule.signal, &rule.source, &rule.grant) {
                     Ok(rule) => {
                         list.push(rule);
                     }
@@ -140,7 +140,7 @@ impl BrokerImpl {
             if let Some(mount_point) = self.client_id_to_mount_point(peer_id) {
                 let new_path = shvrpc::util::join_path(&mount_point, frame.shv_path().unwrap_or_default());
                 for (cli_id, peer) in self.peers.iter() {
-                    if &peer_id != cli_id && peer.is_signal_subscribed(&new_path, frame.method().unwrap_or_default()) {
+                    if &peer_id != cli_id && peer.is_signal_subscribed(&new_path, frame.method().unwrap_or_default(), frame.source().unwrap_or_default()) {
                         let mut frame = frame.clone();
                         frame.set_shvpath(&new_path);
                         peer.sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
@@ -311,7 +311,7 @@ impl BrokerImpl {
                 if let Some(peer) = self.peers.get(&device.peer_id) {
                     if peer.is_broker()? {
                         if let Ok(Some((_local, remote))) = split_glob_on_match(&new_subscription.paths, mount_point) {
-                            to_subscribe.push((device.peer_id, Subscription::new(remote, &new_subscription.methods)));
+                            to_subscribe.push((device.peer_id, Subscription::new(remote, &new_subscription.signal, &new_subscription.source)));
                         }
                     }
                 }
@@ -371,22 +371,17 @@ impl BrokerImpl {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         //let subscribe_path = peer.broker_subscribe_path()?;
         let mount_point = peer.mount_point.clone().ok_or_else(|| format!("Mount point is missing, client ID: {client_id}"))?;
-        let mut subscribed = HashMap::new();
-        for peer in self.peers.values() {
-            //if id == &client_id { continue }
-            for subscr in &peer.subscriptions {
-                subscribed.insert(subscr.to_string(), (subscr.paths.as_str(), subscr.methods.as_str()));
-            }
-        }
         let mut to_subscribe = HashSet::new();
-        for (_sig, (paths, methods)) in subscribed {
-            if let Ok(Some((_local, remote))) = split_glob_on_match(paths, &mount_point) {
-                to_subscribe.insert(Subscription::new(remote, methods).to_string());
-            } else {
-                error!("Invalid pattern '{paths}'.")
+        for peer in self.peers.values() {
+            for subpat in &peer.subscriptions {
+                if let Ok(Some((_local, remote))) = split_glob_on_match(&subpat.paths.as_str(), &mount_point) {
+                    to_subscribe.insert(Subscription::new(remote, subpat.signal.as_str(), subpat.source.as_str()));
+                } else {
+                    error!("Invalid pattern '{}'.", subpat.paths.as_str())
+                }
             }
         }
-        let to_subscribe = to_subscribe.iter().map(|s| Subscription::from_str_unchecked(s)).collect();
+        let to_subscribe = to_subscribe.into_iter().collect();
         self.call_subscribe_async(client_id, to_subscribe)?;
         Ok(())
     }
@@ -447,8 +442,9 @@ impl BrokerImpl {
     fn grant_for_request(&self, client_id: CliId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
         log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
         let shv_path = frame.shv_path().unwrap_or_default();
-        let method = frame.method().unwrap_or("");
-        if method.is_empty() {
+        let signal = frame.method().unwrap_or_default();
+        let source = frame.source().unwrap_or_default();
+        if signal.is_empty() {
             Err(RpcError::new(RpcErrorCode::PermissionDenied, "Method is empty"))
         } else {
             let peer = self.peers.get(&client_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
@@ -460,8 +456,8 @@ impl BrokerImpl {
                             if let Some(rules) = self.role_access.get(&role_name) {
                                 log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
                                 for rule in rules {
-                                    log!(target: "Access", Level::Debug, "\trule: {}", rule.path_method);
-                                    if rule.path_method.match_shv_method(shv_path, method) {
+                                    log!(target: "Access", Level::Debug, "\trule: {}", rule.path_signal_source);
+                                    if rule.path_signal_source.match_shv_method(shv_path, signal, source) {
                                         log!(target: "Access", Level::Debug, "\t\t HIT");
                                         return Ok((Some(rule.grant_lvl as i32), Some(rule.grant_str.clone())));
                                     }
