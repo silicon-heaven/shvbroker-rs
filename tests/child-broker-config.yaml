@@ -18,6 +18,10 @@ access:
       password: !Sha1 ab4d8d2a5f480a137067da17100271cd176607a1
       roles:
       - tester
+    test:
+      password: !Plain test
+      roles:
+      - tester
     admin:
       password: !Plain admin
       roles:
