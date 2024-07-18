@@ -1,8 +1,9 @@
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
-use shvproto::{List, Map, RpcValue};
+use shvproto::{List, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
+use shvrpc::rpc::Subscription;
 use shvrpc::rpcmessage::CliId;
 use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, SubscribePath};
 use crate::brokerimpl::BrokerImpl;
@@ -98,16 +99,21 @@ async fn test_broker_loop() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
 
     // subscriptions
-    let subs_param = Map::from([("paths".to_string(), RpcValue::from("shv/**"))]);
+    let subs = Subscription::new("shv/**", "", "");
     {
-        call(".app/broker/currentClient", METH_SUBSCRIBE, Some(RpcValue::from(subs_param.clone())), &call_ctx).await;
+        // subscribe
+        let result = call(".app/broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        assert_eq!(result.as_bool(), true);
+        // cannot subscribe the same twice
+        let result = call(".app/broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        assert_eq!(result.as_bool(), false);
         let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_list = subs.as_list();
         assert_eq!(subs_list.len(), 1);
     }
     {
-        call(".app/broker/currentClient", METH_UNSUBSCRIBE, Some(RpcValue::from(subs_param.clone())), &call_ctx).await;
+        call(".app/broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
         let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_list = subs.as_list();
