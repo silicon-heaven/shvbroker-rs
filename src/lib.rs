@@ -5,6 +5,9 @@ mod brokerimpl;
 mod node;
 mod peer;
 
+#[cfg(test)]
+mod test;
+
 mod spawn {
     use log::error;
     use std::future::Future;

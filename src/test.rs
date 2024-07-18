@@ -1,12 +1,13 @@
+use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
-use async_std::channel::{Receiver};
-use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, Sender, SubscribePath};
-use crate::rpcmessage::CliId;
-use crate::{List, RpcMessage, RpcMessageMetaTags, RpcValue};
-use crate::broker::brokerimpl::BrokerImpl;
-use crate::broker::config::BrokerConfig;
-use crate::broker::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-use crate::rpcframe::RpcFrame;
+use shvproto::{List, Map, RpcValue};
+use shvrpc::rpcframe::RpcFrame;
+use shvrpc::{RpcMessage, RpcMessageMetaTags};
+use shvrpc::rpcmessage::CliId;
+use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, SubscribePath};
+use crate::brokerimpl::BrokerImpl;
+use crate::config::BrokerConfig;
+use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 
 
 struct CallCtx<'a> {
@@ -15,8 +16,8 @@ struct CallCtx<'a> {
     client_id: CliId,
 }
 
-async fn call(path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>) -> RpcValue {
-    let msg = RpcMessage::new_request(path, method, param);
+async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>) -> RpcValue {
+    let msg = RpcMessage::new_request(shv_path, method, param);
     let frame = RpcFrame::from_rpcmessage(&msg).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
     ctx.writer.send(BrokerCommand::FrameReceived { client_id: ctx.client_id, frame }).await.unwrap();
@@ -97,7 +98,7 @@ async fn test_broker_loop() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
 
     // subscriptions
-    let subs_param = crate::Map::from([("paths".to_string(), RpcValue::from("shv/**"))]);
+    let subs_param = Map::from([("paths".to_string(), RpcValue::from("shv/**"))]);
     {
         call(".app/broker/currentClient", METH_SUBSCRIBE, Some(RpcValue::from(subs_param.clone())), &call_ctx).await;
         let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;

@@ -507,12 +507,15 @@ impl BrokerImpl {
         }
         None
     }
-    async fn subscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<()> {
+    async fn subscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "New subscription for client id: {} - {}", client_id, subscription);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
+        if peer.subscriptions.iter().find(|sp| *sp == subscription).is_some() {
+            return Ok(false);
+        }
         peer.subscriptions.push(SubscriptionPattern::from_subscription(subscription)?);
         self.propagate_subscription_to_matching_devices(subscription)?;
-        Ok(())
+        Ok(true)
     }
     fn unsubscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {}", client_id, subscription);
@@ -616,8 +619,8 @@ impl BrokerImpl {
                 match ctx.method.name {
                     node::METH_SUBSCRIBE => {
                         let subscription = Subscription::from_rpcvalue(rq.param().unwrap_or_default());
-                        self.subscribe(ctx.peer_id, &subscription).await?;
-                        ctx.command_sender.send(send_result_cmd(Ok(RpcValue::null()))).await?;
+                        let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
+                        ctx.command_sender.send(send_result_cmd(Ok(subs_added.into()))).await?;
                         return Ok(())
                     }
                     node::METH_UNSUBSCRIBE => {

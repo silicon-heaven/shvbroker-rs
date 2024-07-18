@@ -124,7 +124,7 @@ fn test_broker() -> shvrpc::Result<()> {
         let values = shv_call_many(calls, Some(port))?;
         for v in values.iter() { println!("\t{}", v); }
         let expected: Vec<String> = vec![
-            "RES null".into(), // response to subscribe
+            "RES true".into(), // response to subscribe
             format!("SIG {property_path}:chng 42"), // SIG chng
             "RES null".into(), // response to SET
             "RES true".into(), // response to unsubscribe

@@ -164,13 +164,6 @@ impl ParsedAccessRule {
     }
 }
 
-//fn find_mount_mut<'a, 'b>(mounts: &'a mut BTreeMap<String, Mount>, shv_path: &'b str) -> Option<(&'a mut Mount, &'b str)> {
-//    if let Some((mount_dir, node_dir)) = find_longest_prefix(mounts, shv_path) {
-//        Some((mounts.get_mut(mount_dir).unwrap(), node_dir))
-//    } else {
-//        None
-//    }
-//}
 pub(crate) struct PendingRpcCall {
     pub(crate) client_id: CliId,
     pub(crate) request_id: RqId,
