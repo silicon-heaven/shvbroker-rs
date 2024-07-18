@@ -20,5 +20,7 @@ jobs:
       run: cargo build --verbose --all-features
     - name: Install shvcall
       run: cargo install --git https://github.com/silicon-heaven/shvcall-rs.git
+    - name: Install shvbrokertestingdevice
+      run: cargo install --git https://github.com/silicon-heaven/shvbrokertestingdevice.git
     - name: Run tests
       run: cargo test --verbose --all-features -- --test-threads=1
