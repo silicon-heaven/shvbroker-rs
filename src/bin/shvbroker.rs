@@ -5,6 +5,7 @@ use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::{join_path, parse_log_verbosity};
 use clap::{Parser};
+use rusqlite::Connection;
 use shvbroker::config::AccessControl;
 
 #[derive(Parser, Debug)]
@@ -15,6 +16,12 @@ struct CliOpts {
     /// Create default config file if one specified by --config is not found
     #[arg(short, long)]
     create_default_config: bool,
+    /// RW directory location, where access database will bee stored
+    #[arg(short, long)]
+    data_directory: Option<String>,
+    /// Allow write to access database
+    #[arg(short, long)]
+    editable_access: Option<bool>,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -48,24 +55,30 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     } else {
         Default::default()
     };
+    let data_dir = cli_opts.data_directory.or(config.data_directory).unwrap_or("/tmp/shvbroker/data".to_owned());
+    let editable_access = cli_opts.editable_access.or(Some(config.editable_access)).unwrap_or(false);
+    if editable_access {
+        let access_file = join_path(&data_dir, "access.sqlite");
+        if !Path::new(&access_file).exists() {
+            create_access_sqlite(&access_file, &config.access)?;
+        }
+    }
     let (access, create_editable_access_file) = 'access: {
-        let mut create_editable_access_file = false;
-        if let Some(data_dir) = &config.data_directory {
-            if config.editable_access {
-                let file_name = join_path(data_dir, "access.yaml");
-                if Path::new(&file_name).exists() {
-                    info!("Loading access file {file_name}");
-                    match AccessControl::from_file(&file_name) {
-                        Ok(acc) => {
-                            break 'access (acc, false);
-                        }
-                        Err(err) => {
-                            error!("Cannot read access file: {file_name} - {err}");
-                        }
+        //let mut create_editable_access_file = false;
+        if editable_access {
+            let file_name = join_path(&data_dir, "access.yaml");
+            if Path::new(&file_name).exists() {
+                info!("Loading access file {file_name}");
+                match AccessControl::from_file(&file_name) {
+                    Ok(acc) => {
+                        break 'access (acc, false);
                     }
-                } else {
-                    create_editable_access_file = true;
+                    Err(err) => {
+                        error!("Cannot read access file: {file_name} - {err}");
+                    }
                 }
+            } else {
+                create_editable_access_file = true;
             }
         }
         break 'access (config.access.clone(), create_editable_access_file);
@@ -78,6 +91,48 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         fs::write(access_file, serde_yaml::to_string(&access)?)?;
     }
     task::block_on(shvbroker::broker::accept_loop(config, access))
+}
+
+const TBL_MOUNTS: &str = "mounts";
+const TBL_USERS: &str = "users";
+const TBL_ROLES: &str = "roles";
+const TBL_ACCESS: &str = "access";
+fn create_access_sqlite(file_path: &str, access: &AccessControl) -> shvrpc::Result<()> {
+    let conn = Connection::open(file_path)?;
+    info!("Creating SQLite access tables: {file_path}");
+    conn.execute(&format!(r#"
+        CREATE TABLE IF NOT EXISTS {TBL_MOUNTS} (
+            deviceId character varying PRIMARY KEY,
+            mountPoint character varying,
+            description character varying
+        );
+    "#), ())?;
+    conn.execute(&format!(r#"
+        CREATE TABLE IF NOT EXISTS {TBL_USERS} (
+            name character varying PRIMARY KEY,
+            password character varying,
+            passwordType character varying,
+            roles character varying
+        );
+    "#), ())?;
+    conn.execute(&format!(r#"
+        CREATE TABLE IF NOT EXISTS {TBL_ROLES} (
+            name character varying PRIMARY KEY,
+            roles character varying,
+            profile character varying
+        );
+    "#), ())?;
+    conn.execute(&format!(r#"
+        CREATE TABLE IF NOT EXISTS {TBL_ACCESS} (
+            role character varying,
+            paths character varying,
+            signal character varying,
+            source character varying,
+            accessGrant character varying,
+            PRIMARY KEY (role, paths, signal, source)
+        );
+    "#), ())?;
+    Ok(())
 }
 
 
