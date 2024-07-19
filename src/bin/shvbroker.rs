@@ -1,12 +1,12 @@
-use std::{fs};
+use std::fs;
 use std::path::Path;
 use async_std::task;
 use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::{join_path, parse_log_verbosity};
-use clap::{Parser};
+use clap::{Args, Command, FromArgMatches, Parser};
 use rusqlite::Connection;
-use shvbroker::config::AccessControl;
+use shvbroker::config::{AccessControl, BrokerConfig};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -15,20 +15,27 @@ struct CliOpts {
     config: Option<String>,
     /// Create default config file if one specified by --config is not found
     #[arg(short, long)]
-    create_default_config: bool,
+    create_config: bool,
+    /// Write current config to file
+    #[arg(long)]
+    write_config: Option<String>,
     /// RW directory location, where access database will bee stored
     #[arg(short, long)]
     data_directory: Option<String>,
-    /// Allow write to access database
+    /// Allow writing to access database
     #[arg(short, long)]
-    editable_access: Option<bool>,
+    use_access_db: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
 }
 
 pub(crate) fn main() -> shvrpc::Result<()> {
-    let cli_opts = CliOpts::parse();
+    let cli = Command::new("CLI");//.arg(arg!(-b - -built).action(clap::ArgAction::SetTrue));
+    let cli = CliOpts::augment_args(cli);
+    let cli_matches = cli.get_matches();
+    let cli_use_access_db_set = cli_matches.try_get_one::<bool>("use_access_db").is_ok();
+    let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
 
     let mut logger = SimpleLogger::new();
     logger = logger.with_level(LevelFilter::Info);
@@ -47,92 +54,136 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     //info!("info message");
     //warn!("warn message");
     //error!("error message");
-    log!(target: "RpcMsg", Level::Debug, "RPC message");
-    log!(target: "Access", Level::Debug, "Access control message");
+    //log!(target: "RpcMsg", Level::Debug, "RPC message");
+    //log!(target: "Access", Level::Debug, "Access control message");
 
     let config = if let Some(config_file) = &cli_opts.config {
-        shvbroker::config::BrokerConfig::from_file_or_default(config_file, cli_opts.create_default_config)?
-    } else {
-        Default::default()
-    };
-    let data_dir = cli_opts.data_directory.or(config.data_directory).unwrap_or("/tmp/shvbroker/data".to_owned());
-    let editable_access = cli_opts.editable_access.or(Some(config.editable_access)).unwrap_or(false);
-    if editable_access {
-        let access_file = join_path(&data_dir, "access.sqlite");
-        if !Path::new(&access_file).exists() {
-            create_access_sqlite(&access_file, &config.access)?;
-        }
-    }
-    let (access, create_editable_access_file) = 'access: {
-        //let mut create_editable_access_file = false;
-        if editable_access {
-            let file_name = join_path(&data_dir, "access.yaml");
-            if Path::new(&file_name).exists() {
-                info!("Loading access file {file_name}");
-                match AccessControl::from_file(&file_name) {
-                    Ok(acc) => {
-                        break 'access (acc, false);
+        info!("Loading config file {config_file}");
+        match shvbroker::config::BrokerConfig::from_file(config_file) {
+            Ok(config) => {config}
+            Err(err) => {
+                if cli_opts.create_config {
+                    if let Some(config_dir) = Path::new(config_file).parent() {
+                        fs::create_dir_all(config_dir)?;
                     }
-                    Err(err) => {
-                        error!("Cannot read access file: {file_name} - {err}");
-                    }
+                    info!("Creating default config file: {config_file}");
+                    let config = BrokerConfig::default();
+                    fs::write(config_file, serde_yaml::to_string(&config)?)?;
+                    config
+                } else {
+                    return Err(err);
                 }
-            } else {
-                create_editable_access_file = true;
             }
         }
-        break 'access (config.access.clone(), create_editable_access_file);
+    } else {
+        info!("Using default config");
+        BrokerConfig::default()
     };
-    if create_editable_access_file {
-        let data_dir = &config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".into());
-        fs::create_dir_all(data_dir)?;
-        let access_file = join_path(data_dir, "access.yaml");
-        info!("Creating access file {access_file}");
-        fs::write(access_file, serde_yaml::to_string(&access)?)?;
+    let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
+    let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
+    let access = if use_access_db {
+        let access_file = join_path(&data_dir, "access.sqlite");
+        if Path::new(&access_file).exists() {
+            load_access_sqlite(&access_file)?
+        } else {
+            create_access_sqlite(&access_file, &config.access)?;
+            config.access.clone()
+        }
+    } else {
+        config.access.clone()
+    };
+    if let Some(file) = cli_opts.write_config {
+        write_config_to_file(&file, &config, &access)?;
     }
     task::block_on(shvbroker::broker::accept_loop(config, access))
+}
+
+fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessControl) -> shvrpc::Result<()> {
+    info!("Writing config to file: {file}");
+    if let Some(path) = Path::new(file).parent() {
+        fs::create_dir_all(path)?;
+    }
+    let mut config = config.clone();
+    config.access = access.clone();
+    fs::write(file, &serde_yaml::to_string(&config)?)?;
+    Ok(())
 }
 
 const TBL_MOUNTS: &str = "mounts";
 const TBL_USERS: &str = "users";
 const TBL_ROLES: &str = "roles";
-const TBL_ACCESS: &str = "access";
 fn create_access_sqlite(file_path: &str, access: &AccessControl) -> shvrpc::Result<()> {
-    let conn = Connection::open(file_path)?;
     info!("Creating SQLite access tables: {file_path}");
-    conn.execute(&format!(r#"
-        CREATE TABLE IF NOT EXISTS {TBL_MOUNTS} (
-            deviceId character varying PRIMARY KEY,
-            mountPoint character varying,
-            description character varying
-        );
-    "#), ())?;
-    conn.execute(&format!(r#"
-        CREATE TABLE IF NOT EXISTS {TBL_USERS} (
-            name character varying PRIMARY KEY,
-            password character varying,
-            passwordType character varying,
-            roles character varying
-        );
-    "#), ())?;
-    conn.execute(&format!(r#"
-        CREATE TABLE IF NOT EXISTS {TBL_ROLES} (
-            name character varying PRIMARY KEY,
-            roles character varying,
-            profile character varying
-        );
-    "#), ())?;
-    conn.execute(&format!(r#"
-        CREATE TABLE IF NOT EXISTS {TBL_ACCESS} (
-            role character varying,
-            paths character varying,
-            signal character varying,
-            source character varying,
-            accessGrant character varying,
-            PRIMARY KEY (role, paths, signal, source)
-        );
-    "#), ())?;
+    if let Some(path) = Path::new(file_path).parent() {
+        fs::create_dir_all(path)?;
+    }
+    let conn = Connection::open(file_path)?;
+    for tbl_name in [TBL_MOUNTS, TBL_USERS, TBL_ROLES] {
+        conn.execute(&format!(r#"
+            CREATE TABLE {tbl_name} (
+                id character varying PRIMARY KEY,
+                def character varying
+            );
+        "#), [])?;
+    }
+    for (id, def) in &access.mounts {
+        debug!("Inserting mount: {id}");
+        conn.execute(&format!(r#"
+            INSERT INTO {TBL_MOUNTS} (id, def) VALUES (?1, ?2);
+        "#), (&id, serde_json::to_string(&def)?))?;
+    }
+    for (id, def) in &access.users {
+        debug!("Inserting user: {id}");
+        conn.execute(&format!(r#"
+            INSERT INTO {TBL_USERS} (id, def) VALUES (?1, ?2);
+        "#), (&id, serde_json::to_string(&def)?))?;
+    }
+    for (id, def) in &access.roles {
+        debug!("Inserting role: {id}");
+        conn.execute(&format!(r#"
+            INSERT INTO {TBL_ROLES} (id, def) VALUES (?1, ?2);
+        "#), (&id, serde_json::to_string(&def)?))?;
+    }
     Ok(())
 }
 
+fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessControl> {
+    info!("Loading SQLite access tables: {file_path}");
+    let conn = Connection::open(file_path)?;
+
+    let mut access = AccessControl{
+        users: Default::default(),
+        roles: Default::default(),
+        mounts: Default::default(),
+    };
+
+    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_USERS}"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let def: String = row.get(1)?;
+        let user = serde_json::from_str(&def)?;
+        access.users.insert(id, user);
+    }
+
+    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_ROLES}"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let def: String = row.get(1)?;
+        let user = serde_json::from_str(&def)?;
+        access.roles.insert(id, user);
+    }
+
+    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let def: String = row.get(1)?;
+        let user = serde_json::from_str(&def)?;
+        access.mounts.insert(id, user);
+    }
+
+    Ok(access)
+}
 

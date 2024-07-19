@@ -1,8 +1,5 @@
 listen:
   tcp: localhost:3756
-  ssl: null
-editable_access: false
-data_directory: null
 parent_broker:
   enabled: true
   client:

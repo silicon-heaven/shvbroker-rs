@@ -1,15 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap};
 use std::fs;
-use std::path::Path;
-use log::info;
 use serde::{Serialize, Deserialize};
 use shvrpc::client::ClientConfig;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BrokerConfig {
     pub listen: Listen,
     #[serde(default)]
-    pub editable_access: bool,
+    pub use_access_db: bool,
     #[serde(default)]
     pub data_directory: Option<String>,
     #[serde(default)]
@@ -26,11 +24,11 @@ pub struct ParentBrokerConfig {
 }
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessControl {
-    pub users: HashMap<String, User>,
-    pub roles: HashMap<String, Role>,
-    pub mounts: HashMap<String, Mount>,
+    pub users: BTreeMap<String, User>,
+    pub roles: BTreeMap<String, Role>,
+    pub mounts: BTreeMap<String, Mount>,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
     #[serde(default)]
     pub tcp: Option<String>,
@@ -81,48 +79,23 @@ impl BrokerConfig {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
     }
-    pub fn from_file_or_default(file_name: &str, create_if_not_exist: bool) -> shvrpc::Result<Self> {
-        let file_path = Path::new(file_name);
-        if file_path.exists() {
-            info!("Loading config file {file_name}");
-            return match Self::from_file(file_name) {
-                Ok(cfg) => {
-                    Ok(cfg)
-                }
-                Err(err) => {
-                    Err(format!("Cannot read config file: {file_name} - {err}").into())
-                }
-            }
-        } else if !create_if_not_exist {
-            return Err(format!("Cannot find config file: {file_name}").into())
-        }
-        let config = Default::default();
-        if create_if_not_exist {
-            if let Some(config_dir) = file_path.parent() {
-                fs::create_dir_all(config_dir)?;
-            }
-            info!("Creating default config file: {file_name}");
-            fs::write(file_path, serde_yaml::to_string(&config)?)?;
-        }
-        Ok(config)
-    }
 }
 impl Default for BrokerConfig {
     fn default() -> Self {
         Self {
             listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None },
-            editable_access: false,
+            use_access_db: false,
             data_directory: None,
             parent_broker: Default::default(),
             access: AccessControl {
-                users: HashMap::from([
+                users: BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()] }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()] }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()] }),
                     ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()] }),
                     ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()] }),
                 ]),
-                roles: HashMap::from([
+                roles: BTreeMap::from([
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
@@ -165,7 +138,7 @@ impl Default for BrokerConfig {
                         ],
                     }),
                 ]),
-                mounts: HashMap::from([
+                mounts: BTreeMap::from([
                     ("test-device".into(), Mount{ mount_point: "shv/test/device".to_string(), description: "Testing device mount-point".to_string() }),
                     ("test-child-broker".into(), Mount{ mount_point: "shv/test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
