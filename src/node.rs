@@ -1,8 +1,8 @@
 use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
 use crate::shvnode::{META_METHOD_DIR, META_METHOD_LS, ShvNode};
 
-pub const DIR_APP_BROKER: &str = ".app/broker";
-pub const DIR_APP_BROKER_CURRENTCLIENT: &str = ".app/broker/currentClient";
+pub const DIR_BROKER: &str = ".broker";
+pub const DIR_BROKER_CURRENTCLIENT: &str = ".broker/currentClient";
 
 pub const METH_CLIENT_INFO: &str = "clientInfo";
 pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";
@@ -33,8 +33,8 @@ pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
 
 
-pub(crate) struct AppBrokerNode {}
-impl AppBrokerNode {
+pub(crate) struct BrokerNode {}
+impl BrokerNode {
     pub fn new_shvnode(&self) -> ShvNode {
         ShvNode { methods: vec![
             &META_METHOD_DIR,
@@ -79,8 +79,8 @@ const META_METH_SUBSCRIBE: MetaMethod = MetaMethod { name: METH_SUBSCRIBE, flags
 const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod { name: METH_UNSUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", description: "" };
 const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTIONS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "void", result: "List", description: "" };
 
-pub(crate) struct AppBrokerCurrentClientNode {}
-impl AppBrokerCurrentClientNode {
+pub(crate) struct BrokerCurrentClientNode {}
+impl BrokerCurrentClientNode {
     pub fn new_shvnode(&self) -> ShvNode {
         ShvNode { methods: vec![
             &META_METHOD_DIR,

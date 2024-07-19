@@ -107,8 +107,8 @@ impl Default for BrokerConfig {
                     //("parent-broker".to_string(), Role { roles: vec![],
                     //    access: vec![
                     //        AccessRule { paths: ".app/**".to_string(), methods: "".to_string(), grant: "rd".to_string() },
-                    //        AccessRule { paths: ".app/broker/currentClient".to_string(), methods: "*subscribe".to_string(), grant: "wr".to_string() },
-                    //        AccessRule { paths: ".app/broker/currentClient".to_string(), methods: "subscriptions".to_string(), grant: "rd".to_string() },
+                    //        AccessRule { paths: ".broker/currentClient".to_string(), methods: "*subscribe".to_string(), grant: "wr".to_string() },
+                    //        AccessRule { paths: ".broker/currentClient".to_string(), methods: "subscriptions".to_string(), grant: "rd".to_string() },
                     //    ]
                     //}),
                     ("child-broker".to_string(), Role { roles: vec!["device".to_string()], access: vec![] }),
@@ -127,8 +127,8 @@ impl Default for BrokerConfig {
                     ("subscribe".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { paths: ".app/broker/currentClient".to_string(), signal: "subscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
-                            AccessRule { paths: ".app/broker/currentClient".to_string(), signal: "unsubscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
+                            AccessRule { paths: ".broker/currentClient".to_string(), signal: "subscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
+                            AccessRule { paths: ".broker/currentClient".to_string(), signal: "unsubscribe".to_string(), source: "".to_string(), grant: "wr".to_string() },
                         ],
                     }),
                     ("browse".to_string(), Role {

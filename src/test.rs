@@ -82,7 +82,7 @@ async fn test_broker_loop() {
     let register_device = BrokerCommand::RegisterDevice {
         client_id, device_id: Some("test-device".into()),
         mount_point: Default::default(),
-        subscribe_path: Some(SubscribePath::CanSubscribe(".app/broker/currentClient".into()))
+        subscribe_path: Some(SubscribePath::CanSubscribe(".broker/currentClient".into()))
     };
     broker_sender.send(register_device).await.unwrap();
 
@@ -91,7 +91,7 @@ async fn test_broker_loop() {
     assert_eq!(resp, RpcValue::from(true));
 
     // test current client info
-    let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;
+    let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
     let m = resp.as_map();
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("shv/test/device"));
@@ -102,19 +102,19 @@ async fn test_broker_loop() {
     let subs = Subscription::new("shv/**", "", "");
     {
         // subscribe
-        let result = call(".app/broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
         assert_eq!(result.as_bool(), true);
         // cannot subscribe the same twice
-        let result = call(".app/broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
         assert_eq!(result.as_bool(), false);
-        let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;
+        let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_list = subs.as_list();
         assert_eq!(subs_list.len(), 1);
     }
     {
-        call(".app/broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
-        let resp = call(".app/broker/currentClient", "info", None, &call_ctx).await;
+        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_list = subs.as_list();
         assert_eq!(subs_list.len(), 0);

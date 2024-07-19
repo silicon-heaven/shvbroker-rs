@@ -34,8 +34,8 @@ fn test_broker() -> shvrpc::Result<()> {
     println!("====== broker =====");
     println!("---broker---: :ls(\".app\")");
     assert_eq!(shv_call_child("", "ls", r#"".app""#)?, RpcValue::from(true));
-    assert_eq!(shv_call_child(".app", "ls", r#""broker""#)?, RpcValue::from(true));
-    assert_eq!(shv_call_child(".app/broker", "ls", r#""client""#)?, RpcValue::from(true));
+    //assert_eq!(shv_call_child(".app", "ls", r#""broker""#)?, RpcValue::from(true));
+    assert_eq!(shv_call_child(".broker", "ls", r#""client""#)?, RpcValue::from(true));
     {
         println!("---broker---: .app:dir()");
         let expected_methods = vec![
@@ -106,22 +106,27 @@ fn test_broker() -> shvrpc::Result<()> {
     println!("---broker---: test/device/number:ls()");
     assert_eq!(shv_call_child("test/device/state/number", "ls", "")?, rpcvalue::List::new().into());
     assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "ls", "")?, rpcvalue::List::new().into());
-    println!("---broker---: .app/broker:clients()");
-    assert!(!shv_call_child(".app/broker", "clients", "")?.as_list().is_empty());
+    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "set", "27")?, ().into());
+    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "get", "")?, 27.into());
+    println!("---broker---: .broker:clients()");
+    assert!(!shv_call_child(".broker", "clients", "")?.as_list().is_empty());
 
-    println!("---broker---: .app/broker:mounts()");
-    assert_eq!(shv_call_child(".app/broker", "mounts", "")?, vec![RpcValue::from("test/device")].into());
+    println!("---broker---: .broker:mounts()");
+    assert_eq!(shv_call_child(".broker", "mounts", "")?, vec![RpcValue::from("test/device")].into());
     println!("====== subscriptions =====");
     fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shvrpc::Result<()> {
-        //let info = shv_call_child(".app/broker/currentClient", "info", "")?;
+        //let info = shv_call_child(".broker/currentClient", "info", "")?;
         //println!("INFO: {info}");
         let calls: Vec<String> = vec![
-            format!(r#".app/broker/currentClient:subscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
+            format!(r#".broker/currentClient:subscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
             format!(r#"{property_path}:set 42"#),
-            format!(r#".app/broker/currentClient:unsubscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
+            format!(r#".broker/currentClient:unsubscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
             format!(r#"{property_path}:set 123"#),
         ];
+        println!("shv_call_many property: {property_path}");
+        for c in calls.iter() { println!("\t{}", c); }
         let values = shv_call_many(calls, Some(port))?;
+        println!("shv_call_many result:");
         for v in values.iter() { println!("\t{}", v); }
         let expected: Vec<String> = vec![
             "RES true".into(), // response to subscribe

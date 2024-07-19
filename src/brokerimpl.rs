@@ -9,9 +9,9 @@ use shvrpc::rpcmessage::{CliId, RpcError, RpcErrorCode, Tag};
 use shvproto::{List, RpcValue, rpcvalue};
 use shvrpc::rpc::{Subscription, SubscriptionPattern};
 use crate::shvnode::{DIR_APP, AppNode, find_longest_prefix, METH_DIR, METH_LS, process_local_dir_ls, ShvNode};
-use shvrpc::util::{sha1_hash, split_glob_on_match};
+use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
-use crate::node::{DIR_APP_BROKER_CURRENTCLIENT, DIR_APP_BROKER, AppBrokerCurrentClientNode, AppBrokerNode, METH_SUBSCRIBE};
+use crate::node::{DIR_BROKER_CURRENTCLIENT, DIR_BROKER, BrokerCurrentClientNode, BrokerNode, METH_SUBSCRIBE};
 use shvrpc::metamethod::{MetaMethod, AccessLevel};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use crate::{node, shvnode};
@@ -26,8 +26,8 @@ pub struct BrokerImpl {
     pub(crate) command_receiver: Receiver<BrokerCommand>,
 
     node_app: AppNode,
-    node_app_broker: AppBrokerNode,
-    node_app_broker_currentclient: AppBrokerCurrentClientNode,
+    node_app_broker: BrokerNode,
+    node_app_broker_currentclient: BrokerCurrentClientNode,
 
 }
 
@@ -64,12 +64,12 @@ impl BrokerImpl {
                 shv_version_major: 3,
                 shv_version_minor: 0,
             },
-            node_app_broker: AppBrokerNode {},
-            node_app_broker_currentclient: AppBrokerCurrentClientNode {},
+            node_app_broker: BrokerNode {},
+            node_app_broker_currentclient: BrokerCurrentClientNode {},
         };
         broker.mounts.insert(DIR_APP.into(), Mount::Node(broker.node_app.new_shvnode()));
-        broker.mounts.insert(DIR_APP_BROKER.into(), Mount::Node(broker.node_app_broker.new_shvnode()));
-        broker.mounts.insert(DIR_APP_BROKER_CURRENTCLIENT.into(), Mount::Node(broker.node_app_broker_currentclient.new_shvnode()));
+        broker.mounts.insert(DIR_BROKER.into(), Mount::Node(broker.node_app_broker.new_shvnode()));
+        broker.mounts.insert(DIR_BROKER_CURRENTCLIENT.into(), Mount::Node(broker.node_app_broker_currentclient.new_shvnode()));
         broker
     }
 
@@ -203,7 +203,7 @@ impl BrokerImpl {
                     info!("Unmounting path: '{}'", path);
                     self.mounts.remove(&path);
                 }
-                let client_path = format!(".app/broker/client/{}", peer_id);
+                let client_path = join_path(DIR_BROKER, &format!("client/{}", peer_id));
                 self.mounts.remove(&client_path);
                 self.pending_rpc_calls.retain(|c| c.client_id != peer_id);
             }
@@ -261,7 +261,7 @@ impl BrokerImpl {
         }
     }
     pub(crate) async fn mount_device(&mut self, client_id: i32, device_id: Option<String>, mount_point: Option<String>, subscribe_path: Option<SubscribePath>) -> shvrpc::Result<()> {
-        let client_path = format!(".app/broker/client/{}", client_id);
+        let client_path = join_path(DIR_BROKER, &format!("client/{}", client_id));
         self.mounts.insert(client_path, Mount::Peer(Device { peer_id: client_id }));
         let mount_point = 'mount_point: {
             if let Some(ref mount_point) = mount_point {
@@ -270,8 +270,8 @@ impl BrokerImpl {
                     break 'mount_point Some(mount_point.clone());
                 }
             }
-            if let Some(device_id) = device_id {
-                match self.access.mounts.get(&device_id) {
+            if let Some(device_id) = &device_id {
+                match self.access.mounts.get(device_id) {
                     None => {
                         warn!("Cannot find mount-point for device ID: {device_id}");
                         None
@@ -351,11 +351,11 @@ impl BrokerImpl {
                 Ok(false)
             }
             let found_cmd = BrokerCommand::PropagateSubscriptions { client_id };
-            if let Ok(true) = check_path(client_id, "/.app/broker/currentClient", &broker_command_sender).await {
+            if let Ok(true) = check_path(client_id, "/.broker/currentClient", &broker_command_sender).await {
                 let _ = broker_command_sender.send(found_cmd).await;
             } else if let Ok(true) = check_path(client_id, ".app/broker/currentClient", &broker_command_sender).await{
                 let _ = broker_command_sender.send(found_cmd).await;
-            } else if let Ok(true) = check_path(client_id,".broker/app", &broker_command_sender).await {
+            } else if let Ok(true) = check_path(client_id,"/.app/broker/currentClient", &broker_command_sender).await {
                 let _ = broker_command_sender.send(found_cmd).await;
             } else {
                 let cmd = BrokerCommand::SetSubscribeMethodPath {
@@ -445,11 +445,12 @@ impl BrokerImpl {
         let signal = frame.method().unwrap_or_default();
         let source = frame.source().unwrap_or_default();
         if signal.is_empty() {
-            Err(RpcError::new(RpcErrorCode::PermissionDenied, "Method is empty"))
+            return Err(RpcError::new(RpcErrorCode::PermissionDenied, "Method is empty"))
         } else {
             let peer = self.peers.get(&client_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
             match peer.peer_kind {
                 PeerKind::Client => {
+                    log!(target: "Access", Level::Debug, "Peer: {}", client_id);
                     if let Some(flatten_roles) = self.flatten_roles(&peer.user) {
                         log!(target: "Access", Level::Debug, "user: {}, flatten roles: {:?}", &peer.user, flatten_roles);
                         for role_name in flatten_roles {
@@ -465,15 +466,18 @@ impl BrokerImpl {
                             }
                         }
                     }
-                    Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", peer.user)))
+                    return Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", peer.user)))
                 }
                 PeerKind::ParentBroker => {
-                    let access = frame.tag(Tag::Access as i32).map(RpcValue::as_str).map(String::from);
-                    let access_level = frame.tag(Tag::AccessLevel as i32).map(RpcValue::as_i32);
+                    log!(target: "Access", Level::Debug, "ParentBroker: {}", client_id);
+                    let access = frame.tag(Tag::Access as i32);
+                    let access_level = frame.tag(Tag::AccessLevel as i32);
                     if access_level.is_some() || access.is_some() {
-                        Ok((access_level, access))
+                        log!(target: "Access", Level::Debug, "\tGranted access: {:?}, access level: {:?}", access, access_level);
+                        return Ok((access_level.map(RpcValue::as_i32), access.map(RpcValue::as_str).map(|s| s.to_string())))
                     } else {
-                        Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
+                        log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                        return Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
                     }
                 }
             }
@@ -572,7 +576,7 @@ impl BrokerImpl {
                     _ => {}
                 }
             }
-            DIR_APP_BROKER => {
+            DIR_BROKER => {
                 match ctx.method.name {
                     node::METH_CLIENT_INFO => {
                         let peer_id = rq.param().unwrap_or_default().as_i32();
@@ -615,7 +619,7 @@ impl BrokerImpl {
                     _ => {}
                 }
             }
-            DIR_APP_BROKER_CURRENTCLIENT => {
+            DIR_BROKER_CURRENTCLIENT => {
                 match ctx.method.name {
                     node::METH_SUBSCRIBE => {
                         let subscription = Subscription::from_rpcvalue(rq.param().unwrap_or_default());

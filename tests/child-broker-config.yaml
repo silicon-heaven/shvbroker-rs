@@ -48,10 +48,10 @@ access:
     subscribe:
       roles: []
       access:
-      - paths: .app/broker/currentClient
+      - paths: .broker/currentClient
         signal: subscribe
         grant: wr
-      - paths: .app/broker/currentClient
+      - paths: .broker/currentClient
         signal: unsubscribe
         grant: wr
     device:
