@@ -22,7 +22,7 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 
 pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
-    debug!("Entreing peer loop client ID: {client_id}.");
+    debug!("Entering peer loop client ID: {client_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 

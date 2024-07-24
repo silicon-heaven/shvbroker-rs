@@ -5,7 +5,7 @@ use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::rpc::{SubscriptionPattern};
+use shvrpc::rpc::{ShvRI, SubscriptionPattern};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{CliId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
@@ -91,9 +91,9 @@ impl Peer {
             subscribe_path: None,
         }
     }
-    pub(crate) fn is_signal_subscribed(&self, path: &str, signal: &str, source: &str) -> bool {
+    pub(crate) fn is_signal_subscribed(&self, signal: &ShvRI) -> bool {
         for subs in self.subscriptions.iter() {
-            if subs.match_shv_method(path, signal, source) {
+            if subs.match_shv_ri(signal) {
                 return true;
             }
         }
@@ -143,7 +143,7 @@ pub(crate) enum Mount {
 }
 
 pub(crate) struct ParsedAccessRule {
-    pub(crate) path_signal_source: SubscriptionPattern,
+    pub(crate) shv_ri_pattern: SubscriptionPattern,
     // Needed in order to pass 'dot-local' in 'Access' meta-attribute
     // to support the dot-local hack on older brokers
     pub(crate) grant_str: String,
@@ -152,9 +152,9 @@ pub(crate) struct ParsedAccessRule {
 
 impl ParsedAccessRule {
     pub fn new(paths: &str, signal: &str, source: &str, grant: &str) -> shvrpc::Result<Self> {
-        let subpat = SubscriptionPattern::new(paths, signal, source)?;
+        let subpat = SubscriptionPattern::new(&ShvRI::from_path_method_signal(paths, source, Some(signal)))?;
         Ok(Self {
-            path_signal_source: subpat,
+            shv_ri_pattern: subpat,
             grant_str: grant.to_string(),
             grant_lvl: grant
                 .split(',')
@@ -180,7 +180,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
                     }
                 }
                 Err(err) => {
-                    warn!("Reseive broker command error: {}", err);
+                    warn!("Receive broker command error: {}", err);
                 }
             },
         }

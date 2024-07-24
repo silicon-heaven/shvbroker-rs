@@ -3,7 +3,7 @@ use async_std::{channel, task};
 use shvproto::{List, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
-use shvrpc::rpc::Subscription;
+use shvrpc::rpc::{ShvRI, Subscription};
 use shvrpc::rpcmessage::CliId;
 use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, SubscribePath};
 use crate::brokerimpl::BrokerImpl;
@@ -99,7 +99,7 @@ async fn test_broker_loop() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
 
     // subscriptions
-    let subs = Subscription::new("shv/**", "", "");
+    let subs = Subscription{ ri: ShvRI::try_from("shv/**:").unwrap(), ttl: 0 };
     {
         // subscribe
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
