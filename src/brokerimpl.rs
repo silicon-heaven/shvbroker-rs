@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use async_std::channel::{Receiver, Sender, unbounded};
 use async_std::task;
 use log::{debug, error, info, log, warn};
@@ -7,7 +7,7 @@ use crate::config::{AccessControl, Password};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{CliId, RpcError, RpcErrorCode, Tag};
 use shvproto::{List, RpcValue, rpcvalue};
-use shvrpc::rpc::{ShvRI, Subscription, SubscriptionPattern};
+use shvrpc::rpc::{ShvRI, SubscriptionParam, Subscription};
 use crate::shvnode::{DIR_APP, AppNode, find_longest_prefix, METH_DIR, METH_LS, process_local_dir_ls, ShvNode};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
@@ -36,14 +36,14 @@ impl BrokerImpl {
         let (command_sender, command_receiver) = unbounded();
         let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
         for (name, role) in &access.roles {
-            let mut list: Vec<ParsedAccessRule> = Default::default();
+            let mut list = vec![];
             for rule in &role.access {
-                match ParsedAccessRule::new(&rule.paths, &rule.signal, &rule.source, &rule.grant) {
+                match ParsedAccessRule::new(&ShvRI::try_from(&*rule.shv_ri).expect("Valid SHV RI"), &rule.grant) {
                     Ok(rule) => {
                         list.push(rule);
                     }
                     Err(err) => {
-                        error!("Parse access rule error: {}", err);
+                        panic!("Parse access rule: {} error: {}", rule.shv_ri, err);
                     }
                 }
             }
@@ -304,7 +304,7 @@ impl BrokerImpl {
         };
         Ok(())
     }
-    fn propagate_subscription_to_matching_devices(&mut self, new_subscription: &Subscription) -> shvrpc::Result<()> {
+    fn propagate_subscription_to_matching_devices(&mut self, new_subscription: &SubscriptionParam) -> shvrpc::Result<()> {
         // compare new_subscription with all mount-points to check
         // whether it should be propagated also to mounted device
         let mut to_subscribe = vec![];
@@ -313,14 +313,15 @@ impl BrokerImpl {
                 if let Some(peer) = self.peers.get(&device.peer_id) {
                     if peer.is_broker()? {
                         if let Ok(Some((_local, remote))) = split_glob_on_match(&new_subscription.ri.path(), mount_point) {
-                            to_subscribe.push((device.peer_id, ShvRI::from_path_method_signal(remote, new_subscription.ri.method(), new_subscription.ri.signal())));
+                            let ri = ShvRI::from_path_method_signal(remote, new_subscription.ri.method(), new_subscription.ri.signal());
+                            to_subscribe.push((device.peer_id, SubscriptionParam{ ri, ttl: new_subscription.ttl }));
                         }
                     }
                 }
             }
         }
-        for (client_id, signal_ri) in to_subscribe {
-            let to_subscribe = vec![Subscription { ri: signal_ri, ttl: 0 }];
+        for (client_id, subpar) in to_subscribe {
+            let to_subscribe = vec![subpar];
             self.call_subscribe_async(client_id, to_subscribe)?;
         }
         Ok(())
@@ -373,17 +374,17 @@ impl BrokerImpl {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         //let subscribe_path = peer.broker_subscribe_path()?;
         let mount_point = peer.mount_point.clone().ok_or_else(|| format!("Mount point is missing, client ID: {client_id}"))?;
-        let mut to_subscribe = HashSet::new();
+        let mut to_subscribe = Vec::new();
         for peer in self.peers.values() {
-            for subpat in &peer.subscriptions {
-                let Ok(ri) = ShvRI::try_from(subpat.as_str()) else {
-                    error!("Invalid subscription pattern '{}'.", subpat.as_str());
-                    continue;
-                };
-                match split_glob_on_match(ri.path(), &mount_point) {
+            for peer_sub in &peer.subscriptions {
+                match split_glob_on_match(peer_sub.glob.path_str(), &mount_point) {
                     Ok(split) => {
                         if let Some((_local, remote)) = split {
-                            to_subscribe.insert(ShvRI::from_path_method_signal(remote, ri.method(), ri.signal()));
+                            let ri = ShvRI::from_path_method_signal(remote, peer_sub.glob.method_str(), peer_sub.glob.signal_str());
+                            let newsub = SubscriptionParam{ ri, ttl: peer_sub.param.ttl };
+                            if to_subscribe.iter().find(|s| *s == &newsub).is_none() {
+                                to_subscribe.push(newsub);
+                            }
                         }
                     }
                     Err(e) => {
@@ -392,18 +393,17 @@ impl BrokerImpl {
                 }
             }
         }
-        let to_subscribe = to_subscribe.into_iter().map(|ri| Subscription { ri, ttl: 0 }).collect();
         self.call_subscribe_async(client_id, to_subscribe)?;
         Ok(())
     }
-    fn call_subscribe_async(&mut self, client_id: CliId, subscriptions: Vec<Subscription>) -> shvrpc::Result<()> {
+    fn call_subscribe_async(&mut self, client_id: CliId, subscriptions: Vec<SubscriptionParam>) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let mount_point = peer.mount_point.clone();
         let broker_command_sender = self.command_sender.clone();
         //info!("call_subscribe_async mount: {:?} client_id {:?} subscriptions {:?}", mount_point, client_id, subscriptions);
         let subscribe_path = peer.broker_subscribe_path()?;
         task::spawn(async move {
-            async fn call_subscribe(client_id: CliId, subscribe_path: &str, subscription: Subscription, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<()> {
+            async fn call_subscribe(client_id: CliId, subscribe_path: &str, subscription: SubscriptionParam, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<()> {
                 let (response_sender, response_receiver) = unbounded();
                 let cmd = BrokerCommand::RpcCall {
                     client_id,
@@ -469,10 +469,10 @@ impl BrokerImpl {
                         if let Some(rules) = self.role_access.get(&role_name) {
                             log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
                             for rule in rules {
-                                log!(target: "Access", Level::Debug, "\trule: {}", rule.shv_ri_pattern);
-                                if rule.shv_ri_pattern.match_shv_ri(&ri) {
+                                log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
+                                if rule.glob.match_shv_ri(&ri) {
                                     log!(target: "Access", Level::Debug, "\t\t HIT");
-                                    return Ok((Some(rule.grant_lvl as i32), Some(rule.grant_str.clone())));
+                                    return Ok((Some(rule.access_level as i32), Some(rule.access.clone())));
                                 }
                             }
                         }
@@ -495,7 +495,7 @@ impl BrokerImpl {
         }
     }
     fn peer_to_info(client_id: CliId, peer: &Peer) -> rpcvalue::Map {
-        let subs: List = peer.subscriptions.iter().map(|subs| subs.as_str().into()).collect();
+        let subs: List = peer.subscriptions.iter().map(|subs| subs.param.to_rpcvalue()).collect();
         rpcvalue::Map::from([
             ("clientId".to_string(), client_id.into()),
             ("userName".to_string(), RpcValue::from(&peer.user)),
@@ -522,28 +522,29 @@ impl BrokerImpl {
         }
         None
     }
-    async fn subscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for client id: {} - {:?}", client_id, subscription);
+    async fn subscribe(&mut self, client_id: CliId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        log!(target: "Subscr", Level::Debug, "New subscription for client id: {} - {:?}", client_id, subpar);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
-        let glob = subscription.ri.to_glob();
-        if peer.subscriptions.iter().find(|sp| *sp.as_str() == glob).is_some() {
+        let ri = subpar.ri.normalized();
+        if peer.subscriptions.iter().find(|sub| sub.param.ri == ri).is_some() {
             return Ok(false);
         }
-        peer.subscriptions.push(SubscriptionPattern::from_subscription(subscription)?);
-        self.propagate_subscription_to_matching_devices(subscription)?;
+        let subpar = SubscriptionParam { ri, ttl: subpar.ttl };
+        peer.subscriptions.push(Subscription::new(&subpar)?);
+        self.propagate_subscription_to_matching_devices(&subpar)?;
         Ok(true)
     }
-    fn unsubscribe(&mut self, client_id: CliId, subscription: &Subscription) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {:?}", client_id, subscription);
+    fn unsubscribe(&mut self, client_id: CliId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {:?}", client_id, subpar);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let cnt = peer.subscriptions.len();
-        let glob = subscription.ri.to_glob();
-        peer.subscriptions.retain(|subscr| subscr.as_str() != glob);
+        let ri = subpar.ri.normalized();
+        peer.subscriptions.retain(|subscr| subscr.param.ri != ri);
         Ok(cnt != peer.subscriptions.len())
     }
     fn subscriptions(&self, client_id: CliId) -> shvrpc::Result<List> {
         let peer = self.peers.get(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
-        let subs: List = peer.subscriptions.iter().map(|subs| subs.as_str().into()).collect();
+        let subs: List = peer.subscriptions.iter().map(|subs| subs.param.to_rpcvalue()).collect();
         Ok(subs)
     }
     async fn process_node_request(&mut self, frame: RpcFrame, ctx: NodeRequestContext) -> shvrpc::Result<()> {
@@ -623,7 +624,7 @@ impl BrokerImpl {
                 DIR_BROKER_CURRENTCLIENT => {
                     match ctx.method.name {
                         node::METH_SUBSCRIBE => {
-                            match Subscription::from_rpcvalue(rq.param().unwrap_or_default()) {
+                            match SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default()) {
                                 Ok(subscription) => {
                                     let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
                                     break 'block Ok(subs_added.into());
@@ -635,7 +636,7 @@ impl BrokerImpl {
                             }
                         }
                         node::METH_UNSUBSCRIBE => {
-                            match Subscription::from_rpcvalue(rq.param().unwrap_or_default()) {
+                            match SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default()) {
                                 Ok(subscription) => {
                                     let subs_removed = self.unsubscribe(ctx.peer_id, &subscription)?;
                                     break 'block Ok(subs_removed.into());

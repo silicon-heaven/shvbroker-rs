@@ -5,7 +5,7 @@ use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::rpc::{ShvRI, SubscriptionPattern};
+use shvrpc::rpc::{ShvRI, Subscription};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{CliId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
@@ -75,7 +75,7 @@ pub(crate) struct Peer {
     pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) user: String,
     pub(crate) mount_point: Option<String>,
-    pub(crate) subscriptions: Vec<SubscriptionPattern>,
+    pub(crate) subscriptions: Vec<Subscription>,
     pub(crate) peer_kind: PeerKind,
     pub(crate) subscribe_path: Option<SubscribePath>,
 }
@@ -143,20 +143,19 @@ pub(crate) enum Mount {
 }
 
 pub(crate) struct ParsedAccessRule {
-    pub(crate) shv_ri_pattern: SubscriptionPattern,
+    pub(crate) glob: shvrpc::rpc::Glob,
     // Needed in order to pass 'dot-local' in 'Access' meta-attribute
     // to support the dot-local hack on older brokers
-    pub(crate) grant_str: String,
-    pub(crate) grant_lvl: AccessLevel,
+    pub(crate) access: String,
+    pub(crate) access_level: AccessLevel,
 }
 
 impl ParsedAccessRule {
-    pub fn new(paths: &str, signal: &str, source: &str, grant: &str) -> shvrpc::Result<Self> {
-        let subpat = SubscriptionPattern::new(&ShvRI::from_path_method_signal(paths, source, Some(signal)))?;
+    pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
         Ok(Self {
-            shv_ri_pattern: subpat,
-            grant_str: grant.to_string(),
-            grant_lvl: grant
+            glob: shv_ri.to_glob()?,
+            access: grant.to_string(),
+            access_level: grant
                 .split(',')
                 .find_map(AccessLevel::from_str)
                 .unwrap_or_else(|| panic!("Invalid access grant `{grant}`")),

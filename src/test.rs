@@ -3,7 +3,7 @@ use async_std::{channel, task};
 use shvproto::{List, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
-use shvrpc::rpc::{ShvRI, Subscription};
+use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::CliId;
 use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, SubscribePath};
 use crate::brokerimpl::BrokerImpl;
@@ -38,7 +38,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
                     break retval.clone();
                 }
                 Err(err) => {
-                    panic!("Invalid response received: {err} - {}", msg);
+                    panic!("Rpc error response received: {err} - {}", msg);
                 }
             }
         } else {
@@ -99,7 +99,7 @@ async fn test_broker_loop() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
 
     // subscriptions
-    let subs = Subscription{ ri: ShvRI::try_from("shv/**:").unwrap(), ttl: 0 };
+    let subs = SubscriptionParam { ri: ShvRI::try_from("shv/**:").unwrap(), ttl: 0 };
     {
         // subscribe
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;

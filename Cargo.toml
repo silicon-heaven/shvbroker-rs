@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -30,10 +30,10 @@ rusqlite = { version = "0.31.0", features = ["bundled"] }
 #getrandom = { version = "0.2", features = ["js"] }
 
 # For local development
-[patch."https://github.com/silicon-heaven/libshvproto-rs"]
-shvproto = { path = "../libshvproto-rs" }
-[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
-shvrpc = { path = "../libshvrpc-rs" }
+#[patch."https://github.com/silicon-heaven/libshvproto-rs"]
+#shvproto = { path = "../libshvproto-rs" }
+#[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
+#shvrpc = { path = "../libshvrpc-rs" }
 
 [[bin]]
 name = "shvbroker"

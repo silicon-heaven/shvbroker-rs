@@ -11,10 +11,10 @@ use shvbroker::config::{AccessControl, BrokerConfig};
 #[derive(Parser, Debug)]
 struct CliOpts {
     /// Config file path
-    #[arg(long)]
+    #[arg(short, long)]
     config: Option<String>,
     /// Create default config file if one specified by --config is not found
-    #[arg(short, long)]
+    #[arg(long)]
     create_config: bool,
     /// Write current config to file
     #[arg(long)]

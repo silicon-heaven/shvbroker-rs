@@ -36,23 +36,19 @@ access:
       roles:
       - client
       access:
-      - paths: test/**
-        signal: ''
+      - shvRI: 'test/**::'
         grant: cfg
     browse:
       roles: []
       access:
-      - paths: '**'
-        signal: ''
+      - shvRI: '**::'
         grant: bws
     subscribe:
       roles: []
       access:
-      - paths: .broker/currentClient
-        signal: subscribe
+      - shvRI: '.broker/currentClient:subscribe'
         grant: wr
-      - paths: .broker/currentClient
-        signal: unsubscribe
+      - shvRI: '.broker/currentClient:unsubscribe'
         grant: wr
     device:
       roles:
@@ -67,14 +63,12 @@ access:
     ping:
       roles: []
       access:
-      - paths: .app
-        signal: ping
+      - shvRI: '.app:ping'
         grant: wr
     su:
       roles: []
       access:
-      - paths: '**'
-        signal: ''
+      - shvRI: '**::'
         grant: su
     child-broker:
       roles:
