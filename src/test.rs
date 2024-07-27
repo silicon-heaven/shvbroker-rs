@@ -1,3 +1,4 @@
+use crate::brokerimpl::BrokerImpl;
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
 use shvproto::{List, RpcValue};
@@ -5,8 +6,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::CliId;
-use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand, SubscribePath};
-use crate::brokerimpl::BrokerImpl;
+use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::BrokerConfig;
 use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 
@@ -76,15 +76,27 @@ async fn test_broker_loop() {
     };
 
     // login
-    broker_sender.send(BrokerCommand::NewPeer { client_id, sender: peer_writer, peer_kind: PeerKind::Client }).await.unwrap();
-    broker_sender.send(BrokerCommand::GetPassword { client_id, user: "admin".into() }).await.unwrap();
-    peer_reader.recv().await.unwrap();
-    let register_device = BrokerCommand::RegisterDevice {
-        client_id, device_id: Some("test-device".into()),
-        mount_point: Default::default(),
-        subscribe_path: Some(SubscribePath::CanSubscribe(".broker/currentClient".into()))
-    };
-    broker_sender.send(register_device).await.unwrap();
+    let user = "admin";
+    //let password = "admin";
+    //let nonce = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+    //broker_sender.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.into() }).await.unwrap();
+    //match peer_reader.recv().await.unwrap() {
+    //    BrokerToPeerMessage::PasswordSha1(password_sha1) => {
+    //    }
+    //    _ => { panic!("Invalid message type") }
+    //}
+    broker_sender.send(BrokerCommand::NewPeer { client_id,
+        peer_kind: PeerKind::Client,
+        user: user.to_string(),
+        mount_point: None,
+        device_id: Some("test-device".into()),
+        sender: peer_writer.clone() }).await.unwrap();
+    //let register_device = BrokerCommand::RegisterDevice {
+    //    client_id, device_id: Some("test-device".into()),
+    //    mount_point: Default::default(),
+    //    subscribe_path: Some(SubscribePath::CanSubscribe(".broker/currentClient".into()))
+    //};
+    //broker_sender.send(register_device).await.unwrap();
 
     // device should be mounted as 'shv/dev/test'
     let resp = call("shv/test", "ls", Some("device".into()), &call_ctx).await;
@@ -95,7 +107,7 @@ async fn test_broker_loop() {
     let m = resp.as_map();
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("shv/test/device"));
-    assert_eq!(m.get("userName").unwrap(), &RpcValue::from("admin"));
+    assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
 
     // subscriptions
@@ -103,10 +115,10 @@ async fn test_broker_loop() {
     {
         // subscribe
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
-        assert_eq!(result.as_bool(), true);
+        assert!(result.as_bool());
         // cannot subscribe the same twice
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
-        assert_eq!(result.as_bool(), false);
+        assert!(!result.as_bool());
         let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_list = subs.as_list();

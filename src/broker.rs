@@ -5,7 +5,7 @@ use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::rpc::{ShvRI, Subscription};
+use shvrpc::rpc::{ShvRI, Subscription, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{CliId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
@@ -13,25 +13,22 @@ use async_std::stream::StreamExt;
 use futures::select;
 use futures::FutureExt;
 use shvrpc::RpcMessage;
-use crate::brokerimpl::BrokerImpl;
+use crate::brokerimpl::{BrokerImpl};
 use crate::peer;
 
 #[derive(Debug)]
 pub(crate) enum BrokerCommand {
     GetPassword {
-        client_id: CliId,
+        sender: Sender<BrokerToPeerMessage>,
         user: String,
     },
     NewPeer {
         client_id: CliId,
-        sender: Sender<BrokerToPeerMessage>,
         peer_kind: PeerKind,
-    },
-    RegisterDevice {
-        client_id: CliId,
-        device_id: Option<String>,
+        user: String,
         mount_point: Option<String>,
-        subscribe_path: Option<SubscribePath>,
+        device_id: Option<String>,
+        sender: Sender<BrokerToPeerMessage>,
     },
     FrameReceived {
         client_id: CliId,
@@ -40,9 +37,12 @@ pub(crate) enum BrokerCommand {
     PeerGone {
         peer_id: CliId,
     },
-    //SendFrame { peer_id: CliId, frame: RpcFrame },
     SendResponse {peer_id: CliId, meta: MetaMap, result: Result<RpcValue, RpcError>},
-    RpcCall{
+    CallSubscribeOnPeer {
+        peer_id: CliId,
+        subscriptions: Vec<SubscriptionParam>,
+    },
+    RpcCall {
         client_id: CliId,
         request: RpcMessage,
         response_sender: Sender<RpcFrame>,
@@ -50,9 +50,6 @@ pub(crate) enum BrokerCommand {
     SetSubscribeMethodPath {
         peer_id: CliId,
         subscribe_path: SubscribePath,
-    },
-    PropagateSubscriptions{
-        client_id: CliId,
     },
 }
 
@@ -64,33 +61,29 @@ pub(crate) enum BrokerToPeerMessage {
     DisconnectByBroker,
 }
 
-#[derive(Debug)]
-pub enum PeerKind {
+#[derive(Debug, Clone)]
+pub(crate) enum SubscribePath {
+    NotBroker,
+    CanSubscribeCheck,
+    CanSubscribe(String),
+}
+#[derive(Debug, Clone)]
+pub(crate) enum PeerKind {
     Client,
     ParentBroker,
+    Device(Option<SubscribePath>),
 }
-
 #[derive(Debug)]
 pub(crate) struct Peer {
-    pub(crate) sender: Sender<BrokerToPeerMessage>,
+    pub(crate) peer_kind: PeerKind,
     pub(crate) user: String,
     pub(crate) mount_point: Option<String>,
+    pub(crate) device_id: Option<String>,
+    pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) subscriptions: Vec<Subscription>,
-    pub(crate) peer_kind: PeerKind,
-    pub(crate) subscribe_path: Option<SubscribePath>,
 }
 
 impl Peer {
-    pub(crate) fn new(peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> Self {
-        Self {
-            sender,
-            user: "".to_string(),
-            mount_point: None,
-            subscriptions: vec![],
-            peer_kind,
-            subscribe_path: None,
-        }
-    }
     pub(crate) fn is_signal_subscribed(&self, signal: &ShvRI) -> bool {
         for subs in self.subscriptions.iter() {
             if subs.match_shv_ri(signal) {
@@ -99,34 +92,13 @@ impl Peer {
         }
         false
     }
-    pub fn is_broker(&self) -> shvrpc::Result<bool> {
-        match &self.subscribe_path {
-            None => { Err(format!("Device mounted on: {:?} - not checked for broker capability yet.", self.mount_point).into()) }
-            Some(path) => {
-                match path {
-                    SubscribePath::NotBroker => { Ok(false) }
-                    SubscribePath::CanSubscribe(_) => { Ok(true) }
-                }
-            }
-        }
-    }
-    pub fn broker_subscribe_path(&self) -> shvrpc::Result<String> {
-        match &self.subscribe_path {
-            None => { Err(format!("Device mounted on: {:?} - not checked for broker capability yet.", self.mount_point).into()) }
-            Some(path) => {
-                match path {
-                    SubscribePath::NotBroker => { Err("Not broker".into()) }
-                    SubscribePath::CanSubscribe(path) => { Ok(path.to_string()) }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum SubscribePath {
-    NotBroker,
-    CanSubscribe(String),
+    //pub fn subscribe_path(&self) -> Option<&SubscribePath> {
+    //    if let PeerKind::Device(path) = &self.peer_kind {
+    //        path.as_ref()
+    //    } else {
+    //        None
+    //    }
+    //}
 }
 
 pub(crate) struct Device {
@@ -169,7 +141,8 @@ pub(crate) struct PendingRpcCall {
     pub(crate) response_sender: Sender<RpcFrame>,
 }
 
-pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
+pub(crate) async fn broker_loop(broker: BrokerImpl) {
+    let mut broker = broker;
     loop {
         select! {
             command = broker.command_receiver.recv().fuse() => match command {
@@ -188,10 +161,10 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
 
 pub async fn accept_loop(config: BrokerConfig, access: AccessControl) -> shvrpc::Result<()> {
     if let Some(address) = config.listen.tcp.clone() {
-        let broker = BrokerImpl::new(access);
-        let broker_sender = broker.command_sender.clone();
+        let broker_impl = BrokerImpl::new(access);
+        let broker_sender = broker_impl.command_sender.clone();
         let parent_broker_peer_config = config.parent_broker.clone();
-        let broker_task = task::spawn(crate::broker::broker_loop(broker));
+        let broker_task = task::spawn(crate::broker::broker_loop(broker_impl));
         if parent_broker_peer_config.enabled {
             crate::spawn_and_log_error(peer::parent_broker_peer_loop_with_reconnect(1, parent_broker_peer_config, broker_sender.clone()));
         }

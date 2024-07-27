@@ -180,27 +180,6 @@ pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<V
         None
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ls_mounts() {
-        let mut mounts = BTreeMap::new();
-        mounts.insert("a".into(), ());
-        mounts.insert("a/1".into(), ());
-        mounts.insert("b/2/C".into(), ());
-        mounts.insert("b/2/D".into(), ());
-        mounts.insert("b/3/E".into(), ());
-        mounts.insert("a/xyz".into(), ());
-        mounts.insert("a/1xyz".into(), ());
-        assert_eq!(super::children_on_path(&mounts, ""), Some(vec!["a".to_string(), "b".to_string()]));
-        assert_eq!(super::children_on_path(&mounts, "a"), Some(vec!["1".to_string(), "1xyz".to_string(), "xyz".to_string()]));
-        assert_eq!(super::children_on_path(&mounts, "a/x"), None);
-        assert_eq!(super::children_on_path(&mounts, "a/1"), None);
-        assert_eq!(super::children_on_path(&mounts, "b/2"), Some(vec!["C".to_string(), "D".to_string()]));
-    }
-}
 pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) -> Option<(&'a str, &'a str)> {
     let mut path = shv_path;
     let mut rest = "";
@@ -322,7 +301,7 @@ const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag
 const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
 
 impl AppNode {
-    pub fn new_shvnode(&self) -> ShvNode {
+    pub fn new_shvnode() -> ShvNode {
         ShvNode { methods: vec![
             &META_METHOD_DIR,
             &META_METHOD_LS,
@@ -353,5 +332,26 @@ impl AppDeviceNode {
             &META_METH_VERSION,
             &META_METH_SERIAL_NUMBER,
         ] }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ls_mounts() {
+        let mut mounts = BTreeMap::new();
+        mounts.insert("a".into(), ());
+        mounts.insert("a/1".into(), ());
+        mounts.insert("b/2/C".into(), ());
+        mounts.insert("b/2/D".into(), ());
+        mounts.insert("b/3/E".into(), ());
+        mounts.insert("a/xyz".into(), ());
+        mounts.insert("a/1xyz".into(), ());
+        assert_eq!(super::children_on_path(&mounts, ""), Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(super::children_on_path(&mounts, "a"), Some(vec!["1".to_string(), "1xyz".to_string(), "xyz".to_string()]));
+        assert_eq!(super::children_on_path(&mounts, "a/x"), None);
+        assert_eq!(super::children_on_path(&mounts, "a/1"), None);
+        assert_eq!(super::children_on_path(&mounts, "b/2"), Some(vec!["C".to_string(), "D".to_string()]));
     }
 }

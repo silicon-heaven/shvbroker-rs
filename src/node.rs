@@ -35,7 +35,7 @@ pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
 
 pub(crate) struct BrokerNode {}
 impl BrokerNode {
-    pub fn new_shvnode(&self) -> ShvNode {
+    pub fn new_shvnode() -> ShvNode {
         ShvNode { methods: vec![
             &META_METHOD_DIR,
             &META_METHOD_LS,
@@ -46,32 +46,6 @@ impl BrokerNode {
             &META_METH_DISCONNECT_CLIENT,
         ] }
     }
-
-    // fn process_request(&mut self, rq: &RpcMessage) -> RequestCommand<BrokerNodeCommand> {
-    //     match rq.method() {
-    //         Some(METH_CLIENT_INFO) => {
-    //             let client_id = rq.param().unwrap_or_default().as_i32();
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::ClientInfo(client_id))
-    //         }
-    //         Some(METH_MOUNTED_CLIENT_INFO) => {
-    //             let mount_point = rq.param().unwrap_or_default().as_str();
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::MountedClientInfo(mount_point.to_owned()))
-    //         }
-    //         Some(METH_CLIENTS) => {
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::Clients)
-    //         }
-    //         Some(METH_MOUNTS) => {
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::Mounts)
-    //         }
-    //         Some(METH_DISCONNECT_CLIENT) => {
-    //             let client_id = rq.param().unwrap_or_default().as_i32();
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::DisconnectClient(client_id))
-    //         }
-    //         _ => {
-    //             ShvNode::<BrokerNodeCommand>::process_dir_ls(self, rq)
-    //         }
-    //     }
-    // }
 }
 
 const META_METH_INFO: MetaMethod = MetaMethod { name: METH_INFO, flags: Flag::None as u32, access: AccessLevel::Browse, param: "Int", result: "ClientInfo", description: "" };
@@ -81,7 +55,7 @@ const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTION
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
-    pub fn new_shvnode(&self) -> ShvNode {
+    pub fn new_shvnode() -> ShvNode {
         ShvNode { methods: vec![
             &META_METHOD_DIR,
             &META_METHOD_LS,

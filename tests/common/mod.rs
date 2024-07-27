@@ -83,7 +83,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
     println!("shvcall port: {port} {path}:{method} param: {}", param);
     let output = match Command::new(SHVCALL_BINARY)
         .arg("-v").arg(".:T")
-        .arg("--url").arg(format!("tcp://admin@localhost:{port}?password=admin"))
+        .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
         .arg("--path").arg(path)
         .arg("--method").arg(method)
         .arg("--param").arg(param)
@@ -103,7 +103,7 @@ pub fn shv_call_many(calls: Vec<String>, port: Option<i32>) -> shvrpc::Result<Ve
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
+        .arg("--url").arg(format!("tcp://localhost:{port}?user=test&password=test"))
         .arg("--output-format").arg("simple")
         .arg("-v").arg(".:I");
     //println!("shvcall --url 'tcp://localhost:{port}?user=admin&password=admin' --output-format simple -v .:I");

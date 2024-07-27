@@ -29,11 +29,11 @@ crc = "3.2.1"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 #getrandom = { version = "0.2", features = ["js"] }
 
-# For local development
-#[patch."https://github.com/silicon-heaven/libshvproto-rs"]
-#shvproto = { path = "../libshvproto-rs" }
-#[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
-#shvrpc = { path = "../libshvrpc-rs" }
+ # For local development
+[patch."https://github.com/silicon-heaven/libshvproto-rs"]
+shvproto = { path = "../libshvproto-rs" }
+[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
+shvrpc = { path = "../libshvrpc-rs" }
 
 [[bin]]
 name = "shvbroker"

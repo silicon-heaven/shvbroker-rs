@@ -26,8 +26,6 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
-    broker_writer.send(BrokerCommand::NewPeer { client_id, sender: peer_writer, peer_kind: PeerKind::Client }).await?;
-
     let brd = BufReader::new(socket_reader);
     let bwr = BufWriter::new(socket_writer);
 
@@ -35,6 +33,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
     let mut frame_writer = StreamFrameWriter::new(bwr);
 
     let mut device_options = RpcValue::null();
+    let mut user;
     loop {
         let nonce = {
             let frame = frame_reader.receive_frame().await?;
@@ -62,11 +61,11 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
             debug!("Client ID: {client_id}, login received.");
             let params = rpcmsg.param().ok_or("No login params")?.as_map();
             let login = params.get("login").ok_or("Invalid login params")?.as_map();
-            let user = login.get("user").ok_or("User login param is missing")?.as_str();
+            user = login.get("user").ok_or("User login param is missing")?.clone();
             let password = login.get("password").ok_or("Password login param is missing")?.as_str();
             let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
 
-            broker_writer.send(BrokerCommand::GetPassword { client_id, user: user.to_string() }).await.unwrap();
+            broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
             match peer_reader.recv().await? {
                 BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
                     let chkpwd = || {
@@ -77,12 +76,12 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                                     let client_shapass = sha1_hash(password.as_bytes());
                                     client_shapass == broker_shapass
                                 } else {
-                                    //info!("nonce: {}", nonce);
-                                    //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
-                                    //info!("client password: {}", password);
                                     let mut data = nonce.as_bytes().to_vec();
                                     data.extend_from_slice(&broker_shapass[..]);
                                     let broker_shapass = sha1_hash(&data);
+                                    info!("nonce: {}", nonce);
+                                    info!("client password: {}", password);
+                                    info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
                                     password.as_bytes() == broker_shapass
                                 }
                             }
@@ -100,7 +99,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                         }
                         break;
                     } else {
-                        debug!("Client ID: {client_id}, login credentials.");
+                        debug!("Client ID: {client_id}, invalid login credentials.");
                         frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
                         continue;
                     }
@@ -111,14 +110,18 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
             }
         }
     };
-    debug!("Client ID: {client_id} login sucess.");
-    let register_device = BrokerCommand::RegisterDevice {
-        client_id,
-        device_id: device_options.as_map().get("deviceId").map(|v| v.as_str().to_string()),
-        mount_point: device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string()),
-        subscribe_path: None,
-    };
-    broker_writer.send(register_device).await.unwrap();
+    let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
+    let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
+    debug!("Client ID: {client_id} login success.");
+    broker_writer.send(
+        BrokerCommand::NewPeer {
+            client_id,
+            peer_kind: PeerKind::Client,
+            user: user.as_str().to_string(),
+            mount_point,
+            device_id,
+            sender: peer_writer
+        }).await?;
 
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
     let mut fut_receive_broker_event = peer_reader.recv().fuse();
@@ -244,7 +247,14 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
     client::login(&mut frame_reader, &mut frame_writer, &login_params).await?;
 
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
-    broker_writer.send(BrokerCommand::NewPeer { client_id, sender: broker_to_peer_sender, peer_kind: PeerKind::ParentBroker }).await?;
+    broker_writer.send(BrokerCommand::NewPeer {
+        client_id,
+        peer_kind: PeerKind::ParentBroker,
+        user: "".into(),
+        mount_point: None,
+        device_id: None,
+        sender: broker_to_peer_sender,
+    }).await?;
 
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
     let mut fut_receive_broker_event = broker_to_peer_receiver.recv().fuse();
