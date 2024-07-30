@@ -17,14 +17,14 @@ pub const DIR_APP_DEVICE: &str = ".app/device";
 pub enum DirParam {
     Brief,
     Full,
-    BriefMethod(String),
+    MethodExists(String),
 }
 impl From<Option<&RpcValue>> for DirParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
             Some(rpcval) => {
                 if rpcval.is_string() {
-                    DirParam::BriefMethod(rpcval.as_str().into())
+                    DirParam::MethodExists(rpcval.as_str().into())
                 } else if rpcval.as_bool() {
                     DirParam::Full
                 } else {
@@ -38,8 +38,10 @@ impl From<Option<&RpcValue>> for DirParam {
     }
 }
 
-fn dir<'a>(methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
-    let mut result = RpcValue::null();
+fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
+    if let DirParam::MethodExists(ref method_name) = param {
+        return methods.any(|mm| mm.name == method_name).into()
+    }
     let mut lst = rpcvalue::List::new();
     for mm in methods {
         match param {
@@ -49,19 +51,10 @@ fn dir<'a>(methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcV
             DirParam::Full => {
                 lst.push(mm.to_rpcvalue(metamethod::DirFormat::Map));
             }
-            DirParam::BriefMethod(ref method_name) => {
-                if mm.name == method_name {
-                    result = mm.to_rpcvalue(metamethod::DirFormat::IMap);
-                    break;
-                }
-            }
+            _ => {}
         }
     }
-    if result.is_null() {
-        lst.into()
-    } else {
-        result
-    }
+    lst.into()
 }
 
 pub enum LsParam {
@@ -201,6 +194,7 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
     None
 }
 
+#[derive(Debug, Clone)]
 pub struct ShvNode {
     pub methods: Vec<&'static MetaMethod>,
 }
@@ -261,12 +255,12 @@ pub const METH_PING: &str = "ping";
 pub const METH_VERSION: &str = "version";
 pub const METH_SERIAL_NUMBER: &str = "serialNumber";
 
-pub const META_METHOD_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", description: "" };
-pub const META_METHOD_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", description: "" };
+pub const META_METHOD_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
+pub const META_METHOD_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
 
 pub const DIR_LS_METHODS: [MetaMethod; 2] = [
-    MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", description: "" },
-    MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", description: "" },
+    MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" },
+    MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" },
 ];
 /*
 pub const PROPERTY_METHODS: [MetaMethod; 3] = [
@@ -295,10 +289,10 @@ impl Default for AppNode {
     }
 }
 
-const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MAJOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
-const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MINOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
-const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
-const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
+const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MAJOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MINOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
 
 impl AppNode {
     pub fn new_shvnode() -> ShvNode {
@@ -313,9 +307,9 @@ impl AppNode {
     }
 }
 
-const META_METH_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
-const META_METH_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
-const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod { name: "serialNumber", flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", description: "" };
+const META_METH_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod { name: "serialNumber", flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
 
 pub struct AppDeviceNode {
     pub device_name: &'static str,

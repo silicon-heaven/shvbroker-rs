@@ -79,9 +79,9 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                                     let mut data = nonce.as_bytes().to_vec();
                                     data.extend_from_slice(&broker_shapass[..]);
                                     let broker_shapass = sha1_hash(&data);
-                                    info!("nonce: {}", nonce);
-                                    info!("client password: {}", password);
-                                    info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
+                                    //info!("nonce: {}", nonce);
+                                    //info!("client password: {}", password);
+                                    //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
                                     password.as_bytes() == broker_shapass
                                 }
                             }

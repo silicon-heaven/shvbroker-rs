@@ -96,7 +96,7 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**::".into(), grant: "su,dot-local".to_string() },
+                            AccessRule { shv_ri: "**:*".into(), grant: "su,dot-local".to_string() },
                         ],
                     }),
                     ("client".to_string(), Role { roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()], access: vec![] }),
@@ -112,7 +112,7 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: "test/**::".into(), grant: "cfg".to_string() },
+                            AccessRule { shv_ri: "test/**:*".into(), grant: "cfg".to_string() },
                         ],
                     }),
                     ("ping".to_string(), Role {
@@ -131,13 +131,13 @@ impl Default for BrokerConfig {
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "::".into(), grant: "bws".to_string() },
+                            AccessRule { shv_ri: "**:*".into(), grant: "bws".to_string() },
                         ],
                     }),
                 ]),
                 mounts: BTreeMap::from([
-                    ("test-device".into(), Mount{ mount_point: "shv/test/device".to_string(), description: "Testing device mount-point".to_string() }),
-                    ("test-child-broker".into(), Mount{ mount_point: "shv/test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
+                    ("test-device".into(), Mount{ mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() }),
+                    ("test-child-broker".into(), Mount{ mount_point: "test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
             },
         }

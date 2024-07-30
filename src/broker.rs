@@ -5,9 +5,9 @@ use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::rpc::{ShvRI, Subscription, SubscriptionParam};
+use shvrpc::rpc::{ShvRI, Subscription};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{CliId, RpcError, RqId};
+use shvrpc::rpcmessage::{PeerId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
 use async_std::stream::StreamExt;
 use futures::select;
@@ -23,7 +23,7 @@ pub(crate) enum BrokerCommand {
         user: String,
     },
     NewPeer {
-        client_id: CliId,
+        client_id: PeerId,
         peer_kind: PeerKind,
         user: String,
         mount_point: Option<String>,
@@ -31,26 +31,26 @@ pub(crate) enum BrokerCommand {
         sender: Sender<BrokerToPeerMessage>,
     },
     FrameReceived {
-        client_id: CliId,
+        client_id: PeerId,
         frame: RpcFrame,
     },
     PeerGone {
-        peer_id: CliId,
+        peer_id: PeerId,
     },
-    SendResponse {peer_id: CliId, meta: MetaMap, result: Result<RpcValue, RpcError>},
-    CallSubscribeOnPeer {
-        peer_id: CliId,
-        subscriptions: Vec<SubscriptionParam>,
-    },
+    SendResponse {peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>},
+    //CallSubscribeOnPeer {
+    //    peer_id: CliId,
+    //    subscriptions: Vec<SubscriptionParam>,
+    //},
     RpcCall {
-        client_id: CliId,
+        client_id: PeerId,
         request: RpcMessage,
         response_sender: Sender<RpcFrame>,
     },
-    SetSubscribeMethodPath {
-        peer_id: CliId,
-        subscribe_path: SubscribePath,
-    },
+    //SetSubscribeMethodPath {
+    //    peer_id: CliId,
+    //    subscribe_path: SubscribePath,
+    //},
 }
 
 #[derive(Debug)]
@@ -64,21 +64,22 @@ pub(crate) enum BrokerToPeerMessage {
 #[derive(Debug, Clone)]
 pub(crate) enum SubscribePath {
     NotBroker,
-    CanSubscribeCheck,
     CanSubscribe(String),
 }
 #[derive(Debug, Clone)]
 pub(crate) enum PeerKind {
     Client,
     ParentBroker,
-    Device(Option<SubscribePath>),
+    Device {
+        device_id: Option<String>,
+        mount_point: String,
+        subscribe_path: Option<SubscribePath>,
+    },
 }
 #[derive(Debug)]
 pub(crate) struct Peer {
     pub(crate) peer_kind: PeerKind,
     pub(crate) user: String,
-    pub(crate) mount_point: Option<String>,
-    pub(crate) device_id: Option<String>,
     pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) subscriptions: Vec<Subscription>,
 }
@@ -101,16 +102,9 @@ impl Peer {
     //}
 }
 
-pub(crate) struct Device {
-    pub(crate) peer_id: CliId,
-}
-
-impl Device {
-}
-
-
+#[derive(Debug, Clone)]
 pub(crate) enum Mount {
-    Peer(Device),
+    Peer(PeerId),
     Node(ShvNode),
 }
 
@@ -136,7 +130,7 @@ impl ParsedAccessRule {
 }
 
 pub(crate) struct PendingRpcCall {
-    pub(crate) client_id: CliId,
+    pub(crate) client_id: PeerId,
     pub(crate) request_id: RqId,
     pub(crate) response_sender: Sender<RpcFrame>,
 }
