@@ -15,7 +15,7 @@ use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::RpcFrame;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, METH_PING, DOT_LOCAL_GRANT};
-use shvrpc::util::{join_path, login_from_url, sha1_hash};
+use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::broker::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use crate::config::ParentBrokerConfig;
 use shvrpc::framerw::{FrameReader, FrameWriter};
@@ -115,7 +115,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
     debug!("Client ID: {client_id} login success.");
     broker_writer.send(
         BrokerCommand::NewPeer {
-            client_id,
+            peer_id: client_id,
             peer_kind: PeerKind::Client,
             user: user.as_str().to_string(),
             mount_point,
@@ -135,13 +135,13 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                     fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
                 Err(e) => {
-                    error!("Read socket error: {}", &e);
+                    debug!("Peer socket closed: {}", &e);
                     break;
                 }
             },
             event = fut_receive_broker_event => match event {
                 Err(e) => {
-                    debug!("Peer channel closed: {}", &e);
+                    debug!("Broker to Peer channel closed: {}", &e);
                     break;
                 }
                 Ok(event) => {
@@ -168,7 +168,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id: client_id }).await?;
-    info!("Client loop exit, client id: {}", client_id);
+    debug!("Client loop exit, client id: {}", client_id);
     Ok(())
 }
 pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
@@ -248,7 +248,7 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
 
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {
-        client_id,
+        peer_id: client_id,
         peer_kind: PeerKind::ParentBroker,
         user: "".into(),
         mount_point: None,
@@ -286,21 +286,17 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
                         }
                         fn is_dot_local_request(frame: &RpcFrame) -> bool {
                             let shv_path = frame.shv_path().unwrap_or_default();
-                            if shv_path.starts_with(DOT_LOCAL_DIR)&& (shv_path.len() == DOT_LOCAL_DIR.len() || shv_path[DOT_LOCAL_DIR.len() ..].starts_with('/')) {
+                            if starts_with_path(shv_path, DOT_LOCAL_DIR) {
                                 return is_dot_local_granted(frame);
                             }
                             false
                         }
                         let shv_path = frame.shv_path().unwrap_or_default().to_owned();
-                        let shv_path = if let Some(stripped_path) = shv_path.strip_prefix('/') {
-                            // parent broker can send requests with absolute path
-                            // to call subscribe(), rejectNotSubscribe() etc.
-                            stripped_path.to_string()
+                        let shv_path = if starts_with_path(&shv_path, ".broker") {
+                            // hack to enable parent broker to call paths under exported_root
+                            shv_path
                         } else if is_dot_local_request(&frame) {
-                            let shv_path = &shv_path[DOT_LOCAL_DIR.len() ..];
-                            let shv_path = if let Some(stripped_path) = shv_path.strip_prefix('/') {
-                                stripped_path } else { shv_path };
-                            shv_path.to_string()
+                            strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
                         } else {
                             if shv_path.is_empty() && is_dot_local_granted(&frame) {
                                 frame.meta.insert(DOT_LOCAL_HACK, true.into());

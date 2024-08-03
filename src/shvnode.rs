@@ -85,23 +85,26 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         return None
     }
     let shv_path = frame.shv_path().unwrap_or_default();
-    let mut children_on_path = children_on_path(mounts, shv_path);
-    if let Some(children_on_path) = children_on_path.as_mut() {
+    let children_on_path = children_on_path(mounts, shv_path).map(|children| {
         if frame.meta.get(DOT_LOCAL_HACK).is_some() {
-            children_on_path.insert(0, DOT_LOCAL_DIR.into());
+            let mut children = children;
+            children.insert(0, DOT_LOCAL_DIR.into());
+            children
+        } else {
+            children
         }
-    }
-    let mount = find_longest_prefix(mounts, shv_path);
-    let is_mount_point = mount.is_some();
-    let is_leaf = match &children_on_path {
-        None => { is_mount_point }
-        Some(dirs) => { dirs.is_empty() }
-    };
-    if children_on_path.is_none() && !is_mount_point {
+    });
+    let mount_pair = find_longest_prefix(mounts, shv_path);
+    if mount_pair.is_none() && children_on_path.is_none() {
         // path doesn't exist
         return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {}", shv_path))))
     }
-    if method == METH_DIR && !is_mount_point {
+    let is_mount_point = mount_pair.is_some() && mount_pair.unwrap().1.is_empty();
+    let is_remote_dir = mount_pair.is_some() && children_on_path.is_none();
+    let is_tree_leaf = mount_pair.is_some() && children_on_path.is_some() && children_on_path.as_ref().unwrap().is_empty();
+    //println!("shv path: {shv_path}, method: {method}, mount pair: {:?}", mount_pair);
+    //println!("is_mount_point: {is_mount_point}, is_tree_leaf: {is_tree_leaf}");
+    if method == METH_DIR && !is_mount_point && !is_remote_dir && !is_tree_leaf {
         // dir in the middle of the tree must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let dir = dir(DIR_LS_METHODS.iter(), rpcmsg.param().into());
@@ -110,7 +113,7 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
             return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
         }
     }
-    if method == METH_LS && !is_leaf {
+    if method == METH_LS && !is_tree_leaf && !is_remote_dir  {
         // ls on not-leaf node must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let ls = ls_children_to_result(children_on_path, rpcmsg.param().into());
@@ -152,14 +155,16 @@ pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<V
     let mut dir_exists = false;
     for (key, _) in mounts.range(path.to_string()..) {
         if key.starts_with(path) {
-            if path.is_empty() || (key.len() > path.len() && key.as_bytes()[path.len()] == (b'/')) {
+            if path.is_empty() || key.len() == path.len() || key[path.len() ..].starts_with('/') {
                 dir_exists = true;
-                let dir_rest_start = if path.is_empty() { 0 } else { path.len() + 1 };
-                let mut updirs = key[dir_rest_start..].split('/');
-                if let Some(dir) = updirs.next() {
-                    if !unique_dirs.contains(dir) {
-                        dirs.push(dir.to_string());
-                        unique_dirs.insert(dir.to_string());
+                if key.len() > path.len() {
+                    let dir_rest_start = if path.is_empty() { 0 } else { path.len() + 1 };
+                    let mut updirs = key[dir_rest_start..].split('/');
+                    if let Some(dir) = updirs.next() {
+                        if !unique_dirs.contains(dir) {
+                            dirs.push(dir.to_string());
+                            unique_dirs.insert(dir.to_string());
+                        }
                     }
                 }
             }
@@ -335,17 +340,22 @@ mod tests {
     #[test]
     fn ls_mounts() {
         let mut mounts = BTreeMap::new();
-        mounts.insert("a".into(), ());
-        mounts.insert("a/1".into(), ());
-        mounts.insert("b/2/C".into(), ());
-        mounts.insert("b/2/D".into(), ());
-        mounts.insert("b/3/E".into(), ());
-        mounts.insert("a/xyz".into(), ());
-        mounts.insert("a/1xyz".into(), ());
-        assert_eq!(super::children_on_path(&mounts, ""), Some(vec!["a".to_string(), "b".to_string()]));
-        assert_eq!(super::children_on_path(&mounts, "a"), Some(vec!["1".to_string(), "1xyz".to_string(), "xyz".to_string()]));
-        assert_eq!(super::children_on_path(&mounts, "a/x"), None);
-        assert_eq!(super::children_on_path(&mounts, "a/1"), None);
-        assert_eq!(super::children_on_path(&mounts, "b/2"), Some(vec!["C".to_string(), "D".to_string()]));
+        mounts.insert(".broker".into(), ());
+        mounts.insert(".broker/client/1".into(), ());
+        mounts.insert(".broker/client/2".into(), ());
+        mounts.insert(".broker/currentClient".into(), ());
+        mounts.insert("test/device".into(), ());
+
+        assert_eq!(super::find_longest_prefix(&mounts, ".broker/client"), Some((".broker", "client")));
+        assert_eq!(super::find_longest_prefix(&mounts, "test"), None);
+        assert_eq!(super::find_longest_prefix(&mounts, "test/device"), Some(("test/device", "")));
+
+        assert_eq!(super::children_on_path(&mounts, ""), Some(vec![".broker", "test"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, ".broker"), Some(vec!["client", "currentClient"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, ".broker/client"), Some(vec!["1", "2"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, "test"), Some(vec!["device"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, ".broker/currentClient"), Some(vec![].into_iter().map(|s: &str/* Type */| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, "test/device/1"), None);
+        assert_eq!(super::children_on_path(&mounts, "test1"), None);
     }
 }

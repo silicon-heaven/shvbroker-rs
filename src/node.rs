@@ -3,7 +3,7 @@ use crate::shvnode::{META_METHOD_DIR, META_METHOD_LS, ShvNode};
 
 pub const DIR_BROKER: &str = ".broker";
 pub const DIR_BROKER_CURRENTCLIENT: &str = ".broker/currentClient";
-pub const DIR_BROKER_CLIENT: &str = ".broker/client";
+//pub const DIR_BROKER_CLIENT: &str = ".broker/client";
 
 pub const METH_CLIENT_INFO: &str = "clientInfo";
 pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";

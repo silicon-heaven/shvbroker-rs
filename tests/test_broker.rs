@@ -75,10 +75,8 @@ fn test_broker() -> shvrpc::Result<()> {
         }
         println!("---broker---: .app:dir(\"ping\")");
         {
-            let method = shv_call_child(".app", "dir", r#""ping""#)?;
-            assert!(method.is_imap());
-            let name = method.as_imap().get(&metamethod::DirAttribute::Name.into()).ok_or("Name attribute doesn't exist")?.as_str();
-            assert_eq!(name, "ping");
+            let exists = shv_call_child(".app", "dir", r#""ping""#)?;
+            assert!(exists.as_bool());
         }
     }
     println!("---broker---: .app:ping()");
@@ -96,18 +94,18 @@ fn test_broker() -> shvrpc::Result<()> {
 
     println!("---broker---: test:ls()");
     assert_eq!(shv_call_child("test", "ls", "")?, vec![RpcValue::from("device")].into());
-    assert_eq!(shv_call_parent("shv/test/child-broker", "ls", "")?, vec![RpcValue::from(".local"), RpcValue::from("device")].into());
+    assert_eq!(shv_call_parent("test/child-broker", "ls", "")?, vec![RpcValue::from(".local"), RpcValue::from("device")].into());
     println!("---broker---: test/device:ls()");
     assert_eq!(shv_call_child("test/device", "ls", "")?, vec![RpcValue::from(".app"), RpcValue::from(".device"), RpcValue::from("state")].into());
-    assert_eq!(shv_call_parent("shv/test/child-broker/device", "ls", "")?, vec![RpcValue::from(".app"), RpcValue::from(".device"), RpcValue::from("state")].into());
+    assert_eq!(shv_call_parent("test/child-broker/device", "ls", "")?, vec![RpcValue::from(".app"), RpcValue::from(".device"), RpcValue::from("state")].into());
     println!("---broker---: test/device/.app:ping()");
     assert_eq!(shv_call_child("test/device/.app", "ping", "")?, RpcValue::null());
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/.app", "ping", "")?, RpcValue::null());
+    assert_eq!(shv_call_parent("test/child-broker/device/.app", "ping", "")?, RpcValue::null());
     println!("---broker---: test/device/number:ls()");
     assert_eq!(shv_call_child("test/device/state/number", "ls", "")?, rpcvalue::List::new().into());
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "ls", "")?, rpcvalue::List::new().into());
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "set", "27")?, ().into());
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "get", "")?, 27.into());
+    assert_eq!(shv_call_parent("test/child-broker/device/state/number", "ls", "")?, rpcvalue::List::new().into());
+    assert_eq!(shv_call_parent("test/child-broker/device/state/number", "set", "27")?, ().into());
+    assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, 27.into());
     println!("---broker---: .broker:clients()");
     assert!(!shv_call_child(".broker", "clients", "")?.as_list().is_empty());
 

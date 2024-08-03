@@ -71,7 +71,7 @@ async fn test_broker_loop() {
     let user = "admin";
     //let password = "admin";
     broker_sender.send(BrokerCommand::NewPeer {
-        client_id,
+        peer_id: client_id,
         peer_kind: PeerKind::Client,
         user: user.to_string(),
         mount_point: Some("test/device".into()),

@@ -1,3 +1,4 @@
+use std::time::Instant;
 use async_std::{task};
 use async_std::channel::Sender;
 use async_std::net::TcpListener;
@@ -5,7 +6,7 @@ use crate::config::{AccessControl, BrokerConfig};
 use shvrpc::metamethod::AccessLevel;
 use log::{debug, info, warn};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::rpc::{ShvRI, Subscription};
+use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RqId};
 use crate::shvnode::{ShvNode};
@@ -17,13 +18,39 @@ use crate::brokerimpl::{BrokerImpl};
 use crate::peer;
 
 #[derive(Debug)]
+pub(crate)  struct Subscription {
+    pub(crate) param: SubscriptionParam,
+    pub(crate) glob: Glob,
+    pub(crate) subscribed: Instant,
+}
+#[derive(Debug)]
+pub(crate)  struct ForwardedSubscription {
+    pub(crate) param: SubscriptionParam,
+    pub(crate) subscribed: Option<Instant>,
+}
+
+impl Subscription {
+    pub(crate) fn new(subpar: &SubscriptionParam) -> shvrpc::Result<Self> {
+        let glob = subpar.ri.to_glob()?;
+        Ok(Self {
+            param: subpar.clone(),
+            glob,
+            subscribed: Instant::now(),
+        })
+    }
+    pub(crate) fn match_shv_ri(&self, shv_ri: &ShvRI) -> bool {
+        self.glob.match_shv_ri(shv_ri)
+    }
+}
+
+#[derive(Debug)]
 pub(crate) enum BrokerCommand {
     GetPassword {
         sender: Sender<BrokerToPeerMessage>,
         user: String,
     },
     NewPeer {
-        client_id: PeerId,
+        peer_id: PeerId,
         peer_kind: PeerKind,
         user: String,
         mount_point: Option<String>,
@@ -82,6 +109,7 @@ pub(crate) struct Peer {
     pub(crate) user: String,
     pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) subscriptions: Vec<Subscription>,
+    pub(crate) forwarded_subscriptions: Vec<ForwardedSubscription>,
 }
 
 impl Peer {
