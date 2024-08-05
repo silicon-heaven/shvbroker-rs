@@ -10,7 +10,7 @@ use rand::distributions::{Alphanumeric, DistString};
 use shvproto::RpcValue;
 use url::Url;
 use shvrpc::metamethod::AccessLevel;
-use shvrpc::rpcmessage::Tag;
+use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::RpcFrame;
@@ -22,9 +22,20 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-
-pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
-    debug!("Entering peer loop client ID: {client_id}.");
+pub(crate) async fn peer_loop_safe(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
+    match peer_loop(peer_id, broker_writer.clone(), stream).await {
+        Ok(_) => {
+            info!("Client loop exit OK, peer id: {peer_id}");
+        }
+        Err(e) => {
+            info!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+        }
+    }
+    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+    Ok(())
+}
+pub(crate) async fn peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
+    debug!("Entering peer loop client ID: {peer_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
@@ -45,7 +56,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                 frame_writer.send_error(resp_meta, "Invalid login message.").await?;
                 continue;
             }
-            debug!("Client ID: {client_id}, hello received.");
+            debug!("Client ID: {peer_id}, hello received.");
             let nonce = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
             let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
@@ -60,7 +71,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                 frame_writer.send_error(resp_meta, "Invalid login message.").await?;
                 continue;
             }
-            debug!("Client ID: {client_id}, login received.");
+            debug!("Client ID: {peer_id}, login received.");
             let params = rpcmsg.param().ok_or("No login params")?.as_map();
             let login = params.get("login").ok_or("Invalid login params")?.as_map();
             user = login.get("user").ok_or("User login param is missing")?.clone();
@@ -90,9 +101,9 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                         }
                     };
                     if chkpwd() {
-                        debug!("Client ID: {client_id}, password OK.");
+                        debug!("Client ID: {peer_id}, password OK.");
                         let mut result = shvproto::Map::new();
-                        result.insert("clientId".into(), RpcValue::from(client_id));
+                        result.insert("clientId".into(), RpcValue::from(peer_id));
                         frame_writer.send_result(resp_meta, result.into()).await?;
                         if let Some(options) = params.get("options") {
                             if let Some(device) = options.as_map().get("device") {
@@ -101,7 +112,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                         }
                         break;
                     } else {
-                        debug!("Client ID: {client_id}, invalid login credentials.");
+                        debug!("Client ID: {peer_id}, invalid login credentials.");
                         frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
                         continue;
                     }
@@ -114,10 +125,10 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
     };
     let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
     let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
-    debug!("Client ID: {client_id} login success.");
+    debug!("Client ID: {peer_id} login success.");
     broker_writer.send(
         BrokerCommand::NewPeer {
-            peer_id: client_id,
+            peer_id,
             peer_kind: PeerKind::Client,
             user: user.as_str().to_string(),
             mount_point,
@@ -132,7 +143,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
             frame = fut_receive_frame => match frame {
                 Ok(frame) => {
                     // log!(target: "RpcMsg", Level::Debug, "----> Recv frame, client id: {}", client_id);
-                    broker_writer.send(BrokerCommand::FrameReceived { client_id, frame }).await?;
+                    broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
@@ -152,7 +163,7 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
                             panic!("PasswordSha1 cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
-                            info!("Disconnected by broker, client ID: {client_id}");
+                            info!("Disconnected by broker, client ID: {peer_id}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
@@ -169,11 +180,9 @@ pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerComman
             }
         }
     }
-    broker_writer.send(BrokerCommand::PeerGone { peer_id: client_id }).await?;
-    debug!("Client loop exit, client id: {}", client_id);
     Ok(())
 }
-pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+pub(crate) async fn parent_broker_peer_loop_with_reconnect(peer_id: PeerId, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = Url::parse(&config.client.url)?;
     if url.scheme() != "tcp" {
         return Err(format!("Scheme {} is not supported yet.", url.scheme()).into());
@@ -190,7 +199,7 @@ pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, confi
     };
     info!("Reconnect interval set to: {:?}", reconnect_interval);
     loop {
-        match parent_broker_peer_loop(client_id, config.clone(), broker_writer.clone()).await {
+        match parent_broker_peer_loop(peer_id, config.clone(), broker_writer.clone()).await {
             Ok(_) => {
                 info!("Parent broker peer loop finished without error");
             }
@@ -198,6 +207,7 @@ pub(crate) async fn parent_broker_peer_loop_with_reconnect(client_id: i32, confi
                 error!("Parent broker peer loop finished with error: {err}");
             }
         }
+        broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
         info!("Reconnecting to parent broker after: {:?}", reconnect_interval);
         async_std::task::sleep(reconnect_interval).await;
     }
@@ -215,7 +225,7 @@ fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
         None
     }
 }
-async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+async fn parent_broker_peer_loop(peer_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = Url::parse(&config.client.url)?;
     let (scheme, host, port) = (url.scheme(), url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
     if scheme != "tcp" {
@@ -250,7 +260,7 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
 
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {
-        peer_id: client_id,
+        peer_id,
         peer_kind: PeerKind::ParentBroker,
         user: "".into(),
         mount_point: None,
@@ -310,7 +320,7 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
                             join_path(&config.exported_root, &shv_path)
                         };
                         frame.set_shvpath(&shv_path);
-                        broker_writer.send(BrokerCommand::FrameReceived { client_id, frame }).await.unwrap();
+                        broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await.unwrap();
                     }
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
@@ -321,7 +331,7 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
             },
             event = fut_receive_broker_event => match event {
                 Err(e) => {
-                    debug!("broker loop has closed peer channel, client ID {client_id}");
+                    debug!("broker loop has closed peer channel, client ID {peer_id}");
                     return Err(e.into());
                 }
                 Ok(event) => {
@@ -330,7 +340,7 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
                             panic!("PasswordSha1 cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
-                            info!("Disconnected by parent broker, client ID: {client_id}");
+                            info!("Disconnected by parent broker, client ID: {peer_id}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
@@ -363,7 +373,6 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
             }
         }
     };
-
     Ok(())
 }
 

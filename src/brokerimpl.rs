@@ -513,7 +513,7 @@ impl BrokerImpl {
     }
     pub async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
-            BrokerCommand::FrameReceived { client_id, frame } => {
+            BrokerCommand::FrameReceived { peer_id: client_id, frame } => {
                 if let Err(err) = self.process_rpc_frame(client_id, frame).await {
                     warn!("Process RPC frame error: {err}");
                 }

@@ -21,7 +21,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
     let msg = RpcMessage::new_request(shv_path, method, param);
     let frame = RpcFrame::from_rpcmessage(&msg).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
-    ctx.writer.send(BrokerCommand::FrameReceived { client_id: ctx.client_id, frame }).await.unwrap();
+    ctx.writer.send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).await.unwrap();
     let retval = loop {
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {

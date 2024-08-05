@@ -58,7 +58,7 @@ pub(crate) enum BrokerCommand {
         sender: Sender<BrokerToPeerMessage>,
     },
     FrameReceived {
-        client_id: PeerId,
+        peer_id: PeerId,
         frame: RpcFrame,
     },
     PeerGone {
@@ -194,13 +194,13 @@ pub async fn accept_loop(config: BrokerConfig, access: AccessControl) -> shvrpc:
         info!("Listening on TCP: {}", address);
         let listener = TcpListener::bind(address).await?;
         info!("bind OK");
-        let mut client_id = 2; // parent broker has client_id == 1
+        let mut peer_id = 2; // parent broker has client_id == 1
         let mut incoming = listener.incoming();
         while let Some(stream) = incoming.next().await {
             let stream = stream?;
             debug!("Accepting from: {}", stream.peer_addr()?);
-            crate::spawn_and_log_error(peer::peer_loop(client_id, broker_sender.clone(), stream));
-            client_id += 1;
+            crate::spawn_and_log_error(peer::peer_loop_safe(peer_id, broker_sender.clone(), stream));
+            peer_id += 1;
         }
         drop(broker_sender);
         broker_task.await;
