@@ -461,13 +461,13 @@ impl BrokerImpl {
         } else if frame.is_signal() {
             let mut frames = vec![];
             {
-                let state = self.state.read().map_err(|e| e.to_string())?;
+                let state = state_reader(&self.state);
                 if let Some(peer) = state.peers.get(&peer_id) {
                     if let PeerKind::Device {mount_point, .. } = &peer.peer_kind {
                         let new_path = join_path(mount_point, frame.shv_path().unwrap_or_default());
-                        for (cli_id, peer) in state.peers.iter() {
+                        for (tested_peer_id, peer) in state.peers.iter() {
                             let ri = ShvRI::from_path_method_signal(&new_path, frame.source().unwrap_or_default(), frame.method())?;
-                            if &peer_id != cli_id && peer.is_signal_subscribed(&ri) {
+                            if &peer_id != tested_peer_id && peer.is_signal_subscribed(&ri) {
                                 let mut frame = frame.clone();
                                 frame.set_shvpath(&new_path);
                                 frames.push((frame, peer.sender.clone()));

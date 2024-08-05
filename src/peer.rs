@@ -19,7 +19,9 @@ use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip
 use crate::broker::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use crate::config::ParentBrokerConfig;
 use shvrpc::framerw::{FrameReader, FrameWriter};
+use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
+use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 
 pub(crate) async fn peer_loop(client_id: i32, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {client_id}.");
@@ -294,6 +296,10 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
                         let shv_path = frame.shv_path().unwrap_or_default().to_owned();
                         let shv_path = if starts_with_path(&shv_path, ".broker") {
                             // hack to enable parent broker to call paths under exported_root
+                            if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
+                                // prepend exported root to subscribed path
+                                frame = fix_subscribe_param(frame, &config.exported_root)?;
+                            }
                             shv_path
                         } else if is_dot_local_request(&frame) {
                             strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
@@ -359,4 +365,13 @@ async fn parent_broker_peer_loop(client_id: i32, config: ParentBrokerConfig, bro
     };
 
     Ok(())
+}
+
+fn fix_subscribe_param(frame: RpcFrame, exported_root: &str) -> shvrpc::Result<RpcFrame> {
+    let mut msg = frame.to_rpcmesage()?;
+    let mut subpar = SubscriptionParam::from_rpcvalue(msg.param().unwrap_or_default())?;
+    let new_path = join_path(exported_root, subpar.ri.path());
+    subpar.ri = ShvRI::from_path_method_signal(&new_path, subpar.ri.method(), subpar.ri.signal())?;
+    msg.set_param(subpar.to_rpcvalue());
+    Ok(msg.to_frame()?)
 }
