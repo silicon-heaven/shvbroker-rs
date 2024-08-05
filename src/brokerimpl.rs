@@ -652,7 +652,7 @@ impl BrokerImpl {
             Ok(())
         }
         const TIMEOUT: u64 = 10;
-        match future::timeout(Duration::from_secs(TIMEOUT), call_subscribe1(peer_id, &subscribe_path, subscription.clone(), &broker_command_sender)).await {
+        match future::timeout(Duration::from_secs(TIMEOUT), call_subscribe1(peer_id, subscribe_path, subscription.clone(), &broker_command_sender)).await {
             Ok(r) => {
                 match r {
                     Ok(_) => {

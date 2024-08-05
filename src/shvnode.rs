@@ -7,6 +7,7 @@ use shvproto::{RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{RpcError, RpcErrorCode};
+use shvrpc::util::strip_prefix_path;
 
 pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
@@ -154,17 +155,14 @@ pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<V
     let mut unique_dirs: HashSet<String> = HashSet::new();
     let mut dir_exists = false;
     for (key, _) in mounts.range(path.to_string()..) {
-        if key.starts_with(path) {
-            if path.is_empty() || key.len() == path.len() || key[path.len() ..].starts_with('/') {
-                dir_exists = true;
-                if key.len() > path.len() {
-                    let dir_rest_start = if path.is_empty() { 0 } else { path.len() + 1 };
-                    let mut updirs = key[dir_rest_start..].split('/');
-                    if let Some(dir) = updirs.next() {
-                        if !unique_dirs.contains(dir) {
-                            dirs.push(dir.to_string());
-                            unique_dirs.insert(dir.to_string());
-                        }
+        if let Some(key_rest) = strip_prefix_path(key, path) {
+            dir_exists = true;
+            if !key_rest.is_empty() {
+                let mut updirs = key_rest.split('/');
+                if let Some(dir) = updirs.next() {
+                    if !unique_dirs.contains(dir) {
+                        dirs.push(dir.to_string());
+                        unique_dirs.insert(dir.to_string());
                     }
                 }
             }

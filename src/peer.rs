@@ -373,5 +373,5 @@ fn fix_subscribe_param(frame: RpcFrame, exported_root: &str) -> shvrpc::Result<R
     let new_path = join_path(exported_root, subpar.ri.path());
     subpar.ri = ShvRI::from_path_method_signal(&new_path, subpar.ri.method(), subpar.ri.signal())?;
     msg.set_param(subpar.to_rpcvalue());
-    Ok(msg.to_frame()?)
+    msg.to_frame()
 }
