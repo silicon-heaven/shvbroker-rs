@@ -447,13 +447,12 @@ impl BrokerImpl {
             return Ok(());
         } else if frame.is_response() {
             let mut frame = frame;
-            if let Some(client_id) = frame.pop_caller_id() {
-                let sender = {
-                    let state = self.state.read().map_err(|e| e.to_string())?;
-                    state.peers.get(&client_id).map(|p| p.sender.clone())
-                };
+            if let Some(peer_id) = frame.pop_caller_id() {
+                let sender = state_reader(&self.state).peers.get(&peer_id).map(|p| p.sender.clone());
                 if let Some(sender) = sender {
                     sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
+                } else {
+                    warn!("Cannot find peer for response peer-id: {peer_id}");
                 }
             } else {
                 self.process_pending_broker_rpc_call(peer_id, frame).await?;
@@ -749,7 +748,7 @@ impl BrokerImpl {
                 DIR_BROKER => {
                     match ctx.method.name {
                         node::METH_CLIENT_INFO => {
-                            let peer_id = rq.param().unwrap_or_default().as_i32();
+                            let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
                             let info = match state_reader(&self.state).client_info(peer_id) {
                                 None => { RpcValue::null() }
                                 Some(info) => { RpcValue::from(info) }
@@ -779,7 +778,7 @@ impl BrokerImpl {
                             break 'block Ok(mounts.into());
                         }
                         node::METH_DISCONNECT_CLIENT => {
-                            let peer_id = rq.param().unwrap_or_default().as_i32();
+                            let peer_id = rq.param().unwrap_or_default().as_i64();
                             let result = self.disconnect_client(peer_id).await
                                 .map(|_| RpcValue::null())
                                 .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, format!("Disconnect client error - {}", err)));

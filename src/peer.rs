@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicI64, Ordering};
 use async_std::{channel, future};
 use async_std::channel::Sender;
 use async_std::io::BufReader;
@@ -22,7 +23,14 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-pub(crate) async fn peer_loop_safe(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
+
+static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
+pub(crate)  fn next_peer_id() -> i64 {
+    let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
+    old_id + 1
+}
+
+pub(crate) async fn try_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
     match peer_loop(peer_id, broker_writer.clone(), stream).await {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
@@ -142,7 +150,7 @@ pub(crate) async fn peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
         select! {
             frame = fut_receive_frame => match frame {
                 Ok(frame) => {
-                    // log!(target: "RpcMsg", Level::Debug, "----> Recv frame, client id: {}", client_id);
+                    //println!("=====================> Recv frame, client id: {peer_id}, frame: {}", frame);
                     broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
@@ -225,7 +233,7 @@ fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
         None
     }
 }
-async fn parent_broker_peer_loop(peer_id: i32, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+async fn parent_broker_peer_loop(peer_id: PeerId, config: ParentBrokerConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = Url::parse(&config.client.url)?;
     let (scheme, host, port) = (url.scheme(), url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
     if scheme != "tcp" {

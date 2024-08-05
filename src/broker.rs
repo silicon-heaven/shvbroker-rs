@@ -16,6 +16,7 @@ use futures::FutureExt;
 use shvrpc::RpcMessage;
 use crate::brokerimpl::{BrokerImpl};
 use crate::peer;
+use crate::peer::next_peer_id;
 
 #[derive(Debug)]
 pub(crate)  struct Subscription {
@@ -189,18 +190,18 @@ pub async fn accept_loop(config: BrokerConfig, access: AccessControl) -> shvrpc:
         let parent_broker_peer_config = config.parent_broker.clone();
         let broker_task = task::spawn(crate::broker::broker_loop(broker_impl));
         if parent_broker_peer_config.enabled {
-            crate::spawn_and_log_error(peer::parent_broker_peer_loop_with_reconnect(1, parent_broker_peer_config, broker_sender.clone()));
+            let peer_id = next_peer_id();
+            crate::spawn_and_log_error(peer::parent_broker_peer_loop_with_reconnect(peer_id, parent_broker_peer_config, broker_sender.clone()));
         }
         info!("Listening on TCP: {}", address);
         let listener = TcpListener::bind(address).await?;
         info!("bind OK");
-        let mut peer_id = 2; // parent broker has client_id == 1
         let mut incoming = listener.incoming();
         while let Some(stream) = incoming.next().await {
             let stream = stream?;
+            let peer_id = next_peer_id();
             debug!("Accepting from: {}", stream.peer_addr()?);
-            crate::spawn_and_log_error(peer::peer_loop_safe(peer_id, broker_sender.clone(), stream));
-            peer_id += 1;
+            crate::spawn_and_log_error(peer::try_peer_loop(peer_id, broker_sender.clone(), stream));
         }
         drop(broker_sender);
         broker_task.await;
