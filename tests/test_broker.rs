@@ -116,9 +116,9 @@ fn test_broker() -> shvrpc::Result<()> {
         //let info = shv_call_child(".broker/currentClient", "info", "")?;
         //println!("INFO: {info}");
         let calls: Vec<String> = vec![
-            format!(r#".broker/currentClient:subscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
+            format!(r#".broker/currentClient:subscribe ["{subscribe_path}:*:chng"]"#),
             format!(r#"{property_path}:set 42"#),
-            format!(r#".broker/currentClient:unsubscribe {{"methods": "chng", "paths": "{subscribe_path}"}}"#),
+            format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#),
             format!(r#"{property_path}:set 123"#),
         ];
         println!("shv_call_many property: {property_path}");
@@ -141,10 +141,10 @@ fn test_broker() -> shvrpc::Result<()> {
     check_subscription("test/device/state/number", "test/**", 3756)?;
 
     println!("====== child broker =====");
-    assert_eq!(shv_call_parent("shv/test", "ls", r#""child-broker""#)?, RpcValue::from(true));
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
-    assert_eq!(shv_call_parent("shv/test/child-broker/device/state/number", "get", "")?, RpcValue::from(123));
-    check_subscription("shv/test/child-broker/device/state/number", "shv/test/**", 3755)?;
+    assert_eq!(shv_call_parent("test", "ls", r#""child-broker""#)?, RpcValue::from(true));
+    assert_eq!(shv_call_parent("test/child-broker/device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
+    assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, RpcValue::from(123));
+    check_subscription("test/child-broker/device/state/number", "test/**", 3755)?;
 
     Ok(())
 }
