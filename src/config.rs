@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap};
 use std::fs;
 use serde::{Serialize, Deserialize};
+use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -22,11 +23,12 @@ pub struct ParentBrokerConfig {
     pub client: ClientConfig,
     pub exported_root: String,
 }
+type DeviceId = String;
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessControl {
     pub users: BTreeMap<String, User>,
     pub roles: BTreeMap<String, Role>,
-    pub mounts: BTreeMap<String, Mount>,
+    pub mounts: BTreeMap<DeviceId, Mount>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
@@ -64,6 +66,20 @@ pub struct Mount {
     pub mount_point: String,
     #[serde(default)]
     pub description: String,
+}
+
+impl Mount {
+    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
+        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
+        Ok(RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())?)
+    }
+}
+impl TryFrom<&RpcValue> for Mount {
+    type Error = String;
+    fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
+        let cpon = value.to_cpon();
+        Ok(serde_json::from_str(&cpon).map_err(|e| e.to_string())?)
+    }
 }
 impl AccessControl {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {

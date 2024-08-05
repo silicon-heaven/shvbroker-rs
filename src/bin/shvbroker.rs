@@ -46,9 +46,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     }
     logger.init().unwrap();
 
-    log::info!("=====================================================");
-    log::info!("{} starting", std::module_path!());
-    log::info!("=====================================================");
+    info!("=====================================================");
+    info!("{} starting", module_path!());
+    info!("=====================================================");
     //trace!("trace message");
     //debug!("debug message");
     //info!("info message");
@@ -59,7 +59,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
 
     let config = if let Some(config_file) = &cli_opts.config {
         info!("Loading config file {config_file}");
-        match shvbroker::config::BrokerConfig::from_file(config_file) {
+        match BrokerConfig::from_file(config_file) {
             Ok(config) => {config}
             Err(err) => {
                 if cli_opts.create_config {

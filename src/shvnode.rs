@@ -39,7 +39,7 @@ impl From<Option<&RpcValue>> for DirParam {
     }
 }
 
-fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
+pub(crate) fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
     if let DirParam::MethodExists(ref method_name) = param {
         return methods.any(|mm| mm.name == method_name).into()
     }
@@ -331,6 +331,7 @@ impl AppDeviceNode {
         ] }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

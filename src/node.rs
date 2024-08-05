@@ -2,8 +2,10 @@ use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
 use crate::shvnode::{META_METHOD_DIR, META_METHOD_LS, ShvNode};
 
 pub const DIR_BROKER: &str = ".broker";
-pub const DIR_BROKER_CURRENTCLIENT: &str = ".broker/currentClient";
-//pub const DIR_BROKER_CLIENT: &str = ".broker/client";
+pub const DIR_BROKER_CURRENT_CLIENT: &str = ".broker/currentClient";
+pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
+pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
+pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 
 pub const METH_CLIENT_INFO: &str = "clientInfo";
 pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";
@@ -16,17 +18,6 @@ const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod { name: METH_MOUNTE
 const META_METH_CLIENTS: MetaMethod = MetaMethod { name: METH_CLIENTS, param: "void", result: "List[Int]", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
 const META_METH_MOUNTS: MetaMethod = MetaMethod { name: METH_MOUNTS, param: "void", result: "List[String]", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
 const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod { name: METH_DISCONNECT_CLIENT, param: "Int", result: "void", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
-// pub enum BrokerNodeCommand {
-//     ClientInfo(CliId),
-//     MountedClientInfo(String),
-//     Clients,
-//     Mounts,
-//     DisconnectClient(CliId),
-//     CurrentClientInfo,
-//     Subscribe(Subscription),
-//     Unsubscribe(Subscription),
-//     Subscriptions,
-// }
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIBE: &str = "subscribe";
@@ -66,28 +57,39 @@ impl BrokerCurrentClientNode {
             &META_METH_SUBSCRIPTIONS,
         ] }
     }
-
-    // fn process_request(&mut self, rq: &RpcMessage) -> RequestCommand<BrokerNodeCommand> {
-    //     match rq.method() {
-    //         Some(METH_INFO) => {
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::CurrentClientInfo)
-    //         }
-    //         Some(METH_SUBSCRIBE) => {
-    //             let subscription = Subscription::from_rpcvalue(rq.param().unwrap_or_default());
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::Subscribe(subscription))
-    //         }
-    //         Some(METH_UNSUBSCRIBE) => {
-    //             let subscription = Subscription::from_rpcvalue(rq.param().unwrap_or_default());
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::Unsubscribe(subscription))
-    //         }
-    //         Some(METH_SUBSCRIPTIONS) => {
-    //             RequestCommand::<BrokerNodeCommand>::Custom(BrokerNodeCommand::Subscriptions)
-    //         }
-    //         _ => {
-    //             ShvNode::<BrokerNodeCommand>::process_dir_ls(self, rq)
-    //         }
-    //     }
-    // }
 }
+pub const METH_VALUE: &str = "value";
+pub const METH_SET_VALUE: &str = "setValue";
+const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "Map", signals: &[], description: "" };
+const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
+pub(crate) struct BrokerAccessMountsNode {}
+impl BrokerAccessMountsNode {
+    pub fn new_shvnode() -> ShvNode {
+        ShvNode { methods: vec![
+            &META_METHOD_DIR,
+            &META_METHOD_LS,
+            &META_METH_SET_VALUE,
+        ] }
+    }
+}
+pub(crate) struct BrokerAccessUsersNode {}
+impl crate::node::BrokerAccessUsersNode {
+    pub fn new_shvnode() -> ShvNode {
+        ShvNode { methods: ACCESS_NODE_METHODS.into() }
+    }
+}
+pub(crate) const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_SET_VALUE];
+pub(crate) const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_VALUE];
+pub(crate) struct BrokerAccessRolesNode {}
+impl crate::node::BrokerAccessRolesNode {
+    pub fn new_shvnode() -> ShvNode {
+        ShvNode { methods: vec![
+            &META_METHOD_DIR,
+            &META_METHOD_LS,
+            &META_METH_SET_VALUE,
+        ] }
+    }
+}
+
 
 
