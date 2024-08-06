@@ -215,7 +215,7 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
 pub trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()>;
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
 }
 impl dyn ShvNode {
     pub fn is_request_granted(&self, rq: &RpcFrame) -> Option<&'static MetaMethod> {
@@ -322,25 +322,25 @@ impl ShvNode for AppNode {
         Some(vec![])
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
-        let result = match ctx.method.name {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        match ctx.method.name {
             METH_NAME => {
-                Ok(self.app_name.into())
+                Ok(Some(self.app_name.into()))
             }
             METH_SHV_VERSION_MAJOR => {
-                Ok(self.shv_version_major.into())
+                Ok(Some(self.shv_version_major.into()))
             }
             METH_SHV_VERSION_MINOR => {
-                Ok(self.shv_version_minor.into())
+                Ok(Some(self.shv_version_minor.into()))
             }
             METH_PING => {
-                Ok(().into())
+                Ok(Some(().into()))
             }
             _ => {
-                return Ok(())
+                Ok(None)
             }
-        };
-        send_response(&frame.meta, result, ctx).await
+        }
+        //send_response(&frame.meta, result, ctx).await
     }
 }
 
@@ -372,25 +372,24 @@ impl ShvNode for AppDeviceNode {
         Some(vec![])
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
-        let result = match ctx.method.name {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        match ctx.method.name {
             METH_NAME => {
-                Ok(self.device_name.into())
+                Ok(Some(self.device_name.into()))
             }
             METH_VERSION => {
-                Ok(self.version.into())
+                Ok(Some(self.version.into()))
             }
             METH_SERIAL_NUMBER => {
-                Ok(self.serial_number.into())
+                Ok(Some(self.serial_number.as_ref().map(|s| s.to_string()).unwrap_or_default().into()))
             }
             METH_PING => {
-                Ok(().into())
+                Ok(Some(().into()))
             }
             _ => {
-                return Ok(())
+                Ok(None)
             }
-        };
-        send_response(&frame.meta, result, ctx).await
+        }
     }
 }
 

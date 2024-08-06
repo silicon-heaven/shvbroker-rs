@@ -227,12 +227,12 @@ impl BrokerState {
         }
         None
     }
-    fn subscriptions(&self, client_id: PeerId) -> shvrpc::Result<List> {
+    pub(crate) fn subscriptions(&self, client_id: PeerId) -> shvrpc::Result<List> {
         let peer = self.peers.get(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let subs: List = peer.subscriptions.iter().map(|subs| subs.param.to_rpcvalue()).collect();
         Ok(subs)
     }
-    fn subscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+    pub(crate) fn subscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         if let  Some(sub) = peer.subscriptions.iter_mut().find(|sub| sub.param.ri == subpar.ri) {
             sub.param.ttl = subpar.ttl;
@@ -242,7 +242,7 @@ impl BrokerState {
             Ok(true)
         }
     }
-    fn unsubscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+    pub(crate) fn unsubscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {:?}", client_id, subpar);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let cnt = peer.subscriptions.len();
@@ -257,7 +257,7 @@ impl BrokerState {
             Err(format!("Not device: {:?}", peer).into())
         }
     }
-    fn gc_subscriptions(&mut self) {
+    pub(crate) fn gc_subscriptions(&mut self) {
         let now = Instant::now();
         for peer in self.peers.values_mut() {
             peer.subscriptions.retain(|subscr| {
@@ -273,7 +273,7 @@ impl BrokerState {
             });
         }
     }
-    fn update_forwarded_subscriptions(&mut self) -> shvrpc::Result<()> {
+    pub(crate) fn update_forwarded_subscriptions(&mut self) -> shvrpc::Result<()> {
         let mut fwd_subs: HashSet<ShvRI> = Default::default();
         for peer in self.peers.values() {
             for subscr in &peer.subscriptions {
@@ -331,7 +331,7 @@ impl BrokerState {
     pub(crate) fn access_mount(&self, device_id: &str) -> Option<&crate::config::Mount> {
         self.access.mounts.get(device_id)
     }
-    fn set_access_mount(&mut self, device_id: &str, mount: Option<crate::config::Mount>) {
+    pub(crate) fn set_access_mount(&mut self, device_id: &str, mount: Option<crate::config::Mount>) {
         if let Some(mount) = mount {
             self.access.mounts.insert(device_id.to_string(), mount);
         } else {
@@ -635,7 +635,7 @@ impl BrokerImpl {
         state.write().unwrap().set_subscribe_path(client_id, subscribe_path.clone())?;
         Ok(subscribe_path)
     }
-    async fn renew_forwarded_subscriptions(state: SharedBrokerState) -> shvrpc::Result<()> {
+    pub(crate) async fn renew_forwarded_subscriptions(state: SharedBrokerState) -> shvrpc::Result<()> {
         let mut to_subscribe: HashMap<_, _> = Default::default();
         for (peer_id, peer) in &mut state_writer(&state).peers {
             if let PeerKind::Device { subscribe_path: Some(SubscribePath::CanSubscribe(subpath)), .. } = &peer.peer_kind {
@@ -700,28 +700,6 @@ impl BrokerImpl {
             }
         }
         Ok(())
-    }
-    fn subscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
-        if state_writer(&self.state).subscribe(peer_id, subpar)? {
-            state_writer(&self.state).gc_subscriptions();
-            state_writer(&self.state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(Self::renew_forwarded_subscriptions(self.state.clone()));
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-    fn unsubscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
-        if state_writer(&self.state).unsubscribe(peer_id, subpar)? {
-            state_writer(&self.state).gc_subscriptions();
-            state_writer(&self.state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(Self::renew_forwarded_subscriptions(self.state.clone()));
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
     async fn process_node_request(&mut self, frame: RpcFrame, ctx: NodeRequestContext) -> shvrpc::Result<()> {
         // let result = match ctx.mount_point.as_str() {

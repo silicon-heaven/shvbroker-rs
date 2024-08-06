@@ -1,13 +1,16 @@
 use async_trait::async_trait;
+use log::{Level, log};
 use shvproto::{List, RpcValue, rpcvalue};
 use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use crate::broker::{BrokerToPeerMessage, PeerKind};
-use crate::brokerimpl::{NodeRequestContext, SharedBrokerState, state_reader};
+use crate::brokerimpl::{BrokerImpl, NodeRequestContext, SharedBrokerState, state_reader, state_writer};
 use crate::{node, shvnode};
+use crate::config::Mount;
 use crate::shvnode::{AppDeviceNode, META_METHOD_DIR, META_METHOD_LS, METH_LS, ShvNode};
+use crate::spawn::spawn_and_log_error;
 
 pub const DIR_BROKER: &str = ".broker";
 pub const DIR_BROKER_CURRENT_CLIENT: &str = ".broker/currentClient";
@@ -60,8 +63,8 @@ impl ShvNode for BrokerNode {
         Some(vec![])
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
-        let result = match ctx.method.name {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        match ctx.method.name {
             node::METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
@@ -69,7 +72,7 @@ impl ShvNode for BrokerNode {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
-                Ok(info)
+                Ok(Some(info))
             }
             node::METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
@@ -78,11 +81,11 @@ impl ShvNode for BrokerNode {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
-                Ok(info)
+                Ok(Some(info))
             }
             node::METH_CLIENTS => {
                 let clients: rpcvalue::List = state_reader(&ctx.broker_state).peers.keys().map(|id| RpcValue::from(*id)).collect();
-                Ok(clients.into())
+                Ok(Some(clients.into()))
             }
             node::METH_MOUNTS => {
                 let mounts: List = state_reader(&ctx.broker_state).peers.values()
@@ -90,21 +93,21 @@ impl ShvNode for BrokerNode {
                     .filter(|mount_point| mount_point.is_some())
                     .map(|mount_point| RpcValue::from(mount_point.unwrap()))
                     .collect();
-                Ok(mounts.into())
+                Ok(Some(mounts.into()))
             }
             node::METH_DISCONNECT_CLIENT => {
-                if let Some(peer) = state_reader(&ctx.broker_state).peers.get(&ctx.peer_id) {
-                    peer.sender.send(BrokerToPeerMessage::DisconnectByBroker).await?;
-                    Ok(().into())
+                let peer_sender = if let Some(peer) = state_reader(&ctx.broker_state).peers.get(&ctx.peer_id) {
+                    peer.sender.clone()
                 } else {
-                    Err(RpcError::new(RpcErrorCode::MethodCallException, format!("Disconnect client error - peer {} not found.", ctx.peer_id)))
-                }
+                    return Err(format!("Disconnect client error - peer {} not found.", ctx.peer_id).into())
+                };
+                peer_sender.send(BrokerToPeerMessage::DisconnectByBroker).await?;
+                Ok(Some(().into()))
             }
             _ => {
-                return Ok(())
+                Ok(None)
             }
-        };
-        shvnode::send_response(&frame.meta, result, ctx).await
+        }
     }
 }
 
@@ -129,7 +132,31 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
     &META_METH_UNSUBSCRIBE,
     &META_METH_SUBSCRIPTIONS,
 ];
+impl BrokerCurrentClientNode {
+    fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
+        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
+        if state_writer(state).subscribe(peer_id, subpar)? {
+            state_writer(state).gc_subscriptions();
+            state_writer(state).update_forwarded_subscriptions()?;
+            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
+        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
+        if state_writer(&state).unsubscribe(peer_id, subpar)? {
+            state_writer(&state).gc_subscriptions();
+            state_writer(&state).update_forwarded_subscriptions()?;
+            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 
+}
 #[async_trait]
 impl ShvNode for BrokerCurrentClientNode {
     fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
@@ -140,47 +167,33 @@ impl ShvNode for BrokerCurrentClientNode {
         Some(vec![])
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match ctx.method.name {
             node::METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
-                match SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default()) {
-                    Ok(subscription) => {
-                        let subs_added = self.subscribe(ctx.peer_id, &subscription)?;
-                        Ok(Some(subs_added.into()))
-                    }
-                    Err(e) => {
-                        let err = RpcError::new(RpcErrorCode::InvalidParam, e);
-                        Some(Err(err))
-                    }
-                }
+                let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
+                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &ctx.broker_state)?;
+                Ok(Some(subs_added.into()))
             }
             node::METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
-                match SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default()) {
-                    Ok(subscription) => {
-                        let subs_removed = self.unsubscribe(ctx.peer_id, &subscription)?;
-                        Ok(Some(subs_removed.into()))
-                    }
-                    Err(e) => {
-                        let err = RpcError::new(RpcErrorCode::InvalidParam, e);
-                        Some(Err(err))
-                    }
-                }
+                let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
+                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &ctx.broker_state)?;
+                Ok(Some(subs_removed.into()))
             }
             node::METH_SUBSCRIPTIONS => {
-                let result = state_reader(&self.state).subscriptions(ctx.peer_id)?;
+                let result = state_reader(&ctx.broker_state).subscriptions(ctx.peer_id)?;
                 Ok(Some(result.into()))
             }
             node::METH_INFO => {
-                let info = match state_reader(&self.state).client_info(ctx.peer_id) {
+                let info = match state_reader(&ctx.broker_state).client_info(ctx.peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(Some(info))
             }
             _ => {
-                None
+                Ok(None)
             }
         }
     }
@@ -211,18 +224,18 @@ impl ShvNode for crate::node::BrokerAccessMountsNode {
 
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            let a = state_reader(broker_state).access.keys();
+            Some(state_reader(broker_state).access.mounts.keys().map(|m| m.to_string()).collect())
         } else {
-
+            Some(vec![])
         }
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match ctx.method.name {
             node::METH_VALUE => {
                 match state_reader(&ctx.broker_state).access_mount(&ctx.node_path) {
                     None => {
-                        Some(Err(RpcError::new(RpcErrorCode::MethodCallException, format!("Invalid node key"))))
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
                     Some(mount) => {
                         Ok(Some(mount.to_rpcvalue()?))
@@ -230,23 +243,22 @@ impl ShvNode for crate::node::BrokerAccessMountsNode {
                 }
             }
             node::METH_SET_VALUE => {
-                fn set_value(broker_state: &SharedBrokerState, frame: &RpcFrame) -> Result<(), String> {
-                    let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
-                    let param = param.as_list();
-                    let key = param.get(0).ok_or("Key is missing")?;
-                    let n = RpcValue::null();
-                    let mount = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
-                    let mount = mount.map(|m| crate::config::Mount::try_from(mount)?);
-                    crate::brokerimpl::state_writer(broker_state).set_access_mounts(key.as_str(), mount);
-                    Ok(())
-                }
-                match set_value(ctx.broker_state, frame) {
-                    Ok(_) => Ok(Some(().into())),
-                    Err(e) => Some(Err(RpcError::new(RpcErrorCode::MethodCallException, format!("Invalid params: {e}")))),
-                }
+                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
+                let param = param.as_list();
+                let key = param.get(0).ok_or("Key is missing")?;
+                let n = RpcValue::null();
+                let mount = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let mount = mount.map(|m| crate::config::Mount::try_from(m));
+                let mount = match mount {
+                    None => None,
+                    Some(Ok(mount)) => {Some(mount)}
+                    Some(Err(e)) => { return Err(e.into() )}
+                };
+                crate::brokerimpl::state_writer(&ctx.broker_state).set_access_mount(key.as_str(), mount);
+                Ok(Some(().into()))
             }
             _ => {
-                None
+                Ok(None)
             }
         }
     }
