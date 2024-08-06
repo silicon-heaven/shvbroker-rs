@@ -3,11 +3,26 @@ use std::format;
 use log::warn;
 use shvrpc::metamethod::{Flag, MetaMethod};
 use shvrpc::{metamethod, RpcMessage, RpcMessageMetaTags};
-use shvproto::{RpcValue, rpcvalue};
+use shvproto::{MetaMap, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{RpcError, RpcErrorCode};
 use shvrpc::util::strip_prefix_path;
+use async_trait::async_trait;
+use crate::broker::BrokerCommand;
+use crate::brokerimpl::{NodeRequestContext, SharedBrokerState};
+use crate::shvnode;
+
+pub(crate) async fn send_response(request_meta: &MetaMap, result: Result<RpcValue, RpcError>, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
+    let response_meta = shvrpc::rpcframe::RpcFrame::prepare_response_meta(request_meta)?;
+    let cmd = BrokerCommand::SendResponse {
+        peer_id: ctx.peer_id,
+        meta: response_meta,
+        result,
+    };
+    ctx.command_sender.send(cmd).await?;
+    Ok(())
+}
 
 pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
@@ -39,7 +54,7 @@ impl From<Option<&RpcValue>> for DirParam {
     }
 }
 
-pub(crate) fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
+fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
     if let DirParam::MethodExists(ref method_name) = param {
         return methods.any(|mm| mm.name == method_name).into()
     }
@@ -196,18 +211,19 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
     }
     None
 }
-
-#[derive(Debug, Clone)]
-pub struct ShvNode {
-    pub methods: Vec<&'static MetaMethod>,
+#[async_trait]
+pub trait ShvNode : Send + Sync {
+    fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
+    fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()>;
 }
-impl ShvNode {
+impl dyn ShvNode {
     pub fn is_request_granted(&self, rq: &RpcFrame) -> Option<&'static MetaMethod> {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
             if let Some(rq_access) = rq.access_level() {
                 let method = rq.method().unwrap_or_default();
-                for mm in &self.methods {
+                for mm in self.methods(shv_path) {
                     if mm.name == method {
                         return if rq_access >= mm.access as i32 { Some(*mm) } else { None }
                     }
@@ -216,10 +232,10 @@ impl ShvNode {
         }
         None
     }
-    pub fn process_dir(methods: &[&'static MetaMethod], rq: &RpcMessage) -> Result<RpcValue, RpcError> {
+    pub fn process_dir(&self, rq: &RpcMessage) -> Result<RpcValue, RpcError> {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
-            let resp = dir(methods.iter().copied(), rq.param().into());
+            let resp = dir(self.methods(shv_path).iter().copied(), rq.param().into());
             Ok(resp)
         } else {
             let errmsg = format!("Unknown method '{}:{}()', invalid path.", rq.shv_path().unwrap_or_default(), rq.method().unwrap_or_default());
@@ -227,20 +243,21 @@ impl ShvNode {
             Err(RpcError::new(RpcErrorCode::MethodNotFound, errmsg))
         }
     }
-    pub fn process_ls(rq: &RpcMessage) -> Result<RpcValue, RpcError> {
+    pub fn process_ls(&self, rq: &RpcMessage, broker_state: &SharedBrokerState) -> Result<RpcValue, RpcError> {
         let shv_path = rq.shv_path().unwrap_or_default();
-        if shv_path.is_empty() {
+        if let Some(children) = self.children(shv_path, broker_state) {
             match LsParam::from(rq.param()) {
                 LsParam::List => {
-                    Ok(rpcvalue::List::new().into())
+                    Ok(children.into())
                 }
-                LsParam::Exists(_path) => {
-                    Ok(false.into())
+                LsParam::Exists(path) => {
+                    Ok(children.iter().find(|s| *s == &path).into())
                 }
             }
+
         } else {
-            let errmsg = format!("Unknown method '{}:{}()', invalid path.", rq.shv_path().unwrap_or_default(), rq.method().unwrap_or(""));
-            warn!("{}", &errmsg);
+            let errmsg = format!("Invalid path: {}.", shv_path);
+            // warn!("{}", &errmsg);
             Err(RpcError::new(RpcErrorCode::MethodNotFound, errmsg))
         }
     }
@@ -265,25 +282,14 @@ pub const DIR_LS_METHODS: [MetaMethod; 2] = [
     MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" },
     MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" },
 ];
-/*
-pub const PROPERTY_METHODS: [MetaMethod; 3] = [
-    MetaMethod { name: METH_GET, flags: Flag::IsGetter as u32, access: Access::Browse, param: "", result: "", description: "" },
-    MetaMethod { name: METH_SET, flags: Flag::IsSetter as u32, access: Access::Browse, param: "", result: "", description: "" },
-    MetaMethod { name: SIG_CHNG, flags: Flag::IsSignal as u32, access: Access::Browse, param: "", result: "", description: "" },
-];
-const DEVICE_METHODS: [MetaMethod; 3] = [
-    MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: Access::Browse, param: "", result: "", description: "" },
-    MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: Access::Browse, param: "", result: "", description: "" },
-    MetaMethod { name: METH_SERIAL_NUMBER, flags: Flag::IsGetter as u32, access: Access::Browse, param: "", result: "", description: "" },
-];
- */
+
 pub struct AppNode {
     pub app_name: &'static str,
     pub shv_version_major: i32,
     pub shv_version_minor: i32,
 }
-impl Default for AppNode {
-    fn default() -> Self {
+impl AppNode {
+    pub(crate) fn new() -> Self {
         AppNode {
             app_name: "",
             shv_version_major: 3,
@@ -297,16 +303,44 @@ const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_
 const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
 const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
 
-impl AppNode {
-    pub fn new_shvnode() -> ShvNode {
-        ShvNode { methods: vec![
-            &META_METHOD_DIR,
-            &META_METHOD_LS,
-            &META_METH_APP_SHV_VERSION_MAJOR,
-            &META_METH_APP_SHV_VERSION_MINOR,
-            &META_METH_APP_NAME,
-            &META_METH_APP_PING,
-        ] }
+const APP_NODE_METHODS: &[&MetaMethod; 6] = &[
+    &META_METHOD_DIR,
+    &META_METHOD_LS,
+    &META_METH_APP_SHV_VERSION_MAJOR,
+    &META_METH_APP_SHV_VERSION_MINOR,
+    &META_METH_APP_NAME,
+    &META_METH_APP_PING
+];
+
+#[async_trait]
+impl ShvNode for AppNode {
+    fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
+        APP_NODE_METHODS
+    }
+
+    fn children(&self, shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        Some(vec![])
+    }
+
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
+        let result = match ctx.method.name {
+            METH_NAME => {
+                Ok(self.app_name.into())
+            }
+            METH_SHV_VERSION_MAJOR => {
+                Ok(self.shv_version_major.into())
+            }
+            METH_SHV_VERSION_MINOR => {
+                Ok(self.shv_version_minor.into())
+            }
+            METH_PING => {
+                Ok(().into())
+            }
+            _ => {
+                return Ok(())
+            }
+        };
+        send_response(&frame.meta, result, ctx).await
     }
 }
 
@@ -320,17 +354,46 @@ pub struct AppDeviceNode {
     pub serial_number: Option<String>,
 }
 
-impl AppDeviceNode {
-    pub fn new_shvnode(&self) -> ShvNode {
-        ShvNode { methods: vec![
-            &META_METHOD_DIR,
-            &META_METHOD_LS,
-            &META_METH_NAME,
-            &META_METH_VERSION,
-            &META_METH_SERIAL_NUMBER,
-        ] }
+const APP_DEVICE_NODE_METHODS: &[&MetaMethod; 5] = &[
+    &META_METHOD_DIR,
+    &META_METHOD_LS,
+    &META_METH_NAME,
+    &META_METH_VERSION,
+    &META_METH_SERIAL_NUMBER
+];
+
+#[async_trait]
+impl ShvNode for AppDeviceNode {
+    fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
+        APP_DEVICE_NODE_METHODS
+    }
+
+    fn children(&self, shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        Some(vec![])
+    }
+
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvrpc::Result<()> {
+        let result = match ctx.method.name {
+            METH_NAME => {
+                Ok(self.device_name.into())
+            }
+            METH_VERSION => {
+                Ok(self.version.into())
+            }
+            METH_SERIAL_NUMBER => {
+                Ok(self.serial_number.into())
+            }
+            METH_PING => {
+                Ok(().into())
+            }
+            _ => {
+                return Ok(())
+            }
+        };
+        send_response(&frame.meta, result, ctx).await
     }
 }
+
 
 #[cfg(test)]
 mod tests {

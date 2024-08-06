@@ -132,10 +132,9 @@ impl Peer {
     //}
 }
 
-#[derive(Debug, Clone)]
 pub(crate) enum Mount {
     Peer(PeerId),
-    Node(ShvNode),
+    Node(Box<dyn ShvNode>),
 }
 
 pub(crate) struct ParsedAccessRule {
