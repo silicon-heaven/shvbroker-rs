@@ -60,7 +60,7 @@ pub struct AccessRule {
     pub shv_ri: String,
     pub grant: String,
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Mount {
     #[serde(rename = "mountPoint")]
     pub mount_point: String,
@@ -71,14 +71,14 @@ pub struct Mount {
 impl Mount {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
-        Ok(RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())?)
+        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
 }
 impl TryFrom<&RpcValue> for Mount {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
         let cpon = value.to_cpon();
-        Ok(serde_json::from_str(&cpon).map_err(|e| e.to_string())?)
+        serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
 impl AccessControl {

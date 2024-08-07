@@ -6,10 +6,10 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::PeerId;
+use shvrpc::util::join_path;
 use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::BrokerConfig;
-use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-
+use crate::config::{BrokerConfig, Mount};
+use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx<'a> {
     writer: &'a Sender<BrokerCommand>,
@@ -112,5 +112,26 @@ async fn test_broker_loop() {
         assert_eq!(subs_list.len(), 0);
     }
 
+    // access/mounts
+    {
+        let path = ".broker/access/mounts";
+        {
+            let resp = call(path, METH_LS, None, &call_ctx).await;
+            let list = resp.as_list();
+            assert_eq!(list, RpcValue::try_from(["test-child-broker","test-device"].to_vec()).unwrap().as_list());
+            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await;
+            let m = resp.as_map();
+            assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
+        }
+        {
+            let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
+            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await;
+            let resp = call(path, METH_LS, None, &call_ctx).await;
+            let list = resp.as_list();
+            assert_eq!(list, RpcValue::try_from(["baz", "test-child-broker","test-device"].to_vec()).unwrap().as_list());
+            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+            assert_eq!(mount, Mount::try_from(&resp).unwrap());
+        }
+    }
     broker_task.cancel().await;
 }

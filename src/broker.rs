@@ -9,7 +9,6 @@ use shvproto::{MetaMap, RpcValue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RqId};
-use crate::shvnode::{ShvNode};
 use async_std::stream::StreamExt;
 use futures::select;
 use futures::FutureExt;
@@ -134,7 +133,7 @@ impl Peer {
 
 pub(crate) enum Mount {
     Peer(PeerId),
-    Node(Box<dyn ShvNode>),
+    Node,
 }
 
 pub(crate) struct ParsedAccessRule {

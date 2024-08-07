@@ -15,14 +15,13 @@ use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::RpcFrame;
-use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, METH_PING, DOT_LOCAL_GRANT};
+use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::broker::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use crate::config::ParentBrokerConfig;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
-use crate::node::{METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
 pub(crate)  fn next_peer_id() -> i64 {
