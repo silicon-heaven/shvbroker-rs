@@ -1,7 +1,6 @@
 pub mod config;
-pub mod broker;
 pub mod shvnode;
-mod brokerimpl;
+pub mod brokerimpl;
 mod peer;
 
 #[cfg(test)]

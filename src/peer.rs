@@ -17,7 +17,7 @@ use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::RpcFrame;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
-use crate::broker::{BrokerCommand, BrokerToPeerMessage, PeerKind};
+use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use crate::config::ParentBrokerConfig;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};

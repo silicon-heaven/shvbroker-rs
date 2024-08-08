@@ -1,27 +1,218 @@
+use async_std::{task};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 use async_std::channel::{Receiver, Sender, unbounded};
 use async_std::{future};
-use log::{error, info, log, warn};
-use crate::broker::{BrokerToPeerMessage, Mount, ParsedAccessRule, Peer, PeerKind, BrokerCommand, PendingRpcCall, SubscribePath, Subscription, ForwardedSubscription};
-use crate::config::{AccessControl, Password};
+use async_std::net::TcpListener;
+use log::{debug, error, info, log, warn};
+use crate::config::{AccessConfig, BrokerConfig, Password};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, Tag};
-use shvproto::{List, RpcValue, rpcvalue};
-use shvrpc::rpc::{ShvRI, SubscriptionParam};
+use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
+use shvproto::{List, MetaMap, RpcValue, rpcvalue};
+use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
 use shvrpc::metamethod::{AccessLevel};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use crate::spawn::spawn_and_log_error;
+use futures::select;
+use crate::peer;
+use crate::peer::next_peer_id;
+use async_std::stream::StreamExt;
+use futures::FutureExt;
+
+#[derive(Debug)]
+pub(crate)  struct Subscription {
+    pub(crate) param: SubscriptionParam,
+    pub(crate) glob: Glob,
+    pub(crate) subscribed: Instant,
+}
+#[derive(Debug)]
+pub(crate)  struct ForwardedSubscription {
+    pub(crate) param: SubscriptionParam,
+    pub(crate) subscribed: Option<Instant>,
+}
+
+impl Subscription {
+    pub(crate) fn new(subpar: &SubscriptionParam) -> shvrpc::Result<Self> {
+        let glob = subpar.ri.to_glob()?;
+        Ok(Self {
+            param: subpar.clone(),
+            glob,
+            subscribed: Instant::now(),
+        })
+    }
+    pub(crate) fn match_shv_ri(&self, shv_ri: &ShvRI) -> bool {
+        self.glob.match_shv_ri(shv_ri)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum BrokerCommand {
+    GetPassword {
+        sender: Sender<BrokerToPeerMessage>,
+        user: String,
+    },
+    NewPeer {
+        peer_id: PeerId,
+        peer_kind: PeerKind,
+        user: String,
+        mount_point: Option<String>,
+        device_id: Option<String>,
+        sender: Sender<BrokerToPeerMessage>,
+    },
+    FrameReceived {
+        peer_id: PeerId,
+        frame: RpcFrame,
+    },
+    PeerGone {
+        peer_id: PeerId,
+    },
+    SendResponse {peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>},
+    //CallSubscribeOnPeer {
+    //    peer_id: CliId,
+    //    subscriptions: Vec<SubscriptionParam>,
+    //},
+    RpcCall {
+        client_id: PeerId,
+        request: RpcMessage,
+        response_sender: Sender<RpcFrame>,
+    },
+    //SetSubscribeMethodPath {
+    //    peer_id: CliId,
+    //    subscribe_path: SubscribePath,
+    //},
+}
+
+#[derive(Debug)]
+pub(crate) enum BrokerToPeerMessage {
+    PasswordSha1(Option<Vec<u8>>),
+    SendFrame(RpcFrame),
+    SendMessage(RpcMessage),
+    DisconnectByBroker,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum SubscribePath {
+    NotBroker,
+    CanSubscribe(String),
+}
+#[derive(Debug, Clone)]
+pub(crate) enum PeerKind {
+    Client,
+    ParentBroker,
+    Device {
+        device_id: Option<String>,
+        mount_point: String,
+        subscribe_path: Option<SubscribePath>,
+    },
+}
+#[derive(Debug)]
+pub(crate) struct Peer {
+    pub(crate) peer_kind: PeerKind,
+    pub(crate) user: String,
+    pub(crate) sender: Sender<BrokerToPeerMessage>,
+    pub(crate) subscriptions: Vec<Subscription>,
+    pub(crate) forwarded_subscriptions: Vec<ForwardedSubscription>,
+}
+
+impl Peer {
+    pub(crate) fn is_signal_subscribed(&self, signal: &ShvRI) -> bool {
+        for subs in self.subscriptions.iter() {
+            //println!("{signal} matches {} -> {}", subs.glob.as_str(), subs.match_shv_ri(signal));
+            if subs.match_shv_ri(signal) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+pub(crate) enum Mount {
+    Peer(PeerId),
+    Node,
+}
+
+pub(crate) struct ParsedAccessRule {
+    pub(crate) glob: shvrpc::rpc::Glob,
+    // Needed in order to pass 'dot-local' in 'Access' meta-attribute
+    // to support the dot-local hack on older brokers
+    pub(crate) access: String,
+    pub(crate) access_level: AccessLevel,
+}
+
+impl ParsedAccessRule {
+    pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
+        Ok(Self {
+            glob: shv_ri.to_glob()?,
+            access: grant.to_string(),
+            access_level: grant
+                .split(',')
+                .find_map(AccessLevel::from_str)
+                .unwrap_or_else(|| panic!("Invalid access grant `{grant}`")),
+        })
+    }
+}
+
+pub(crate) struct PendingRpcCall {
+    pub(crate) client_id: PeerId,
+    pub(crate) request_id: RqId,
+    pub(crate) response_sender: Sender<RpcFrame>,
+}
+
+pub(crate) async fn broker_loop(broker: BrokerImpl) {
+    let mut broker = broker;
+    loop {
+        select! {
+            command = broker.command_receiver.recv().fuse() => match command {
+                Ok(command) => {
+                    if let Err(err) = broker.process_broker_command(command).await {
+                        warn!("Process broker command error: {}", err);
+                    }
+                }
+                Err(err) => {
+                    warn!("Receive broker command error: {}", err);
+                }
+            },
+        }
+    }
+}
+
+pub async fn accept_loop(config: BrokerConfig, access: AccessConfig) -> shvrpc::Result<()> {
+    if let Some(address) = config.listen.tcp.clone() {
+        let broker_impl = BrokerImpl::new(access);
+        let broker_sender = broker_impl.command_sender.clone();
+        let parent_broker_peer_config = config.parent_broker.clone();
+        let broker_task = task::spawn(broker_loop(broker_impl));
+        if parent_broker_peer_config.enabled {
+            let peer_id = next_peer_id();
+            crate::spawn_and_log_error(peer::parent_broker_peer_loop_with_reconnect(peer_id, parent_broker_peer_config, broker_sender.clone()));
+        }
+        info!("Listening on TCP: {}", address);
+        let listener = TcpListener::bind(address).await?;
+        info!("bind OK");
+        let mut incoming = listener.incoming();
+        while let Some(stream) = incoming.next().await {
+            let stream = stream?;
+            let peer_id = next_peer_id();
+            debug!("Accepting from: {}", stream.peer_addr()?);
+            crate::spawn_and_log_error(peer::try_peer_loop(peer_id, broker_sender.clone(), stream));
+        }
+        drop(broker_sender);
+        broker_task.await;
+    } else {
+        return Err("No port to listen on specified".into());
+    }
+    Ok(())
+}
 
 pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
-    pub(crate) access: AccessControl,
+    pub(crate) access: AccessConfig,
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
 
     command_sender: Sender<BrokerCommand>,
@@ -352,7 +543,7 @@ pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<Broker
     state.write().unwrap()
 }
 impl BrokerImpl {
-    pub(crate) fn new(access: AccessControl) -> Self {
+    pub(crate) fn new(access: AccessConfig) -> Self {
         let (command_sender, command_receiver) = unbounded();
         let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
         for (name, role) in &access.roles {
@@ -546,7 +737,7 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    pub async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived { peer_id: client_id, frame } => {
                 if let Err(err) = self.process_rpc_frame(client_id, frame).await {

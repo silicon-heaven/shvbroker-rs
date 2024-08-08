@@ -7,7 +7,7 @@ use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::PeerId;
 use shvrpc::util::join_path;
-use crate::broker::{BrokerToPeerMessage, PeerKind, BrokerCommand};
+use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{BrokerConfig, Mount};
 use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
@@ -56,7 +56,7 @@ async fn test_broker_loop() {
     let access = config.access.clone();
     let broker = BrokerImpl::new(access);
     let broker_sender = broker.command_sender.clone();
-    let broker_task = task::spawn(crate::broker::broker_loop(broker));
+    let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
     let client_id = 2;
@@ -118,7 +118,7 @@ async fn test_broker_loop() {
         {
             let resp = call(path, METH_LS, None, &call_ctx).await;
             let list = resp.as_list();
-            assert_eq!(list, RpcValue::try_from(["test-child-broker","test-device"].to_vec()).unwrap().as_list());
+            assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
             let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await;
             let m = resp.as_map();
             assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
@@ -128,7 +128,7 @@ async fn test_broker_loop() {
             call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await;
             let resp = call(path, METH_LS, None, &call_ctx).await;
             let list = resp.as_list();
-            assert_eq!(list, RpcValue::try_from(["baz", "test-child-broker","test-device"].to_vec()).unwrap().as_list());
+            assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
             let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
             assert_eq!(mount, Mount::try_from(&resp).unwrap());
         }

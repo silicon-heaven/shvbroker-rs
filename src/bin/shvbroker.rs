@@ -6,7 +6,7 @@ use simple_logger::SimpleLogger;
 use shvrpc::util::{join_path, parse_log_verbosity};
 use clap::{Args, Command, FromArgMatches, Parser};
 use rusqlite::Connection;
-use shvbroker::config::{AccessControl, BrokerConfig};
+use shvbroker::config::{AccessConfig, BrokerConfig};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -24,7 +24,7 @@ struct CliOpts {
     data_directory: Option<String>,
     /// Allow writing to access database
     #[arg(short, long)]
-    use_access_db: bool,
+    use_config_db: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -80,13 +80,13 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         BrokerConfig::default()
     };
     let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
-    let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
-    let access = if use_access_db {
-        let access_file = join_path(&data_dir, "access.sqlite");
-        if Path::new(&access_file).exists() {
-            load_access_sqlite(&access_file)?
+    let use_config_db = (cli_use_access_db_set && cli_opts.use_config_db) || config.use_access_db;
+    let access = if use_config_db {
+        let config_file = join_path(&data_dir, "shvbroker.sqlite");
+        if Path::new(&config_file).exists() {
+            load_access_sqlite(&config_file)?
         } else {
-            create_access_sqlite(&access_file, &config.access)?;
+            create_access_sqlite(&config_file, &config.access)?;
             config.access.clone()
         }
     } else {
@@ -95,10 +95,10 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if let Some(file) = cli_opts.write_config {
         write_config_to_file(&file, &config, &access)?;
     }
-    task::block_on(shvbroker::broker::accept_loop(config, access))
+    task::block_on(shvbroker::brokerimpl::accept_loop(config, access))
 }
 
-fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessControl) -> shvrpc::Result<()> {
+fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
     info!("Writing config to file: {file}");
     if let Some(path) = Path::new(file).parent() {
         fs::create_dir_all(path)?;
@@ -112,7 +112,7 @@ fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessContro
 const TBL_MOUNTS: &str = "mounts";
 const TBL_USERS: &str = "users";
 const TBL_ROLES: &str = "roles";
-fn create_access_sqlite(file_path: &str, access: &AccessControl) -> shvrpc::Result<()> {
+fn create_access_sqlite(file_path: &str, access: &AccessConfig) -> shvrpc::Result<()> {
     info!("Creating SQLite access tables: {file_path}");
     if let Some(path) = Path::new(file_path).parent() {
         fs::create_dir_all(path)?;
@@ -147,11 +147,11 @@ fn create_access_sqlite(file_path: &str, access: &AccessControl) -> shvrpc::Resu
     Ok(())
 }
 
-fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessControl> {
+fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessConfig> {
     info!("Loading SQLite access tables: {file_path}");
     let conn = Connection::open(file_path)?;
 
-    let mut access = AccessControl{
+    let mut access = AccessConfig {
         users: Default::default(),
         roles: Default::default(),
         mounts: Default::default(),

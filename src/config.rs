@@ -14,7 +14,7 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub parent_broker: ParentBrokerConfig,
     #[serde(default)]
-    pub access: AccessControl,
+    pub access: AccessConfig,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ParentBrokerConfig {
@@ -25,7 +25,7 @@ pub struct ParentBrokerConfig {
 }
 type DeviceId = String;
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct AccessControl {
+pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
     pub roles: BTreeMap<String, Role>,
     pub mounts: BTreeMap<DeviceId, Mount>,
@@ -81,7 +81,7 @@ impl TryFrom<&RpcValue> for Mount {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
-impl AccessControl {
+impl AccessConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
@@ -100,7 +100,7 @@ impl Default for BrokerConfig {
             use_access_db: false,
             data_directory: None,
             parent_broker: Default::default(),
-            access: AccessControl {
+            access: AccessConfig {
                 users: BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()] }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()] }),

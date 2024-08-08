@@ -10,7 +10,7 @@ use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use shvrpc::util::strip_prefix_path;
-use crate::broker::{BrokerToPeerMessage, PeerKind};
+use crate::brokerimpl::{BrokerToPeerMessage, PeerKind};
 use crate::brokerimpl::{BrokerImpl, NodeRequestContext, SharedBrokerState, state_reader, state_writer};
 use crate::spawn::spawn_and_log_error;
 
