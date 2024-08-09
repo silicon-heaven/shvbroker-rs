@@ -23,8 +23,8 @@ struct CliOpts {
     #[arg(short, long)]
     data_directory: Option<String>,
     /// Allow writing to access database
-    #[arg(short, long)]
-    use_config_db: bool,
+    #[arg(short = 'b', long)]
+    use_access_db: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -80,20 +80,21 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         BrokerConfig::default()
     };
     let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
-    let use_config_db = (cli_use_access_db_set && cli_opts.use_config_db) || config.use_access_db;
-    let (access, sql_connection) = if use_config_db {
+    let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
+    let (access, sql_connection) = if use_access_db {
         let config_file = join_path(&data_dir, "shvbroker.sqlite");
         if let Some(path) = Path::new(&config_file).parent() {
             fs::create_dir_all(path)?;
         }
+        let create_db = !Path::new(&config_file).exists();
         let sql_connection = Connection::open(&config_file)?;
-        let config = if Path::new(&config_file).exists() {
-            info!("Loading SQLite access tables: {config_file}");
-            load_access_sqlite(&sql_connection)?
-        } else {
-            info!("Creating SQLite access tables: {config_file}");
+        let config = if create_db {
+            info!("Creating SQLite access db: {config_file}");
             create_access_sqlite(&sql_connection, &config.access)?;
             config.access.clone()
+        } else {
+            info!("Loading SQLite access db: {config_file}");
+            load_access_sqlite(&sql_connection)?
         };
         (config, Some(sql_connection))
     } else {
