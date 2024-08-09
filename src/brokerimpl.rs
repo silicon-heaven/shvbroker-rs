@@ -603,14 +603,14 @@ enum UpdateSqlOperation<'a> {
     Delete{id: &'a str},
 }
 pub struct BrokerImpl {
-    state: SharedBrokerState,
+    pub(crate) state: SharedBrokerState,
     nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
     pending_rpc_calls: Vec<PendingRpcCall>,
     pub(crate) command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
 
-    sql_connection: Option<rusqlite::Connection>,
+    pub(crate) sql_connection: Option<rusqlite::Connection>,
 }
 pub(crate) fn state_reader(state: &SharedBrokerState) -> RwLockReadGuard<BrokerState> {
     state.read().unwrap()
@@ -712,7 +712,6 @@ impl BrokerImpl {
                                 node_id: mount_point.to_string(),
                                 frame,
                                 ctx: NodeRequestContext {
-                                    broker_state: self.state.clone(),
                                     peer_id,
                                     node_path: node_path.to_string(),
                                 },
@@ -728,7 +727,7 @@ impl BrokerImpl {
                     Action::NodeRequest { node_id, frame, ctx } => {
                         let node = self.nodes.get(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame) {
-                            let result = match node.process_request_and_dir_ls(&frame, &ctx) {
+                            let result = match node.process_request_and_dir_ls(&frame, self, &ctx) {
                                 Ok(Some(result)) => {
                                     Ok(result)
                                 }
@@ -866,6 +865,8 @@ impl BrokerImpl {
                         error!("SQL exec error: {e}");
                         0
                     });
+                } else {
+                    error!("SQL config is disabled, use --use-acces-db CLI switch.")
                 }
             }
         }
@@ -993,7 +994,6 @@ impl BrokerImpl {
 }
 
 pub(crate) struct NodeRequestContext {
-    pub(crate) broker_state: SharedBrokerState,
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
 }

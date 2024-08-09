@@ -217,11 +217,11 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
 }
 impl dyn ShvNode {
-    pub fn process_request_and_dir_ls(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
-        let result = self.process_request(frame, ctx);
+    pub fn process_request_and_dir_ls(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        let result = self.process_request(frame, broker_impl, ctx);
         if let Ok(None) = result {
             match frame.method().unwrap_or_default() {
                 METH_DIR => {
@@ -233,7 +233,7 @@ impl dyn ShvNode {
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
-                    if let Some(children) = self.children(shv_path, &ctx.broker_state) {
+                    if let Some(children) = self.children(shv_path, &broker_impl.state) {
                         match LsParam::from(rq.param()) {
                             LsParam::List => {
                                 Ok(Some(children.into()))
@@ -312,7 +312,7 @@ impl ShvNode for AppNode {
         Some(vec![])
     }
 
-    fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(Some(self.app_name.into()))
@@ -360,7 +360,7 @@ impl ShvNode for AppDeviceNode {
         Some(vec![])
     }
 
-    fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(Some(self.device_name.into()))
@@ -429,12 +429,12 @@ impl ShvNode for BrokerNode {
         Some(vec![])
     }
 
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
-                let info = match state_reader(&ctx.broker_state).client_info(peer_id) {
+                let info = match state_reader(&broker_impl.state).client_info(peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -443,18 +443,18 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().as_str();
-                let info = match state_reader(&ctx.broker_state).mounted_client_info(mount_point) {
+                let info = match state_reader(&broker_impl.state).mounted_client_info(mount_point) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(Some(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = state_reader(&ctx.broker_state).peers.keys().map(|id| RpcValue::from(*id)).collect();
+                let clients: rpcvalue::List = state_reader(&broker_impl.state).peers.keys().map(|id| RpcValue::from(*id)).collect();
                 Ok(Some(clients.into()))
             }
             METH_MOUNTS => {
-                let mounts: List = state_reader(&ctx.broker_state).peers.values()
+                let mounts: List = state_reader(&broker_impl.state).peers.values()
                     .map(|peer| if let PeerKind::Device {mount_point, ..} = &peer.peer_kind {Some(mount_point)} else {None})
                     .filter(|mount_point| mount_point.is_some())
                     .map(|mount_point| RpcValue::from(mount_point.unwrap()))
@@ -462,7 +462,7 @@ impl ShvNode for BrokerNode {
                 Ok(Some(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
-                if let Some(peer) = state_reader(&ctx.broker_state).peers.get(&ctx.peer_id) {
+                if let Some(peer) = state_reader(&broker_impl.state).peers.get(&ctx.peer_id) {
                     let peer_sender = peer.sender.clone();
                     task::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker).await;
@@ -534,26 +534,26 @@ impl ShvNode for BrokerCurrentClientNode {
         Some(vec![])
     }
 
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &ctx.broker_state)?;
+                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &broker_impl.state)?;
                 Ok(Some(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &ctx.broker_state)?;
+                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &broker_impl.state)?;
                 Ok(Some(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = state_reader(&ctx.broker_state).subscriptions(ctx.peer_id)?;
+                let result = state_reader(&broker_impl.state).subscriptions(ctx.peer_id)?;
                 Ok(Some(result.into()))
             }
             METH_INFO => {
-                let info = match state_reader(&ctx.broker_state).client_info(ctx.peer_id) {
+                let info = match state_reader(&broker_impl.state).client_info(ctx.peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -578,7 +578,9 @@ impl BrokerAccessMountsNode {
         }
     }
 }
-
+fn make_access_ro_error() -> String {
+    "Broker config is read only, use --use-access-db config option.".to_string()
+}
 impl ShvNode for BrokerAccessMountsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
@@ -596,10 +598,10 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.broker_state).access_mount(&ctx.node_path) {
+                match state_reader(&broker_impl.state).access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -609,6 +611,9 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
+                if broker_impl.sql_connection.is_none() {
+                    return Err(make_access_ro_error().into())
+                }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -619,7 +624,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.broker_state).set_access_mount(key.as_str(), mount);
+                state_writer(&broker_impl.state).set_access_mount(key.as_str(), mount);
                 Ok(Some(().into()))
             }
             _ => {
@@ -654,10 +659,10 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.broker_state).access_user(&ctx.node_path) {
+                match state_reader(&broker_impl.state).access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -667,6 +672,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 }
             }
             METH_SET_VALUE => {
+                if broker_impl.sql_connection.is_none() {
+                    return Err(make_access_ro_error().into())
+                }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -677,7 +685,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     Some(Ok(user)) => {Some(user)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.broker_state).set_access_user(key.as_str(), user);
+                state_writer(&broker_impl.state).set_access_user(key.as_str(), user);
                 Ok(Some(().into()))
             }
             _ => {
@@ -711,10 +719,10 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.broker_state).access_role(&ctx.node_path) {
+                match state_reader(&broker_impl.state).access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -724,6 +732,9 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
+                if broker_impl.sql_connection.is_none() {
+                    return Err(make_access_ro_error().into())
+                }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -734,7 +745,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.broker_state).set_access_role(key.as_str(), role);
+                state_writer(&broker_impl.state).set_access_role(key.as_str(), role);
                 Ok(Some(().into()))
             }
             _ => {
