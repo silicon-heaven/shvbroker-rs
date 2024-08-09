@@ -384,8 +384,8 @@ impl ShvNode for AppDeviceNode {
 pub const DIR_BROKER: &str = ".broker";
 pub const DIR_BROKER_CURRENT_CLIENT: &str = ".broker/currentClient";
 pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
-// pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
-// pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
+pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
+pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 
 pub const METH_CLIENT_INFO: &str = "clientInfo";
 pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";
@@ -569,6 +569,8 @@ pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "Map", signals: &[], description: "" };
 const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
+const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_SET_VALUE];
+const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_VALUE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
     pub(crate) fn new() -> Self {
@@ -577,8 +579,6 @@ impl BrokerAccessMountsNode {
     }
 }
 
-const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_SET_VALUE];
-const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_VALUE];
 impl ShvNode for BrokerAccessMountsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
@@ -619,7 +619,122 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                crate::brokerimpl::state_writer(&ctx.broker_state).set_access_mount(key.as_str(), mount);
+                state_writer(&ctx.broker_state).set_access_mount(key.as_str(), mount);
+                Ok(Some(().into()))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
+}
+
+pub(crate) struct BrokerAccessUsersNode {}
+impl BrokerAccessUsersNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+}
+
+impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
+    fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
+        if shv_path.is_empty() {
+            ACCESS_NODE_METHODS
+        } else {
+            ACCESS_VALUE_NODE_METHODS
+        }
+    }
+
+    fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(state_reader(broker_state).access.users.keys().map(|m| m.to_string()).collect())
+        } else {
+            Some(vec![])
+        }
+    }
+
+    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        match frame.method().unwrap_or_default() {
+            METH_VALUE => {
+                match state_reader(&ctx.broker_state).access_user(&ctx.node_path) {
+                    None => {
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    }
+                    Some(user) => {
+                        Ok(Some(user.to_rpcvalue()?))
+                    }
+                }
+            }
+            METH_SET_VALUE => {
+                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
+                let param = param.as_list();
+                let key = param.first().ok_or("Key is missing")?;
+                let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let user = rv.map(crate::config::User::try_from);
+                let user = match user {
+                    None => None,
+                    Some(Ok(user)) => {Some(user)}
+                    Some(Err(e)) => { return Err(e.into() )}
+                };
+                state_writer(&ctx.broker_state).set_access_user(key.as_str(), user);
+                Ok(Some(().into()))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
+}
+pub(crate) struct BrokerAccessRolesNode {}
+impl crate::shvnode::BrokerAccessRolesNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+}
+
+impl ShvNode for BrokerAccessRolesNode {
+    fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
+        if shv_path.is_empty() {
+            ACCESS_NODE_METHODS
+        } else {
+            ACCESS_VALUE_NODE_METHODS
+        }
+    }
+
+    fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(state_reader(broker_state).access.roles.keys().map(|m| m.to_string()).collect())
+        } else {
+            Some(vec![])
+        }
+    }
+
+    fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        match frame.method().unwrap_or_default() {
+            METH_VALUE => {
+                match state_reader(&ctx.broker_state).access_role(&ctx.node_path) {
+                    None => {
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    }
+                    Some(role) => {
+                        Ok(Some(role.to_rpcvalue()?))
+                    }
+                }
+            }
+            METH_SET_VALUE => {
+                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
+                let param = param.as_list();
+                let key = param.first().ok_or("Key is missing")?;
+                let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let role = rv.map(crate::config::Role::try_from);
+                let role = match role {
+                    None => None,
+                    Some(Ok(role)) => {Some(role)}
+                    Some(Err(e)) => { return Err(e.into() )}
+                };
+                state_writer(&ctx.broker_state).set_access_role(key.as_str(), role);
                 Ok(Some(().into()))
             }
             _ => {

@@ -12,7 +12,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvproto::{List, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
-use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
+use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
 use shvrpc::metamethod::{AccessLevel};
@@ -23,6 +23,7 @@ use crate::peer;
 use crate::peer::next_peer_id;
 use async_std::stream::StreamExt;
 use futures::FutureExt;
+use crate::brokerimpl::BrokerCommand::ExecSql;
 
 #[derive(Debug)]
 pub(crate)  struct Subscription {
@@ -72,19 +73,14 @@ pub(crate) enum BrokerCommand {
         peer_id: PeerId,
     },
     SendResponse {peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>},
-    //CallSubscribeOnPeer {
-    //    peer_id: CliId,
-    //    subscriptions: Vec<SubscriptionParam>,
-    //},
     RpcCall {
         client_id: PeerId,
         request: RpcMessage,
         response_sender: Sender<RpcFrame>,
     },
-    //SetSubscribeMethodPath {
-    //    peer_id: CliId,
-    //    subscribe_path: SubscribePath,
-    //},
+    ExecSql {
+        query: String,
+    },
 }
 
 #[derive(Debug)]
@@ -181,9 +177,9 @@ pub(crate) async fn broker_loop(broker: BrokerImpl) {
     }
 }
 
-pub async fn accept_loop(config: BrokerConfig, access: AccessConfig) -> shvrpc::Result<()> {
+pub async fn accept_loop(config: BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
     if let Some(address) = config.listen.tcp.clone() {
-        let broker_impl = BrokerImpl::new(access);
+        let broker_impl = BrokerImpl::new(access, sql_connection);
         let broker_sender = broker_impl.command_sender.clone();
         let parent_broker_peer_config = config.parent_broker.clone();
         let broker_task = task::spawn(broker_loop(broker_impl));
@@ -215,7 +211,7 @@ pub struct BrokerState {
     pub(crate) access: AccessConfig,
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
 
-    command_sender: Sender<BrokerCommand>,
+    pub(crate) command_sender: Sender<BrokerCommand>,
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
@@ -517,16 +513,94 @@ impl BrokerState {
         }
         Ok(())
     }
-    pub(crate) fn access_mount(&self, device_id: &str) -> Option<&crate::config::Mount> {
-        self.access.mounts.get(device_id)
+    pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {
+        self.access.mounts.get(id)
     }
-    pub(crate) fn set_access_mount(&mut self, device_id: &str, mount: Option<crate::config::Mount>) {
-        if let Some(mount) = mount {
-            self.access.mounts.insert(device_id.to_string(), mount);
+    pub(crate) fn set_access_mount(&mut self, id: &str, mount: Option<crate::config::Mount>) {
+        let sqlop = if let Some(mount) = mount {
+            let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
+                error!("Generate SQL statement error: {e}");
+                "".to_string()
+            });
+            let sql = if self.access.mounts.contains_key(id) {
+                UpdateSqlOperation::Update { id, json }
+            } else {
+                UpdateSqlOperation::Insert { id, json }
+            };
+            self.access.mounts.insert(id.to_string(), mount);
+            sql
         } else {
-            self.access.mounts.remove(device_id);
-        }
+            self.access.mounts.remove(id);
+            UpdateSqlOperation::Delete { id }
+        };
+        self.uddate_sql("mounts", sqlop);
     }
+    pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
+        self.access.users.get(id)
+    }
+    pub(crate) fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>) {
+        let sqlop = if let Some(user) = user {
+            let json = serde_json::to_string(&user).unwrap_or_else(|e| {
+                error!("Generate SQL statement error: {e}");
+                "".to_string()
+            });
+            let sql = if self.access.users.contains_key(id) {
+                UpdateSqlOperation::Update { id, json }
+            } else {
+                UpdateSqlOperation::Insert { id, json }
+            };
+            self.access.users.insert(id.to_string(), user);
+            sql
+        } else {
+            self.access.users.remove(id);
+            UpdateSqlOperation::Delete { id }
+        };
+        self.uddate_sql("users", sqlop);
+    }
+    pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
+        self.access.roles.get(id)
+    }
+    pub(crate) fn set_access_role(&mut self, id: &str, role: Option<crate::config::Role>) {
+        let sqlop = if let Some(role) = role {
+            let json = serde_json::to_string(&role).unwrap_or_else(|e| {
+                error!("Generate SQL statement error: {e}");
+                "".to_string()
+            });
+            let sql = if self.access.roles.contains_key(id) {
+                UpdateSqlOperation::Update { id, json }
+            } else {
+                UpdateSqlOperation::Insert { id, json }
+            };
+            self.access.roles.insert(id.to_string(), role);
+            sql
+        } else {
+            self.access.roles.remove(id);
+            UpdateSqlOperation::Delete { id }
+        };
+        self.uddate_sql("roles", sqlop);
+    }
+    fn uddate_sql(&self, table: &str, oper: UpdateSqlOperation) {
+        let query = match oper {
+            UpdateSqlOperation::Insert { id, json } => {
+                format!("INSERT INTO {} (id, def) VALUES ('{}', '{}');", table, id, json)
+            }
+            UpdateSqlOperation::Update { id, json } => {
+                format!("UPDATE {} SET def = '{}' WHERE id = '{}';", table, json, id)
+            }
+            UpdateSqlOperation::Delete { id } => {
+                format!("DELETE FROM {} WHERE id = '{}';", table, id)
+            }
+        };
+        let sender = self.command_sender.clone();
+        task::spawn(async move {
+            let _ = sender.send(ExecSql { query }).await;
+        });
+    }
+}
+enum UpdateSqlOperation<'a> {
+    Insert{id: &'a str, json: String},
+    Update{id: &'a str, json: String},
+    Delete{id: &'a str},
 }
 pub struct BrokerImpl {
     state: SharedBrokerState,
@@ -535,6 +609,8 @@ pub struct BrokerImpl {
     pending_rpc_calls: Vec<PendingRpcCall>,
     pub(crate) command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
+
+    sql_connection: Option<rusqlite::Connection>,
 }
 pub(crate) fn state_reader(state: &SharedBrokerState) -> RwLockReadGuard<BrokerState> {
     state.read().unwrap()
@@ -543,7 +619,7 @@ pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<Broker
     state.write().unwrap()
 }
 impl BrokerImpl {
-    pub(crate) fn new(access: AccessConfig) -> Self {
+    pub(crate) fn new(access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> Self {
         let (command_sender, command_receiver) = unbounded();
         let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
         for (name, role) in &access.roles {
@@ -575,6 +651,7 @@ impl BrokerImpl {
             pending_rpc_calls: vec![],
             command_sender,
             command_receiver,
+            sql_connection,
         };
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             state_writer(&broker.state).mounts.insert(path.into(), Mount::Node);
@@ -584,6 +661,8 @@ impl BrokerImpl {
         add_node(DIR_BROKER, Box::new(BrokerNode::new()));
         add_node(DIR_BROKER_CURRENT_CLIENT, Box::new(BrokerCurrentClientNode::new()));
         add_node(DIR_BROKER_ACCESS_MOUNTS, Box::new(BrokerAccessMountsNode::new()));
+        add_node(DIR_BROKER_ACCESS_USERS, Box::new(BrokerAccessUsersNode::new()));
+        add_node(DIR_BROKER_ACCESS_ROLES, Box::new(BrokerAccessRolesNode::new()));
         broker
     }
     pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
@@ -781,6 +860,14 @@ impl BrokerImpl {
                     response_sender,
                 }).await?
             }
+            BrokerCommand::ExecSql { query } => {
+                if let Some(connection) = &self.sql_connection {
+                    connection.execute(&query, ()).unwrap_or_else(|e| {
+                        error!("SQL exec error: {e}");
+                        0
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -921,7 +1008,7 @@ mod test {
     fn test_broker() {
         let config = BrokerConfig::default();
         let access = config.access.clone();
-        let broker = BrokerImpl::new(access);
+        let broker = BrokerImpl::new(access, None);
         let roles = state_reader(&broker.state).flatten_roles("child-broker").unwrap();
         assert_eq!(roles, vec!["child-broker", "device", "client", "ping", "subscribe", "browse"]);
     }

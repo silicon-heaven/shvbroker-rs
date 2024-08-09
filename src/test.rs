@@ -8,7 +8,7 @@ use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::PeerId;
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::{BrokerConfig, Mount};
+use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, User};
 use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx<'a> {
@@ -54,7 +54,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
 async fn test_broker_loop() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
-    let broker = BrokerImpl::new(access);
+    let broker = BrokerImpl::new(access, None);
     let broker_sender = broker.command_sender.clone();
     let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -120,8 +120,9 @@ async fn test_broker_loop() {
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
             let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await;
-            let m = resp.as_map();
-            assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
+            let mount1 = Mount::try_from(&resp).unwrap();
+            let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
+            assert_eq!(mount1, mount2);
         }
         {
             let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
@@ -131,6 +132,52 @@ async fn test_broker_loop() {
             assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
             let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
             assert_eq!(mount, Mount::try_from(&resp).unwrap());
+        }
+
+        // access/users
+        {
+            let path = ".broker/access/users";
+            {
+                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["admin", "child-broker", "test", "tester", "user"].to_vec()).as_list());
+                let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await;
+                let user1 = User::try_from(&resp).unwrap();
+                let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()] };
+                assert_eq!(user1, user2);
+            }
+            {
+                let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()] };
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await;
+                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["admin", "baz", "child-broker", "test", "tester", "user"].to_vec()).as_list());
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+                assert_eq!(user, User::try_from(&resp).unwrap());
+            }
+        }
+
+        // access/roles
+        {
+            let path = ".broker/access/roles";
+            {
+                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
+                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await;
+                let role1 = Role::try_from(&resp).unwrap();
+                let role2 = Role { roles: vec!["client".into()], access: vec![AccessRule{ shv_ri: "test/**:*".into(), grant: "cfg".into() }] };
+                assert_eq!(role1, role2);
+            }
+            {
+                let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }] };
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await;
+                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["baz", "browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+                assert_eq!(role, Role::try_from(&resp).unwrap());
+            }
         }
     }
     broker_task.cancel().await;

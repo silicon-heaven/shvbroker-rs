@@ -38,23 +38,53 @@ pub struct Listen {
     pub ssl: Option<String>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq)]
 pub struct User {
     pub password: Password,
     pub roles: Vec<String>,
 }
+impl User {
+    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
+        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
+        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
+    }
+}
+impl TryFrom<&RpcValue> for User {
+    type Error = String;
+    fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
+        let cpon = value.to_cpon();
+        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq)]
 pub enum Password {
     Plain(String),
     Sha1(String),
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq)]
 pub struct Role {
     #[serde(default)]
     pub roles: Vec<String>,
     #[serde(default)]
     pub access: Vec<AccessRule>,
 }
+impl Role {
+    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
+        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
+        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
+    }
+}
+impl TryFrom<&RpcValue> for Role {
+    type Error = String;
+    fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
+        let cpon = value.to_cpon();
+        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq)]
 pub struct AccessRule {
     #[serde(rename = "shvRI")]
     pub shv_ri: String,

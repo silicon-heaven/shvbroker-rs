@@ -81,21 +81,28 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     };
     let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
     let use_config_db = (cli_use_access_db_set && cli_opts.use_config_db) || config.use_access_db;
-    let access = if use_config_db {
+    let (access, sql_connection) = if use_config_db {
         let config_file = join_path(&data_dir, "shvbroker.sqlite");
-        if Path::new(&config_file).exists() {
-            load_access_sqlite(&config_file)?
-        } else {
-            create_access_sqlite(&config_file, &config.access)?;
-            config.access.clone()
+        if let Some(path) = Path::new(&config_file).parent() {
+            fs::create_dir_all(path)?;
         }
+        let sql_connection = Connection::open(&config_file)?;
+        let config = if Path::new(&config_file).exists() {
+            info!("Loading SQLite access tables: {config_file}");
+            load_access_sqlite(&sql_connection)?
+        } else {
+            info!("Creating SQLite access tables: {config_file}");
+            create_access_sqlite(&sql_connection, &config.access)?;
+            config.access.clone()
+        };
+        (config, Some(sql_connection))
     } else {
-        config.access.clone()
+        (config.access.clone(), None)
     };
     if let Some(file) = cli_opts.write_config {
         write_config_to_file(&file, &config, &access)?;
     }
-    task::block_on(shvbroker::brokerimpl::accept_loop(config, access))
+    task::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
 }
 
 fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
@@ -112,14 +119,10 @@ fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessConfig
 const TBL_MOUNTS: &str = "mounts";
 const TBL_USERS: &str = "users";
 const TBL_ROLES: &str = "roles";
-fn create_access_sqlite(file_path: &str, access: &AccessConfig) -> shvrpc::Result<()> {
-    info!("Creating SQLite access tables: {file_path}");
-    if let Some(path) = Path::new(file_path).parent() {
-        fs::create_dir_all(path)?;
-    }
-    let conn = Connection::open(file_path)?;
+fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc::Result<()> {
+
     for tbl_name in [TBL_MOUNTS, TBL_USERS, TBL_ROLES] {
-        conn.execute(&format!(r#"
+        sql_conn.execute(&format!(r#"
             CREATE TABLE {tbl_name} (
                 id character varying PRIMARY KEY,
                 def character varying
@@ -128,36 +131,33 @@ fn create_access_sqlite(file_path: &str, access: &AccessConfig) -> shvrpc::Resul
     }
     for (id, def) in &access.mounts {
         debug!("Inserting mount: {id}");
-        conn.execute(&format!(r#"
+        sql_conn.execute(&format!(r#"
             INSERT INTO {TBL_MOUNTS} (id, def) VALUES (?1, ?2);
         "#), (&id, serde_json::to_string(&def)?))?;
     }
     for (id, def) in &access.users {
         debug!("Inserting user: {id}");
-        conn.execute(&format!(r#"
+        sql_conn.execute(&format!(r#"
             INSERT INTO {TBL_USERS} (id, def) VALUES (?1, ?2);
         "#), (&id, serde_json::to_string(&def)?))?;
     }
     for (id, def) in &access.roles {
         debug!("Inserting role: {id}");
-        conn.execute(&format!(r#"
+        sql_conn.execute(&format!(r#"
             INSERT INTO {TBL_ROLES} (id, def) VALUES (?1, ?2);
         "#), (&id, serde_json::to_string(&def)?))?;
     }
     Ok(())
 }
 
-fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessConfig> {
-    info!("Loading SQLite access tables: {file_path}");
-    let conn = Connection::open(file_path)?;
-
+fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
     let mut access = AccessConfig {
         users: Default::default(),
         roles: Default::default(),
         mounts: Default::default(),
     };
 
-    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_USERS}"))?;
+    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_USERS}"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
@@ -166,7 +166,7 @@ fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessConfig> {
         access.users.insert(id, user);
     }
 
-    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_ROLES}"))?;
+    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_ROLES}"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
@@ -175,7 +175,7 @@ fn load_access_sqlite(file_path: &String) -> shvrpc::Result<AccessConfig> {
         access.roles.insert(id, user);
     }
 
-    let mut stmt = conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
+    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
