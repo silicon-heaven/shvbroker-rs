@@ -1,6 +1,7 @@
 use crate::brokerimpl::BrokerImpl;
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
+use rusqlite::Connection;
 use shvproto::{List, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
@@ -54,7 +55,8 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
 async fn test_broker_loop() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
-    let broker = BrokerImpl::new(access, None);
+    let sql = Connection::open_in_memory().unwrap();
+    let broker = BrokerImpl::new(access, Some(sql));
     let broker_sender = broker.command_sender.clone();
     let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
 
