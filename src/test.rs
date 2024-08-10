@@ -2,7 +2,7 @@ use crate::brokerimpl::BrokerImpl;
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
 use rusqlite::Connection;
-use shvproto::{List, RpcValue};
+use shvproto::{RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
@@ -90,7 +90,7 @@ async fn test_broker_loop() {
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
     assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
-    assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(List::new()));
+    assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
 
     // subscriptions
     let subs = SubscriptionParam { ri: ShvRI::try_from("shv/**:*").unwrap(), ttl: 0 };
@@ -103,15 +103,15 @@ async fn test_broker_loop() {
         assert!(!result.as_bool());
         let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
-        let subs_list = subs.as_list();
-        assert_eq!(subs_list.len(), 1);
+        let subs_map = subs.as_map();
+        assert_eq!(subs_map.len(), 1);
     }
     {
         call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
         let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
         let subs = resp.as_map().get("subscriptions").unwrap();
-        let subs_list = subs.as_list();
-        assert_eq!(subs_list.len(), 0);
+        let subs_map = subs.as_map();
+        assert_eq!(subs_map.len(), 0);
     }
 
     // access/mounts

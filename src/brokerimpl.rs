@@ -10,7 +10,7 @@ use log::{debug, error, info, log, warn};
 use crate::config::{AccessConfig, BrokerConfig, Password};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
-use shvproto::{List, MetaMap, RpcValue, rpcvalue};
+use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
@@ -384,7 +384,7 @@ impl BrokerState {
         }
     }
     fn peer_to_info(client_id: PeerId, peer: &Peer) -> rpcvalue::Map {
-        let subs: List = peer.subscriptions.iter().map(|subs| subs.param.to_rpcvalue()).collect();
+        let subs = Self::subscriptions_to_map(&peer.subscriptions);
         let (device_id, mount_point) = if let PeerKind::Device { mount_point, device_id, .. } = &peer.peer_kind {
             (device_id.clone().unwrap_or_default(), mount_point.clone())
         } else {
@@ -412,23 +412,36 @@ impl BrokerState {
         }
         None
     }
-    pub(crate) fn subscriptions(&self, client_id: PeerId) -> shvrpc::Result<List> {
+    fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
+        subscriptions.iter().map(|subscr| {
+            if subscr.param.ttl == 0 {
+                let key = subscr.glob.as_str().to_string();
+                (key, 0.into())
+            } else {
+                let key = subscr.glob.as_str().to_string();
+                let ttl = Instant::now() + Duration::from_secs(subscr.param.ttl as u64) - subscr.subscribed;
+                (key, (ttl.as_secs() as i64).into())
+            }
+        }).collect()
+    }
+    pub(crate) fn subscriptions(&self, client_id: PeerId) -> shvrpc::Result<Map> {
         let peer = self.peers.get(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
-        let subs: List = peer.subscriptions.iter().map(|subs| subs.param.to_rpcvalue()).collect();
-        Ok(subs)
+        Ok(Self::subscriptions_to_map(&peer.subscriptions))
     }
     pub(crate) fn subscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         if let  Some(sub) = peer.subscriptions.iter_mut().find(|sub| sub.param.ri == subpar.ri) {
+            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {} - {:?}", client_id, subpar);
             sub.param.ttl = subpar.ttl;
             Ok(false)
         } else {
+            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {} - {:?}", client_id, subpar);
             peer.subscriptions.push(Subscription::new(subpar)?);
             Ok(true)
         }
     }
     pub(crate) fn unsubscribe(&mut self, client_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "Remove subscription for client id: {} - {:?}", client_id, subpar);
+        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {} - {:?}", client_id, subpar);
         let peer = self.peers.get_mut(&client_id).ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         let cnt = peer.subscriptions.len();
         peer.subscriptions.retain(|subscr| subscr.param.ri != subpar.ri);
