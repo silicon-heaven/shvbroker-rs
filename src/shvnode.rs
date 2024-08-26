@@ -24,9 +24,9 @@ pub const METH_PING: &str = "ping";
 pub const METH_SUBSCRIBE: &str = "subscribe";
 pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 
-pub const META_METHOD_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
-pub const META_METHOD_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
-pub const DIR_LS_METHODS: [MetaMethod; 2] = [ META_METHOD_DIR, META_METHOD_LS];
+const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
+const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
+const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
 pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
 pub const DOT_LOCAL_HACK: &str = "dot-local-hack";
@@ -126,7 +126,7 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
     if method == METH_DIR && !is_mount_point && !is_remote_dir && !is_tree_leaf {
         // dir in the middle of the tree must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
-            let dir = dir(DIR_LS_METHODS.iter(), rpcmsg.param().into());
+            let dir = dir(PUBLIC_DIR_LS_METHODS.iter(), rpcmsg.param().into());
             return Some(Ok(dir))
         } else {
             return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
@@ -295,8 +295,8 @@ const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag
 const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
 
 const APP_NODE_METHODS: &[&MetaMethod; 6] = &[
-    &META_METHOD_DIR,
-    &META_METHOD_LS,
+    &META_METHOD_PUBLIC_DIR,
+    &META_METHOD_PUBLIC_LS,
     &META_METH_APP_SHV_VERSION_MAJOR,
     &META_METH_APP_SHV_VERSION_MINOR,
     &META_METH_APP_NAME,
@@ -344,8 +344,8 @@ pub struct AppDeviceNode {
 }
 
 const APP_DEVICE_NODE_METHODS: &[&MetaMethod; 5] = &[
-    &META_METHOD_DIR,
-    &META_METHOD_LS,
+    &META_METHOD_PUBLIC_DIR,
+    &META_METHOD_PUBLIC_LS,
     &META_METH_NAME,
     &META_METH_VERSION,
     &META_METH_SERIAL_NUMBER
@@ -411,8 +411,8 @@ impl BrokerNode {
     }
 }
 const BROKER_NODE_METHODS: &[&MetaMethod; 7] = &[
-    &META_METHOD_DIR,
-    &META_METHOD_LS,
+    &META_METHOD_PUBLIC_DIR,
+    &META_METHOD_PUBLIC_LS,
     &META_METH_CLIENT_INFO,
     &META_METH_MOUNTED_CLIENT_INFO,
     &META_METH_CLIENTS,
@@ -493,8 +493,8 @@ impl BrokerCurrentClientNode {
 }
 
 const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
-    &META_METHOD_DIR,
-    &META_METHOD_LS,
+    &META_METHOD_PUBLIC_DIR,
+    &META_METHOD_PUBLIC_LS,
     &META_METH_INFO,
     &META_METH_SUBSCRIBE,
     &META_METH_UNSUBSCRIBE,
@@ -565,12 +565,16 @@ impl ShvNode for BrokerCurrentClientNode {
         }
     }
 }
+
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Read, param: "DirParam", result: "DirResult", signals: &[], description: "" };
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Read, param: "LsParam", result: "LsResult", signals: &[], description: "" };
+
 pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "Map", signals: &[], description: "" };
-const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
-const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_SET_VALUE];
-const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_DIR, &META_METHOD_LS, &META_METH_VALUE];
+const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Write, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
+const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
+const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
     pub(crate) fn new() -> Self {

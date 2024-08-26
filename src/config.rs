@@ -135,6 +135,7 @@ impl Default for BrokerConfig {
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()] }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()] }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()] }),
+                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: vec!["subscribe", "browse"].iter().map(|s| s.to_string()).collect() }),
                     ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()] }),
                     ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()] }),
                 ]),
@@ -147,13 +148,6 @@ impl Default for BrokerConfig {
                     }),
                     ("client".to_string(), Role { roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()], access: vec![] }),
                     ("device".to_string(), Role { roles: vec!["client".to_string()], access: vec![] }),
-                    //("parent-broker".to_string(), Role { roles: vec![],
-                    //    access: vec![
-                    //        AccessRule { paths: ".app/**".to_string(), methods: "".to_string(), grant: "rd".to_string() },
-                    //        AccessRule { paths: ".broker/currentClient".to_string(), methods: "*subscribe".to_string(), grant: "wr".to_string() },
-                    //        AccessRule { paths: ".broker/currentClient".to_string(), methods: "subscriptions".to_string(), grant: "rd".to_string() },
-                    //    ]
-                    //}),
                     ("child-broker".to_string(), Role { roles: vec!["device".to_string()], access: vec![] }),
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
