@@ -93,7 +93,8 @@ async fn test_broker_loop() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
 
     // subscriptions
-    let subs = SubscriptionParam { ri: ShvRI::try_from("shv/**:*").unwrap(), ttl: 0 };
+    let subs_ri = "shv/**:*";
+    let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
     {
         // subscribe
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
@@ -101,10 +102,11 @@ async fn test_broker_loop() {
         // cannot subscribe the same twice
         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
         assert!(!result.as_bool());
-        let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
-        let subs = resp.as_map().get("subscriptions").unwrap();
-        let subs_map = subs.as_map();
+        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await;
+        let subs_map = resp.as_map();
+        // let s = format!("{:?}", subs_map);
         assert_eq!(subs_map.len(), 1);
+        assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
     }
     {
         call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
