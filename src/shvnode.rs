@@ -308,8 +308,12 @@ impl ShvNode for AppNode {
         APP_NODE_METHODS
     }
 
-    fn children(&self, _shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
-        Some(vec![])
+    fn children(&self, shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(vec![])
+        } else {
+            None
+        }
     }
 
     fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
@@ -356,8 +360,12 @@ impl ShvNode for AppDeviceNode {
         APP_DEVICE_NODE_METHODS
     }
 
-    fn children(&self, _shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
-        Some(vec![])
+    fn children(&self, shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(vec![])
+        } else {
+            None
+        }
     }
 
     fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
@@ -425,8 +433,12 @@ impl ShvNode for BrokerNode {
         BROKER_NODE_METHODS
     }
 
-    fn children(&self, _shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
-        Some(vec![])
+    fn children(&self, shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(vec![])
+        } else {
+            None
+        }
     }
 
     fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
@@ -775,6 +787,7 @@ mod tests {
         assert_eq!(super::find_longest_prefix(&mounts, ".broker/client"), Some((".broker", "client")));
         assert_eq!(super::find_longest_prefix(&mounts, "test"), None);
         assert_eq!(super::find_longest_prefix(&mounts, "test/device"), Some(("test/device", "")));
+        assert_eq!(super::find_longest_prefix(&mounts, "test/devic"), None);
 
         assert_eq!(super::children_on_path(&mounts, ""), Some(vec![".broker", "test"].into_iter().map(|s| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, ".broker"), Some(vec!["client", "currentClient"].into_iter().map(|s| s.to_string()).collect()));
@@ -783,5 +796,6 @@ mod tests {
         assert_eq!(super::children_on_path(&mounts, ".broker/currentClient"), Some(vec![].into_iter().map(|s: &str/* Type */| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, "test/device/1"), None);
         assert_eq!(super::children_on_path(&mounts, "test1"), None);
+        assert_eq!(super::children_on_path(&mounts, "test/devic"), None);
     }
 }

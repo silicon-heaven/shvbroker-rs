@@ -6,7 +6,7 @@ use shvproto::{RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
-use shvrpc::rpcmessage::PeerId;
+use shvrpc::rpcmessage::{PeerId, RpcError};
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, User};
@@ -18,7 +18,7 @@ struct CallCtx<'a> {
     client_id: PeerId,
 }
 
-async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>) -> RpcValue {
+async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>) -> Result<RpcValue, RpcError> {
     let msg = RpcMessage::new_request(shv_path, method, param);
     let frame = RpcFrame::from_rpcmessage(&msg).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
@@ -34,14 +34,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
         };
         if msg.is_response() {
             println!("response: {msg}");
-            match msg.result() {
-                Ok(retval) => {
-                    break retval.clone();
-                }
-                Err(err) => {
-                    panic!("Rpc error response received: {err} - {}", msg);
-                }
-            }
+            break msg.result().map(|v| v.clone())
         } else {
             // ignore RPC requests which might be issued after subscribe call
             println!("ignoring message: {msg}");
@@ -80,12 +73,20 @@ async fn test_broker_loop() {
         device_id: None,
         sender: peer_writer.clone() }).await.unwrap();
 
+    let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
+    assert_eq!(resp, RpcValue::from(true));
+    let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();
+    assert!(resp.is_list());
+    assert!(resp.as_list().iter().find(|s| s.as_str() == "mounts").is_some());
+    let resp = call(".broker/acce", "ls", None, &call_ctx).await;
+    assert!(resp.is_err());
+
     // device should be mounted as 'shv/dev/test'
-    let resp = call("test", "ls", Some("device".into()), &call_ctx).await;
+    let resp = call("test", "ls", Some("device".into()), &call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
 
     // test current client info
-    let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
+    let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
     let m = resp.as_map();
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
@@ -97,20 +98,20 @@ async fn test_broker_loop() {
     let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
     {
         // subscribe
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
         assert!(result.as_bool());
         // cannot subscribe the same twice
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
         assert!(!result.as_bool());
-        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await;
+        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await.unwrap();
         let subs_map = resp.as_map();
         // let s = format!("{:?}", subs_map);
         assert_eq!(subs_map.len(), 1);
         assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
     }
     {
-        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await;
-        let resp = call(".broker/currentClient", "info", None, &call_ctx).await;
+        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_map = subs.as_map();
         assert_eq!(subs_map.len(), 0);
@@ -120,21 +121,21 @@ async fn test_broker_loop() {
     {
         let path = ".broker/access/mounts";
         {
-            let resp = call(path, METH_LS, None, &call_ctx).await;
+            let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await;
+            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await.unwrap();
             let mount1 = Mount::try_from(&resp).unwrap();
             let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
             assert_eq!(mount1, mount2);
         }
         {
             let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await;
-            let resp = call(path, METH_LS, None, &call_ctx).await;
+            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
+            let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
             assert_eq!(mount, Mount::try_from(&resp).unwrap());
         }
 
@@ -142,21 +143,21 @@ async fn test_broker_loop() {
         {
             let path = ".broker/access/users";
             {
-                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["admin", "child-broker", "test", "tester", "user"].to_vec()).as_list());
-                let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await;
+                assert_eq!(list, RpcValue::from(["admin", "child-broker", "test", "tester", "user", "viewer"].to_vec()).as_list());
+                let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let user1 = User::try_from(&resp).unwrap();
                 let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()] };
                 assert_eq!(user1, user2);
             }
             {
                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()] };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await;
-                let resp = call(path, METH_LS, None, &call_ctx).await;
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["admin", "baz", "child-broker", "test", "tester", "user"].to_vec()).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+                assert_eq!(list, RpcValue::from(["admin", "baz", "child-broker", "test", "tester", "user", "viewer"].to_vec()).as_list());
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
                 assert_eq!(user, User::try_from(&resp).unwrap());
             }
         }
@@ -165,21 +166,21 @@ async fn test_broker_loop() {
         {
             let path = ".broker/access/roles";
             {
-                let resp = call(path, METH_LS, None, &call_ctx).await;
+                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(["browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
-                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await;
+                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let role1 = Role::try_from(&resp).unwrap();
                 let role2 = Role { roles: vec!["client".into()], access: vec![AccessRule{ shv_ri: "test/**:*".into(), grant: "cfg".into() }] };
                 assert_eq!(role1, role2);
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }] };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await;
-                let resp = call(path, METH_LS, None, &call_ctx).await;
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(["baz", "browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await;
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
                 assert_eq!(role, Role::try_from(&resp).unwrap());
             }
         }
