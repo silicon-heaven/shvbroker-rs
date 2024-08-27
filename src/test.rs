@@ -118,8 +118,8 @@ async fn test_broker_loop() {
     }
 
     let config = BrokerConfig::default();
-    let users: Vec<_> = config.access.users.keys().into_iter().map(|k| k.to_string()).collect();
-    let roles: Vec<_> = config.access.roles.keys().into_iter().map(|k| k.to_string()).collect();
+    let users: Vec<_> = config.access.users.keys().map(|k| k.to_string()).collect();
+    let roles: Vec<_> = config.access.roles.keys().map(|k| k.to_string()).collect();
     // access/mounts
     {
         let path = ".broker/access/mounts";

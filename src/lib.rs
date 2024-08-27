@@ -5,6 +5,7 @@ mod peer;
 
 #[cfg(test)]
 mod test;
+mod tunnelnode;
 
 mod spawn {
     use log::error;

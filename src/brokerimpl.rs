@@ -24,6 +24,7 @@ use crate::peer::next_peer_id;
 use async_std::stream::StreamExt;
 use futures::FutureExt;
 use crate::brokerimpl::BrokerCommand::ExecSql;
+use crate::tunnelnode::TunnelNode;
 
 #[derive(Debug)]
 pub(crate)  struct Subscription {
@@ -680,6 +681,7 @@ impl BrokerImpl {
             broker.nodes.insert(path.into(), node);
         };
         add_node(DIR_APP, Box::new(AppNode::new()));
+        add_node(".app/tunnel", Box::new(TunnelNode::new()));
         add_node(DIR_BROKER, Box::new(BrokerNode::new()));
         add_node(DIR_BROKER_CURRENT_CLIENT, Box::new(BrokerCurrentClientNode::new()));
         add_node(DIR_BROKER_ACCESS_MOUNTS, Box::new(BrokerAccessMountsNode::new()));
@@ -736,6 +738,8 @@ impl BrokerImpl {
                                 ctx: NodeRequestContext {
                                     peer_id,
                                     node_path: node_path.to_string(),
+                                    state: self.state.clone(),
+                                    sql_available: self.sql_connection.is_some(),
                                 },
                             }
                         }
@@ -747,9 +751,9 @@ impl BrokerImpl {
                         return Ok(())
                     }
                     Action::NodeRequest { node_id, frame, ctx } => {
-                        let node = self.nodes.get(&node_id).expect("Should be mounted");
+                        let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame) {
-                            let result = match node.process_request_and_dir_ls(&frame, self, &ctx) {
+                            let result = match node.process_request_and_dir_ls(&frame, &ctx) {
                                 Ok(Some(result)) => {
                                     Ok(result)
                                 }
@@ -1054,6 +1058,8 @@ impl BrokerImpl {
 pub(crate) struct NodeRequestContext {
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
+    pub(crate) state: SharedBrokerState,
+    pub(crate) sql_available: bool,
 }
 
 #[cfg(test)]

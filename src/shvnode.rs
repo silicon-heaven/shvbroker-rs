@@ -24,8 +24,8 @@ pub const METH_PING: &str = "ping";
 pub const METH_SUBSCRIBE: &str = "subscribe";
 pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 
-const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
-const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
+pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
+pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
 const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
 pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
@@ -217,11 +217,16 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
+    fn is_request_granted(&self, rq: &RpcFrame) -> bool {
+        let shv_path = rq.shv_path().unwrap_or_default();
+        let methods = self.methods(shv_path);
+        is_request_granted_methods(methods, rq)
+    }
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
 }
 impl dyn ShvNode {
-    pub fn process_request_and_dir_ls(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
-        let result = self.process_request(frame, broker_impl, ctx);
+    pub fn process_request_and_dir_ls(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+        let result = self.process_request(frame, ctx);
         if let Ok(None) = result {
             match frame.method().unwrap_or_default() {
                 METH_DIR => {
@@ -233,7 +238,7 @@ impl dyn ShvNode {
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
-                    if let Some(children) = self.children(shv_path, &broker_impl.state) {
+                    if let Some(children) = self.children(shv_path, &ctx.state) {
                         match LsParam::from(rq.param()) {
                             LsParam::List => {
                                 Ok(Some(children.into()))
@@ -253,19 +258,17 @@ impl dyn ShvNode {
             result
         }
     }
-
-    pub fn is_request_granted(&self, rq: &RpcFrame) -> bool {
-        let shv_path = rq.shv_path().unwrap_or_default();
-        if let Some(rq_access) = rq.access_level() {
-            let method = rq.method().unwrap_or_default();
-            for mm in self.methods(shv_path) {
-                if mm.name == method {
-                    return rq_access >= mm.access as i32
-                }
+}
+pub fn is_request_granted_methods(methods: &'static[&'static MetaMethod], rq: &RpcFrame) -> bool {
+    if let Some(rq_access) = rq.access_level() {
+        let method = rq.method().unwrap_or_default();
+        for mm in methods {
+            if mm.name == method {
+                return rq_access >= mm.access as i32
             }
         }
-        false
     }
+    false
 }
 
 pub const METH_SHV_VERSION_MAJOR: &str = "shvVersionMajor";
@@ -316,7 +319,7 @@ impl ShvNode for AppNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(Some(self.app_name.into()))
@@ -368,7 +371,7 @@ impl ShvNode for AppDeviceNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, _broker_impl: &BrokerImpl, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(Some(self.device_name.into()))
@@ -441,12 +444,12 @@ impl ShvNode for BrokerNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
-                let info = match state_reader(&broker_impl.state).client_info(peer_id) {
+                let info = match state_reader(&ctx.state).client_info(peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -455,18 +458,18 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().as_str();
-                let info = match state_reader(&broker_impl.state).mounted_client_info(mount_point) {
+                let info = match state_reader(&ctx.state).mounted_client_info(mount_point) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(Some(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = state_reader(&broker_impl.state).peers.keys().map(|id| RpcValue::from(*id)).collect();
+                let clients: rpcvalue::List = state_reader(&ctx.state).peers.keys().map(|id| RpcValue::from(*id)).collect();
                 Ok(Some(clients.into()))
             }
             METH_MOUNTS => {
-                let mounts: List = state_reader(&broker_impl.state).peers.values()
+                let mounts: List = state_reader(&ctx.state).peers.values()
                     .map(|peer| if let PeerKind::Device {mount_point, ..} = &peer.peer_kind {Some(mount_point)} else {None})
                     .filter(|mount_point| mount_point.is_some())
                     .map(|mount_point| RpcValue::from(mount_point.unwrap()))
@@ -474,7 +477,7 @@ impl ShvNode for BrokerNode {
                 Ok(Some(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
-                if let Some(peer) = state_reader(&broker_impl.state).peers.get(&ctx.peer_id) {
+                if let Some(peer) = state_reader(&ctx.state).peers.get(&ctx.peer_id) {
                     let peer_sender = peer.sender.clone();
                     task::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker).await;
@@ -546,26 +549,26 @@ impl ShvNode for BrokerCurrentClientNode {
         Some(vec![])
     }
 
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &broker_impl.state)?;
+                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &ctx.state)?;
                 Ok(Some(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &broker_impl.state)?;
+                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &ctx.state)?;
                 Ok(Some(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = state_reader(&broker_impl.state).subscriptions(ctx.peer_id)?;
+                let result = state_reader(&ctx.state).subscriptions(ctx.peer_id)?;
                 Ok(Some(result.into()))
             }
             METH_INFO => {
-                let info = match state_reader(&broker_impl.state).client_info(ctx.peer_id) {
+                let info = match state_reader(&ctx.state).client_info(ctx.peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -614,10 +617,10 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&broker_impl.state).access_mount(&ctx.node_path) {
+                match state_reader(&ctx.state).access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -627,7 +630,7 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
-                if broker_impl.sql_connection.is_none() {
+                if !ctx.sql_available {
                     return Err(make_access_ro_error().into())
                 }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -640,7 +643,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&broker_impl.state).set_access_mount(key.as_str(), mount);
+                state_writer(&ctx.state).set_access_mount(key.as_str(), mount);
                 Ok(Some(().into()))
             }
             _ => {
@@ -675,10 +678,10 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&broker_impl.state).access_user(&ctx.node_path) {
+                match state_reader(&ctx.state).access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -688,7 +691,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 }
             }
             METH_SET_VALUE => {
-                if broker_impl.sql_connection.is_none() {
+                if !ctx.sql_available {
                     return Err(make_access_ro_error().into())
                 }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -701,7 +704,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     Some(Ok(user)) => {Some(user)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&broker_impl.state).set_access_user(key.as_str(), user);
+                state_writer(&ctx.state).set_access_user(key.as_str(), user);
                 Ok(Some(().into()))
             }
             _ => {
@@ -735,10 +738,10 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    fn process_request(&self, frame: &RpcFrame, broker_impl: &BrokerImpl, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&broker_impl.state).access_role(&ctx.node_path) {
+                match state_reader(&ctx.state).access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -748,7 +751,7 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
-                if broker_impl.sql_connection.is_none() {
+                if !ctx.sql_available {
                     return Err(make_access_ro_error().into())
                 }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -761,7 +764,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&broker_impl.state).set_access_role(key.as_str(), role);
+                state_writer(&ctx.state).set_access_role(key.as_str(), role);
                 Ok(Some(().into()))
             }
             _ => {
