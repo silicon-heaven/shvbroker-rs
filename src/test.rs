@@ -117,6 +117,9 @@ async fn test_broker_loop() {
         assert_eq!(subs_map.len(), 0);
     }
 
+    let config = BrokerConfig::default();
+    let users: Vec<_> = config.access.users.keys().into_iter().map(|k| k.to_string()).collect();
+    let roles: Vec<_> = config.access.roles.keys().into_iter().map(|k| k.to_string()).collect();
     // access/mounts
     {
         let path = ".broker/access/mounts";
@@ -145,7 +148,7 @@ async fn test_broker_loop() {
             {
                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["admin", "child-broker", "test", "tester", "user", "viewer"].to_vec()).as_list());
+                assert_eq!(list, RpcValue::from(users.clone()).as_list());
                 let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let user1 = User::try_from(&resp).unwrap();
                 let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()] };
@@ -156,7 +159,10 @@ async fn test_broker_loop() {
                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["admin", "baz", "child-broker", "test", "tester", "user", "viewer"].to_vec()).as_list());
+                let mut users = users;
+                users.push("baz".to_string());
+                users.sort();
+                assert_eq!(list, RpcValue::from(users).as_list());
                 let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
                 assert_eq!(user, User::try_from(&resp).unwrap());
             }
@@ -168,7 +174,7 @@ async fn test_broker_loop() {
             {
                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
+                assert_eq!(list, RpcValue::from(roles.clone()).as_list());
                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let role1 = Role::try_from(&resp).unwrap();
                 let role2 = Role { roles: vec!["client".into()], access: vec![AccessRule{ shv_ri: "test/**:*".into(), grant: "cfg".into() }] };
@@ -179,7 +185,10 @@ async fn test_broker_loop() {
                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(["baz", "browse","child-broker","client","device","ping","su","subscribe","tester"].to_vec()).as_list());
+                let mut roles = roles;
+                roles.push("baz".to_string());
+                roles.sort();
+                assert_eq!(list, RpcValue::from(roles).as_list());
                 let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
                 assert_eq!(role, Role::try_from(&resp).unwrap());
             }
