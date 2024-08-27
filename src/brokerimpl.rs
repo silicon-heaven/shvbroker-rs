@@ -9,7 +9,7 @@ use async_std::net::TcpListener;
 use log::{debug, error, info, log, warn};
 use crate::config::{AccessConfig, BrokerConfig, Password};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
+use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
@@ -155,8 +155,9 @@ impl ParsedAccessRule {
 
 pub(crate) struct PendingRpcCall {
     pub(crate) client_id: PeerId,
-    pub(crate) request_id: RqId,
+    pub(crate) request_meta: MetaMap,
     pub(crate) response_sender: Sender<RpcFrame>,
+    pub(crate) started: Instant,
 }
 
 pub(crate) async fn broker_loop(broker: BrokerImpl) {
@@ -825,7 +826,8 @@ impl BrokerImpl {
         let rqid = response_frame.request_id().ok_or("Request ID must be set.")?;
         let mut pending_call_ix = None;
         for (ix, pc) in self.pending_rpc_calls.iter().enumerate() {
-            if pc.request_id == rqid && pc.client_id == client_id {
+            let request_id = pc.request_meta.request_id().unwrap_or_default();
+            if request_id == rqid && pc.client_id == client_id {
                 pending_call_ix = Some(ix);
                 break;
             }
@@ -834,8 +836,30 @@ impl BrokerImpl {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.send(response_frame).await?;
         }
+        self.gc_pending_rpc_calls().await?;
         Ok(())
     }
+    async fn gc_pending_rpc_calls(&mut self) -> shvrpc::Result<()> {
+        let now = Instant::now();
+        const TIMEOUT: Duration = Duration::from_secs(60);
+        // unfortunately `extract_if()` is not stabilized yet
+        let mut timeouted = vec![];
+        self.pending_rpc_calls.retain(|pending_call| {
+            if now.duration_since(pending_call.started) > TIMEOUT {
+                let mut msg = RpcMessage::from_meta(pending_call.request_meta.clone());
+                msg.set_error(RpcError::new(RpcErrorCode::MethodCallTimeout, "Method call timeout"));
+                timeouted.push((msg, pending_call.response_sender.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (msg, sender) in timeouted {
+            sender.send(msg.to_frame()?).await?;
+        }
+        Ok(())
+    }
+
     async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived { peer_id: client_id, frame } => {
@@ -870,14 +894,15 @@ impl BrokerImpl {
                 peer_sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
             }
             BrokerCommand::RpcCall { client_id, request, response_sender } => {
-                let rq_id = request.request_id().unwrap_or_default();
+                let request_meta = request.meta().clone();
                 let mut rq2 = request;
                 // broker calls can have any access level, set 'su' to bypass client access control
                 rq2.set_access_level(AccessLevel::Superuser);
                 self.start_broker_rpc_call(rq2, PendingRpcCall {
                     client_id,
-                    request_id: rq_id,
+                    request_meta,
                     response_sender,
+                    started: Instant::now(),
                 }).await?
             }
             BrokerCommand::ExecSql { query } => {

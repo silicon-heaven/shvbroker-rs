@@ -34,7 +34,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
         };
         if msg.is_response() {
             println!("response: {msg}");
-            break msg.result().map(|v| v.clone())
+            break msg.result().cloned()
         } else {
             // ignore RPC requests which might be issued after subscribe call
             println!("ignoring message: {msg}");
@@ -77,7 +77,7 @@ async fn test_broker_loop() {
     assert_eq!(resp, RpcValue::from(true));
     let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();
     assert!(resp.is_list());
-    assert!(resp.as_list().iter().find(|s| s.as_str() == "mounts").is_some());
+    assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
     let resp = call(".broker/acce", "ls", None, &call_ctx).await;
     assert!(resp.is_err());
 
