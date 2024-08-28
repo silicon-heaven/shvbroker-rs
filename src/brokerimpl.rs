@@ -23,6 +23,7 @@ use crate::peer;
 use crate::peer::next_peer_id;
 use async_std::stream::StreamExt;
 use futures::FutureExt;
+use shvrpc::rpcmessage::Tag::RevCallerIds;
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::tunnelnode::TunnelNode;
 
@@ -82,6 +83,7 @@ pub(crate) enum BrokerCommand {
     ExecSql {
         query: String,
     },
+    CloseTunnel(String),
 }
 
 #[derive(Debug)]
@@ -778,12 +780,15 @@ impl BrokerImpl {
             return Ok(());
         } else if frame.is_response() {
             let mut frame = frame;
-            if let Some(peer_id) = frame.pop_caller_id() {
-                let sender = state_reader(&self.state).peers.get(&peer_id).map(|p| p.sender.clone());
+            if let Some(fwd_peer_id) = frame.pop_caller_id() {
+                if frame.tag(RevCallerIds as i32).is_some() {
+                    frame.push_caller_id(peer_id);
+                }
+                let sender = state_reader(&self.state).peers.get(&fwd_peer_id).map(|p| p.sender.clone());
                 if let Some(sender) = sender {
                     sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
                 } else {
-                    warn!("Cannot find peer for response peer-id: {peer_id}");
+                    warn!("Cannot find peer for response peer-id: {fwd_peer_id}");
                 }
             } else {
                 self.process_pending_broker_rpc_call(peer_id, frame).await?;
@@ -917,6 +922,19 @@ impl BrokerImpl {
                     });
                 } else {
                     error!("SQL config is disabled, use --use-acces-db CLI switch.")
+                }
+            }
+            BrokerCommand::CloseTunnel(tunnel_id) => {
+                const TUNNEL_PATH: &str = ".app/tunnel";
+                if let Some(node) = self.nodes.get_mut(TUNNEL_PATH) {
+                    let aa: &mut dyn std::any::Any = node;
+                    if let Some(tunnel) = aa.downcast_mut::<TunnelNode>() {
+                        tunnel.close_tunnel(&tunnel_id)?;
+                    } else {
+                        error!("Node on path {TUNNEL_PATH} is not type of tunnel node")
+                    }
+                } else {
+                    error!("Cannot find node {TUNNEL_PATH}")
                 }
             }
         }

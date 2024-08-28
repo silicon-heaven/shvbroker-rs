@@ -214,6 +214,11 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
     }
     None
 }
+enum ProcessRequestResult {
+    MethodNotFound,
+    ResultDeferred,
+    Result(RpcValue),
+}
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
