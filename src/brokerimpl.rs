@@ -12,7 +12,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
-use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode};
+use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
 use shvrpc::metamethod::{AccessLevel};
@@ -718,22 +718,18 @@ impl BrokerImpl {
                     NodeRequest{ node_id: String, frame: RpcFrame, ctx: NodeRequestContext },
                 }
                 let action = {
+                    let mut frame = frame;
+                    frame.push_caller_id(peer_id);
+                    frame.set_shvpath(node_path);
+                    frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
+                    frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                     let state = state_reader(&self.state);
                     match state.mounts.get(mount_point).expect("Should be mounted") {
                         Mount::Peer(device_peer_id) => {
-                            let mut frame = frame;
-                            frame.push_caller_id(peer_id);
-                            frame.set_shvpath(node_path);
-                            frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
-                            frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                             let sender = state.peers.get(device_peer_id).ok_or("client ID must exist")?.sender.clone();
                             Action::ToPeer(sender, BrokerToPeerMessage::SendFrame(frame))
                         }
                         Mount::Node => {
-                            let mut frame = frame;
-                            frame.set_shvpath(node_path);
-                            frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
-                            frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                             Action::NodeRequest {
                                 node_id: mount_point.to_string(),
                                 frame,
@@ -756,14 +752,17 @@ impl BrokerImpl {
                         let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame) {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx) {
-                                Ok(Some(result)) => {
-                                    Ok(result)
-                                }
-                                Ok(None) => {
-                                    return Ok(())
-                                }
                                 Err(e) => {
                                     Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string()))
+                                }
+                                Ok(ProcessRequestRetval::MethodNotFound) => {
+                                    Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Method {}:{} not found.", shv_path, frame.method().unwrap_or_default())))
+                                }
+                                Ok(ProcessRequestRetval::RetvalDeferred) => {
+                                    return Ok(())
+                                }
+                                Ok(ProcessRequestRetval::Retval(result)) => {
+                                    Ok(result)
                                 }
                             };
                             self.command_sender.send(BrokerCommand::SendResponse { peer_id, meta: response_meta, result }).await?;
@@ -779,6 +778,11 @@ impl BrokerImpl {
             }
             return Ok(());
         } else if frame.is_response() {
+            //check open tunnel responses
+            if self.tunnel_node()?.check_response_frame(&frame).await? {
+                return Ok(())
+            }
+
             let mut frame = frame;
             if let Some(fwd_peer_id) = frame.pop_caller_id() {
                 if frame.tag(RevCallerIds as i32).is_some() {
@@ -925,20 +929,23 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::CloseTunnel(tunnel_id) => {
-                const TUNNEL_PATH: &str = ".app/tunnel";
-                if let Some(node) = self.nodes.get_mut(TUNNEL_PATH) {
-                    let aa: &mut dyn std::any::Any = node;
-                    if let Some(tunnel) = aa.downcast_mut::<TunnelNode>() {
-                        tunnel.close_tunnel(&tunnel_id)?;
-                    } else {
-                        error!("Node on path {TUNNEL_PATH} is not type of tunnel node")
-                    }
-                } else {
-                    error!("Cannot find node {TUNNEL_PATH}")
-                }
+                self.tunnel_node()?.close_tunnel(&tunnel_id)?;
             }
         }
         Ok(())
+    }
+    fn tunnel_node(&mut self) -> shvrpc::Result<&mut TunnelNode> {
+        const TUNNEL_PATH: &str = ".app/tunnel";
+        if let Some(node) = self.nodes.get_mut(TUNNEL_PATH) {
+            let aa: &mut dyn std::any::Any = node;
+            if let Some(tunnel) = aa.downcast_mut::<TunnelNode>() {
+                Ok(tunnel)
+            } else {
+                Err(format!("Node on path {TUNNEL_PATH} is not type of tunnel node").into())
+            }
+        } else {
+            Err(format!("Cannot find node {TUNNEL_PATH}").into())
+        }
     }
     async fn on_device_mounted(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<()> {
         let mount_point = state_reader(&state).mount_point(peer_id);

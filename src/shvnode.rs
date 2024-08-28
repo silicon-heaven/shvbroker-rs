@@ -214,11 +214,12 @@ pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) 
     }
     None
 }
-enum ProcessRequestResult {
+pub(crate) enum ProcessRequestRetval {
     MethodNotFound,
-    ResultDeferred,
-    Result(RpcValue),
+    RetvalDeferred,
+    Retval(RpcValue),
 }
+pub(crate) type ProcessRequestResult = Result<ProcessRequestRetval, shvrpc::Error>;
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
@@ -227,18 +228,18 @@ pub(crate) trait ShvNode : Send + Sync {
         let methods = self.methods(shv_path);
         is_request_granted_methods(methods, rq)
     }
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error>;
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult;
 }
 impl dyn ShvNode {
-    pub fn process_request_and_dir_ls(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    pub fn process_request_and_dir_ls(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         let result = self.process_request(frame, ctx);
-        if let Ok(None) = result {
+        if let Ok(ProcessRequestRetval::MethodNotFound) = result {
             match frame.method().unwrap_or_default() {
                 METH_DIR => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
                     let resp = dir(self.methods(shv_path).iter().copied(), rq.param().into());
-                    Ok(Some(resp))
+                    Ok(ProcessRequestRetval::Retval(resp))
                 }
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
@@ -246,10 +247,10 @@ impl dyn ShvNode {
                     if let Some(children) = self.children(shv_path, &ctx.state) {
                         match LsParam::from(rq.param()) {
                             LsParam::List => {
-                                Ok(Some(children.into()))
+                                Ok(ProcessRequestRetval::Retval(children.into()))
                             }
                             LsParam::Exists(path) => {
-                                Ok(Some(children.iter().find(|s| *s == &path).into()))
+                                Ok(ProcessRequestRetval::Retval(children.iter().find(|s| *s == &path).into()))
                             }
                         }
 
@@ -257,7 +258,7 @@ impl dyn ShvNode {
                         Err(format!("Invalid path: {}.", shv_path).into())
                     }
                 }
-                _ => { Ok(None) }
+                _ => { Ok(ProcessRequestRetval::MethodNotFound) }
             }
         } else {
             result
@@ -324,22 +325,22 @@ impl ShvNode for AppNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
-                Ok(Some(self.app_name.into()))
+                Ok(ProcessRequestRetval::Retval(self.app_name.into()))
             }
             METH_SHV_VERSION_MAJOR => {
-                Ok(Some(self.shv_version_major.into()))
+                Ok(ProcessRequestRetval::Retval(self.shv_version_major.into()))
             }
             METH_SHV_VERSION_MINOR => {
-                Ok(Some(self.shv_version_minor.into()))
+                Ok(ProcessRequestRetval::Retval(self.shv_version_minor.into()))
             }
             METH_PING => {
-                Ok(Some(().into()))
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -376,22 +377,22 @@ impl ShvNode for AppDeviceNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
-                Ok(Some(self.device_name.into()))
+                Ok(ProcessRequestRetval::Retval(self.device_name.into()))
             }
             METH_VERSION => {
-                Ok(Some(self.version.into()))
+                Ok(ProcessRequestRetval::Retval(self.version.into()))
             }
             METH_SERIAL_NUMBER => {
-                Ok(Some(self.serial_number.as_ref().map(|s| s.to_string()).unwrap_or_default().into()))
+                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(|s| s.to_string()).unwrap_or_default().into()))
             }
             METH_PING => {
-                Ok(Some(().into()))
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -449,7 +450,7 @@ impl ShvNode for BrokerNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
@@ -458,7 +459,7 @@ impl ShvNode for BrokerNode {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
-                Ok(Some(info))
+                Ok(ProcessRequestRetval::Retval(info))
             }
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
@@ -467,11 +468,11 @@ impl ShvNode for BrokerNode {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
-                Ok(Some(info))
+                Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
                 let clients: rpcvalue::List = state_reader(&ctx.state).peers.keys().map(|id| RpcValue::from(*id)).collect();
-                Ok(Some(clients.into()))
+                Ok(ProcessRequestRetval::Retval(clients.into()))
             }
             METH_MOUNTS => {
                 let mounts: List = state_reader(&ctx.state).peers.values()
@@ -479,7 +480,7 @@ impl ShvNode for BrokerNode {
                     .filter(|mount_point| mount_point.is_some())
                     .map(|mount_point| RpcValue::from(mount_point.unwrap()))
                     .collect();
-                Ok(Some(mounts.into()))
+                Ok(ProcessRequestRetval::Retval(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
                 if let Some(peer) = state_reader(&ctx.state).peers.get(&ctx.peer_id) {
@@ -487,13 +488,13 @@ impl ShvNode for BrokerNode {
                     task::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker).await;
                     });
-                    Ok(Some(().into()))
+                    Ok(ProcessRequestRetval::Retval(().into()))
                 } else {
                     Err(format!("Disconnect client error - peer {} not found.", ctx.peer_id).into())
                 }
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -554,33 +555,33 @@ impl ShvNode for BrokerCurrentClientNode {
         Some(vec![])
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
                 let subs_added = Self::subscribe(ctx.peer_id, &subscription, &ctx.state)?;
-                Ok(Some(subs_added.into()))
+                Ok(ProcessRequestRetval::Retval(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
                 let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &ctx.state)?;
-                Ok(Some(subs_removed.into()))
+                Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
                 let result = state_reader(&ctx.state).subscriptions(ctx.peer_id)?;
-                Ok(Some(result.into()))
+                Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
                 let info = match state_reader(&ctx.state).client_info(ctx.peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
-                Ok(Some(info))
+                Ok(ProcessRequestRetval::Retval(info))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -622,7 +623,7 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match state_reader(&ctx.state).access_mount(&ctx.node_path) {
@@ -630,7 +631,7 @@ impl ShvNode for BrokerAccessMountsNode {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
                     Some(mount) => {
-                        Ok(Some(mount.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(mount.to_rpcvalue()?))
                     }
                 }
             }
@@ -649,10 +650,10 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 state_writer(&ctx.state).set_access_mount(key.as_str(), mount);
-                Ok(Some(().into()))
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -683,7 +684,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match state_reader(&ctx.state).access_user(&ctx.node_path) {
@@ -691,7 +692,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
                     Some(user) => {
-                        Ok(Some(user.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(user.to_rpcvalue()?))
                     }
                 }
             }
@@ -710,10 +711,10 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 state_writer(&ctx.state).set_access_user(key.as_str(), user);
-                Ok(Some(().into()))
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
@@ -743,7 +744,7 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> Result<Option<RpcValue>, shvrpc::Error> {
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match state_reader(&ctx.state).access_role(&ctx.node_path) {
@@ -751,7 +752,7 @@ impl ShvNode for BrokerAccessRolesNode {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
                     Some(role) => {
-                        Ok(Some(role.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(role.to_rpcvalue()?))
                     }
                 }
             }
@@ -770,10 +771,10 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 state_writer(&ctx.state).set_access_role(key.as_str(), role);
-                Ok(Some(().into()))
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
-                Ok(None)
+                Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
     }
