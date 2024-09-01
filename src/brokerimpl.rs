@@ -1,4 +1,4 @@
-use async_std::{task};
+use async_std::{channel, task};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -9,7 +9,7 @@ use async_std::net::TcpListener;
 use log::{debug, error, info, log, warn};
 use crate::config::{AccessConfig, BrokerConfig, Password};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, Tag};
+use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval};
@@ -25,7 +25,7 @@ use async_std::stream::StreamExt;
 use futures::FutureExt;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::tunnelnode::TunnelNode;
+use crate::tunnelnode::{tunnel_task, OpenTunnelNode, ToRemoteMsg, TunnelNode};
 
 #[derive(Debug)]
 pub(crate)  struct Subscription {
@@ -216,6 +216,9 @@ pub struct BrokerState {
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
 
     pub(crate) command_sender: Sender<BrokerCommand>,
+
+    open_tunnels: BTreeMap<String, OpenTunnelNode>,
+    next_tunnel_number: u64,
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
@@ -621,6 +624,55 @@ impl BrokerState {
             let _ = sender.send(ExecSql { query }).await;
         });
     }
+    pub(crate) fn create_tunnel(&mut self, frame: &RpcFrame) -> shvrpc::Result<String> {
+        let tunid = self.next_tunnel_number;
+        self.next_tunnel_number += 1;
+        let tunid = format!("{tunid}");
+        let rq = frame.to_rpcmesage()?;
+        let caller_ids = rq.caller_ids();
+        let param = rq.param().unwrap_or_default().as_map();
+        let host = param.get("host").unwrap_or_default().to_string();
+        let (sender, receiver) = channel::unbounded::<ToRemoteMsg>();
+        let tun = OpenTunnelNode { caller_ids, sender };
+        task::spawn(tunnel_task(tunid.clone(), frame.meta.clone(), host, receiver, self.command_sender.clone()));
+        self.open_tunnels.insert(tunid.clone(), tun);
+        Ok(tunid)
+    }
+    pub(crate) fn close_tunnel(&mut self, tunid: &str) -> shvrpc::Result<bool> {
+        if let Some(tun) = self.open_tunnels.remove(tunid) {
+            let sender = tun.sender;
+            task::spawn(async move {
+                let _ = sender.send(ToRemoteMsg::DestroyConnection).await;
+            });
+            Ok(true)
+        } else {
+            // might be callback of previous close_tunel()
+            Ok(false)
+        }
+    }
+    pub(crate) fn open_tunnel_ids(&self) -> Vec<String> {
+        let keys = self.open_tunnels.keys().cloned().collect();
+        keys
+    }
+    pub(crate) fn is_request_granted(&self, tunid: &str, frame: &RpcFrame) -> bool {
+        if let Some(tun) = self.open_tunnels.get(tunid) {
+            let cids = frame.caller_ids();
+            cids == tun.caller_ids || AccessLevel::try_from(frame.access_level().unwrap_or(0)).unwrap_or(AccessLevel::Browse) == AccessLevel::Superuser
+        } else {
+            false
+        }
+    }
+    pub(crate) fn write_tunnel(&self, tunid: &str, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
+        if let Some(tun) = self.open_tunnels.get(tunid) {
+            let sender = tun.sender.clone();
+            task::spawn(async move {
+                sender.send(ToRemoteMsg::SendData(rqid, data)).await
+            });
+            Ok(())
+        } else {
+            Err(format!("Invalid tunnel ID: {tunid}").into())
+        }
+    }
 }
 enum UpdateSqlOperation<'a> {
     Insert{id: &'a str, json: String},
@@ -669,6 +721,8 @@ impl BrokerImpl {
             access,
             role_access,
             command_sender: command_sender.clone(),
+            open_tunnels: Default::default(),
+            next_tunnel_number: 1,
         };
         let mut broker = Self {
             state: Arc::new(RwLock::new(state)),
@@ -750,7 +804,7 @@ impl BrokerImpl {
                     }
                     Action::NodeRequest { node_id, frame, ctx } => {
                         let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
-                        if node.is_request_granted(&frame) {
+                        if node.is_request_granted(&frame, &ctx) {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx) {
                                 Err(e) => {
                                     Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string()))
@@ -778,11 +832,6 @@ impl BrokerImpl {
             }
             return Ok(());
         } else if frame.is_response() {
-            //check open tunnel responses
-            if self.tunnel_node()?.check_response_frame(&frame).await? {
-                return Ok(())
-            }
-
             let mut frame = frame;
             if let Some(fwd_peer_id) = frame.pop_caller_id() {
                 if frame.tag(RevCallerIds as i32).is_some() {
@@ -929,23 +978,10 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::CloseTunnel(tunnel_id) => {
-                self.tunnel_node()?.close_tunnel(&tunnel_id)?;
+                state_writer(&self.state).close_tunnel(&tunnel_id)?;
             }
         }
         Ok(())
-    }
-    fn tunnel_node(&mut self) -> shvrpc::Result<&mut TunnelNode> {
-        const TUNNEL_PATH: &str = ".app/tunnel";
-        if let Some(node) = self.nodes.get_mut(TUNNEL_PATH) {
-            let aa: &mut dyn std::any::Any = node;
-            if let Some(tunnel) = aa.downcast_mut::<TunnelNode>() {
-                Ok(tunnel)
-            } else {
-                Err(format!("Node on path {TUNNEL_PATH} is not type of tunnel node").into())
-            }
-        } else {
-            Err(format!("Cannot find node {TUNNEL_PATH}").into())
-        }
     }
     async fn on_device_mounted(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<()> {
         let mount_point = state_reader(&state).mount_point(peer_id);

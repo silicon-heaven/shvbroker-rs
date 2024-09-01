@@ -223,7 +223,7 @@ pub(crate) type ProcessRequestResult = Result<ProcessRequestRetval, shvrpc::Erro
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>>;
-    fn is_request_granted(&self, rq: &RpcFrame) -> bool {
+    fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         let methods = self.methods(shv_path);
         is_request_granted_methods(methods, rq)
