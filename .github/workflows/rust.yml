@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "dbg-action" ]
   pull_request:
     branches: [ "master" ]
 
@@ -22,8 +22,10 @@ jobs:
       run: cargo install --git https://github.com/silicon-heaven/shvcall-rs.git
     - name: Install shvbrokertestingdevice
       run: cargo install --git https://github.com/silicon-heaven/shvbrokertestingdevice.git
+    - name: Install ncat
+      run: sudo apt-get install ncat
     - name: Run tests
       run: |
         echo starting netcat
-        ncat -e /bin/cat -k -l 8888
+        ncat -e /bin/cat -k -l 8888 &
         cargo test --verbose --all-features -- --test-threads=1
