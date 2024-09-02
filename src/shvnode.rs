@@ -250,7 +250,7 @@ impl dyn ShvNode {
                                 Ok(ProcessRequestRetval::Retval(children.into()))
                             }
                             LsParam::Exists(path) => {
-                                Ok(ProcessRequestRetval::Retval(children.iter().find(|s| *s == &path).into()))
+                                Ok(ProcessRequestRetval::Retval(children.iter().any(|s| s == &path).into()))
                             }
                         }
 

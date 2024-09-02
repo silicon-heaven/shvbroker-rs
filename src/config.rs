@@ -152,6 +152,9 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
+                            AccessRule { shv_ri: ".app/tunnel:create".into(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:ls".into(), grant: "su".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:dir".into(), grant: "su".to_string() },
                             AccessRule { shv_ri: "test/**:*".into(), grant: "cfg".to_string() },
                         ],
                     }),

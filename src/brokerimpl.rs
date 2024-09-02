@@ -624,19 +624,28 @@ impl BrokerState {
             let _ = sender.send(ExecSql { query }).await;
         });
     }
-    pub(crate) fn create_tunnel(&mut self, frame: &RpcFrame) -> shvrpc::Result<String> {
+    pub(crate) fn create_tunnel(&mut self, frame: &RpcFrame) -> shvrpc::Result<()> {
         let tunid = self.next_tunnel_number;
         self.next_tunnel_number += 1;
         let tunid = format!("{tunid}");
+        debug!("create_tunnel: {tunid}");
         let rq = frame.to_rpcmesage()?;
         let caller_ids = rq.caller_ids();
         let param = rq.param().unwrap_or_default().as_map();
-        let host = param.get("host").unwrap_or_default().to_string();
+        let host = param.get("host").ok_or("'host' parameter must be provided")?.as_str().to_string();
         let (sender, receiver) = channel::unbounded::<ToRemoteMsg>();
         let tun = OpenTunnelNode { caller_ids, sender };
-        task::spawn(tunnel_task(tunid.clone(), frame.meta.clone(), host, receiver, self.command_sender.clone()));
-        self.open_tunnels.insert(tunid.clone(), tun);
-        Ok(tunid)
+        let command_sender = self.command_sender.clone();
+        let rq_meta = frame.meta.clone();
+        let tunid2 = tunid.clone();
+        task::spawn(async move {
+            if let Err(e) = tunnel_task(tunid2.clone(), rq_meta, host, receiver, command_sender.clone()).await {
+                error!("{}", e)
+            }
+            command_sender.send(BrokerCommand::CloseTunnel(tunid2)).await
+        });
+        self.open_tunnels.insert(tunid, tun);
+        Ok(())
     }
     pub(crate) fn close_tunnel(&mut self, tunid: &str) -> shvrpc::Result<bool> {
         if let Some(tun) = self.open_tunnels.remove(tunid) {

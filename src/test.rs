@@ -2,11 +2,11 @@ use crate::brokerimpl::BrokerImpl;
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
 use rusqlite::Connection;
-use shvproto::{RpcValue};
+use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
-use shvrpc::rpcmessage::{PeerId, RpcError};
+use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, User};
@@ -194,5 +194,72 @@ async fn test_broker_loop() {
             }
         }
     }
+    broker_task.cancel().await;
+}
+
+#[async_std::test]
+async fn test_tunnel_loop() {
+    let config = BrokerConfig::default();
+    let access = config.access.clone();
+    let broker = BrokerImpl::new(access, None);
+    let broker_sender = broker.command_sender.clone();
+    let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
+
+    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+    let client_id = 3;
+
+    let call_ctx = CallCtx {
+        writer: &broker_sender,
+        reader: &peer_reader,
+        client_id,
+    };
+
+    // login
+    let user = "test";
+    //let password = "test";
+    broker_sender.send(BrokerCommand::NewPeer {
+        peer_id: client_id,
+        peer_kind: PeerKind::Client,
+        user: user.to_string(),
+        mount_point: None,
+        device_id: None,
+        sender: peer_writer.clone() }).await.unwrap();
+
+    let tunid = call(".app/tunnel", "create", None, &call_ctx).await;
+    // host param is missing
+    assert!(tunid.is_err());
+
+    let param = Map::from([("host".to_string(), "localhost:54321".into())]);
+    let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await;
+    // service not running
+    assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException);
+
+    // service is running
+    // ncat -e /bin/cat -k -l 8888
+    let param = Map::from([("host".to_string(), "localhost:8888".into())]);
+    let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
+    assert!(tunid.is_string());
+
+    let tunid = tunid.as_str();
+
+    let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+    assert_eq!(res.as_list(), &[tunid.into()].to_vec());
+    let res = call(".app/tunnel", "ls", Some(tunid.into()), &call_ctx).await.unwrap();
+    assert!(res.as_bool());
+
+    let data = "hello".as_bytes();
+    let res = call(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx).await.unwrap();
+    assert_eq!(res.as_blob(), data);
+
+    let data = "tunnel".as_bytes();
+    let res = call(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx).await.unwrap();
+    assert_eq!(res.as_blob(), data);
+
+    let res = call(&format!(".app/tunnel/{tunid}"), "close", None, &call_ctx).await.unwrap();
+    assert!(res.as_bool());
+
+    let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+    assert!(res.as_list().is_empty());
+
     broker_task.cancel().await;
 }

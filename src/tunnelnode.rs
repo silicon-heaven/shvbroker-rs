@@ -1,17 +1,17 @@
 use async_std::{channel, task};
 use async_std::channel::{Receiver, Sender};
-use async_std::io::{BufReader, BufWriter, WriteExt};
+use async_std::io::{BufReader, BufWriter};
 use async_std::net::{TcpStream};
-use futures::{select, AsyncReadExt};
+use futures::{select, AsyncReadExt, AsyncWriteExt};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::{Error, RpcMessage, RpcMessageMetaTags};
+use shvrpc::{Error, RpcMessageMetaTags};
 use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
-use shvrpc::rpcmessage::{PeerId, RqId};
+use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
 use crate::brokerimpl::{state_reader, state_writer, BrokerCommand, NodeRequestContext, SharedBrokerState};
 use crate::shvnode::{is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR, METH_LS};
 use futures::FutureExt;
-use log::{debug, error};
+use log::{debug, error, log, Level};
 use crate::shvnode;
 
 const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "DirParam", result: "DirResult", signals: &[], description: "" };
@@ -71,8 +71,8 @@ impl ShvNode for TunnelNode {
         if tunid.is_empty() {
             match method {
                 METH_CREATE => {
-                    let tunid = state_writer(&ctx.state).create_tunnel(frame)?;
-                    Ok(ProcessRequestRetval::Retval(tunid.into()))
+                    state_writer(&ctx.state).create_tunnel(frame)?;
+                    Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 _ => {
                     Ok(ProcessRequestRetval::MethodNotFound)
@@ -82,7 +82,7 @@ impl ShvNode for TunnelNode {
             match method {
                 METH_WRITE => {
                     let rq = frame.to_rpcmesage()?;
-                    let data = rq.result()?.as_blob().to_vec();
+                    let data = rq.param().ok_or("Param missing")?.as_blob().to_vec();
                     state_reader(&ctx.state).write_tunnel(tunid, rq.request_id().unwrap_or_default(), data)?;
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
@@ -97,6 +97,7 @@ impl ShvNode for TunnelNode {
         }
     }
 }
+#[derive(Debug)]
 pub(crate) enum ToRemoteMsg {
     SendData(RqId, Vec<u8>),
     DestroyConnection,
@@ -107,16 +108,33 @@ pub(crate) struct OpenTunnelNode {
 }
 
 pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: String, from_broker_receiver: Receiver<ToRemoteMsg>, to_broker_sender: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let stream = TcpStream::connect(addr).await?;
+    let peer_id= *request_meta.caller_ids().first().ok_or("Invalid peer id")?;
+    let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
+    log!(target: "Tunnel", Level::Debug, "connecting to: {addr} ...");
+    let stream = match TcpStream::connect(addr).await {
+        Ok(stream) => {
+            log!(target: "Tunnel", Level::Debug, "connected OK");
+            to_broker_sender.send(BrokerCommand::SendResponse {
+                peer_id,
+                meta: response_meta.clone(),
+                result: Ok(tunnel_id.clone().into()),
+            }).await?;
+            stream
+        }
+        Err(e) => {
+            to_broker_sender.send(BrokerCommand::SendResponse {
+                peer_id,
+                meta: response_meta.clone(),
+                result: Err(RpcError{ code: RpcErrorCode::MethodCallException, message: e.to_string() }),
+            }).await?;
+            return Err(e.to_string().into())
+        }
+    };
     let (reader, writer) = stream.split();
     let mut read_buff: [u8; 256] = [0; 256];
-    let mut write_buff: Vec<u8> = vec![];
+    let mut response_buff: Vec<u8> = vec![];
     let mut request_id = None;
-    let mut response_meta = RpcMessage::from_meta(request_meta).meta().clone();
-    let peer_id = 0;
-    //let caller_ids = tunnel.caller_ids.clone();
     let mut reader = BufReader::new(reader);
-    let mut fut_from_broker = from_broker_receiver.recv().fuse();
     let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
     task::spawn(async move {
         let mut writer = BufWriter::new(writer);
@@ -127,6 +145,8 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
                         break;
                     } else {
                         writer.write_all(&data).await?;
+                        writer.flush().await?;
+                        // println!("DATA written: {:?}", data);
                     }
                 }
                 Err(e) => {
@@ -147,7 +167,6 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
         }
     }
     loop {
-        let make_response2 = make_response;
         select! {
             bytes_read = reader.read(&mut read_buff).fuse() => match bytes_read {
                 Ok(bytes_read) => {
@@ -157,8 +176,8 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
                         break;
                     } else {
                         let mut data = read_buff[.. bytes_read].to_vec();
-                        write_buff.append(&mut data);
-                        to_broker_sender.send(make_response(peer_id, response_meta.clone(), &mut write_buff)).await?;
+                        response_buff.append(&mut data);
+                        to_broker_sender.send(make_response(peer_id, response_meta.clone(), &mut response_buff)).await?;
                     }
                 },
                 Err(e) => {
@@ -166,15 +185,16 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
                     break;
                 }
             },
-            cmd = fut_from_broker => match cmd {
+            cmd = from_broker_receiver.recv().fuse() => match cmd {
                 Ok(cmd) => {
+                    // println!("CMD: {:?}", cmd);
                     match cmd {
                         ToRemoteMsg::SendData(rqid, data) => {
                             if request_id.is_none() {
                                 request_id = Some(rqid);
                                 response_meta.set_request_id(rqid);
-                                if !write_buff.is_empty() {
-                                    to_broker_sender.send(make_response2(peer_id, response_meta.clone(), &mut write_buff)).await?;
+                                if !response_buff.is_empty() {
+                                    to_broker_sender.send(make_response(peer_id, response_meta.clone(), &mut response_buff)).await?;
                                 }
                             }
                             write_task_sender.send(data).await?;
