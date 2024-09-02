@@ -16,16 +16,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose --all-features
-    - name: Install shvcall
-      run: cargo install --git https://github.com/silicon-heaven/shvcall-rs.git
-    - name: Install shvbrokertestingdevice
-      run: cargo install --git https://github.com/silicon-heaven/shvbrokertestingdevice.git
+    # - name: Build
+    #   run: cargo build --verbose --all-features
+    # - name: Install shvcall
+    #   run: cargo install --git https://github.com/silicon-heaven/shvcall-rs.git
+    # - name: Install shvbrokertestingdevice
+    #   run: cargo install --git https://github.com/silicon-heaven/shvbrokertestingdevice.git
     - name: Install ncat
-      run: apt install nmap -y
+      run: sudo apt-get install ncat
     - name: Run tests
       run: |
         echo starting netcat
-        ncat -e /bin/cat -k -l 8888
+        ncat -e /bin/cat -k -l 8888 &
         cargo test --verbose --all-features -- --test-threads=1
