@@ -177,8 +177,8 @@ async fn test_broker_loop() {
                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let role1 = Role::try_from(&resp).unwrap();
-                let role2 = Role { roles: vec!["client".into()], access: vec![AccessRule{ shv_ri: "test/**:*".into(), grant: "cfg".into() }] };
-                assert_eq!(role1, role2);
+                let role2 = config.access.roles.get("tester").unwrap();
+                assert_eq!(&role1, role2);
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }] };
