@@ -23,4 +23,7 @@ jobs:
     - name: Install shvbrokertestingdevice
       run: cargo install --git https://github.com/silicon-heaven/shvbrokertestingdevice.git
     - name: Run tests
-      run: cargo test --verbose --all-features -- --test-threads=1
+      run: |
+        - echo starting netcat
+        - ncat -e /bin/cat -k -l 8888
+        - cargo test --verbose --all-features -- --test-threads=1
