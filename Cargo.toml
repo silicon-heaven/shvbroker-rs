@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.0.3"
+version = "3.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -26,9 +26,6 @@ serde_json = "1.0"
 clap = { version = "4.4.12", features = ["derive"] }
 crc = "3.2.1"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
-#tryvial = "0.2.0"
-#async-trait = "0.1.80"
-#getrandom = { version = "0.2", features = ["js"] }
 
  # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
