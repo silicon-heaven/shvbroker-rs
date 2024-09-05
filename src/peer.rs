@@ -177,10 +177,6 @@ pub(crate) async fn peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             frame_writer.send_frame(frame).await?;
                         }
-                        BrokerToPeerMessage::SendMessage(rpcmsg) => {
-                            // log!(target: "RpcMsg", Level::Debug, "<---- Send message, client id: {}", client_id);
-                            frame_writer.send_message(rpcmsg).await?;
-                        },
                     }
                     fut_receive_broker_event = peer_reader.recv().fuse();
                 }
@@ -362,18 +358,6 @@ async fn parent_broker_peer_loop(peer_id: PeerId, config: ParentBrokerConfig, br
                             frame_writer.send_frame(frame).await?;
                             fut_timeout = make_timeout();
                         }
-                        BrokerToPeerMessage::SendMessage(rpcmsg) => {
-                            // log!(target: "RpcMsg", Level::Debug, "<---- Send message, client id: {}", client_id);
-                            let mut rpcmsg = rpcmsg;
-                            if rpcmsg.is_signal() {
-                                if let Some(new_path) = cut_prefix(rpcmsg.shv_path().unwrap_or_default(), &config.exported_root) {
-                                    rpcmsg.set_shvpath(&new_path);
-                                }
-                            }
-                            debug!("Sending rpc message");
-                            frame_writer.send_message(rpcmsg).await?;
-                            fut_timeout = make_timeout();
-                        },
                     }
                     fut_receive_broker_event = broker_to_peer_receiver.recv().fuse();
                 }

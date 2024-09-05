@@ -91,7 +91,6 @@ pub(crate) enum BrokerCommand {
 pub(crate) enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
-    SendMessage(RpcMessage),
     DisconnectByBroker,
 }
 
@@ -894,7 +893,7 @@ impl BrokerImpl {
             self.pending_rpc_calls.push(pending_call);
             peer.sender.clone()
         };
-        sender.send(BrokerToPeerMessage::SendMessage(request)).await?;
+        sender.send(BrokerToPeerMessage::SendFrame(request.to_frame()?)).await?;
         Ok(())
     }
     async fn process_pending_broker_rpc_call(&mut self, client_id: PeerId, response_frame: RpcFrame) -> shvrpc::Result<()> {
