@@ -77,6 +77,18 @@ async fn test_broker_loop() {
         device_id: None,
         sender: peer_writer.clone() }).await.unwrap();
 
+    loop {
+        if let BrokerToPeerMessage::SendFrame(frame) = call_ctx.reader.recv().await.unwrap() {
+            if frame.method() == Some("lsmod") {
+                assert_eq!(frame.shv_path(), Some("test"));
+                assert_eq!(frame.source(), Some("ls"));
+                let msg = frame.to_rpcmesage().unwrap();
+                assert_eq!(msg.param().unwrap().as_map(), &Map::from([("device".to_string(), true.into())]));
+                break
+            }
+        }
+    }
+
     let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
     let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();

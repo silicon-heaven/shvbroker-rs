@@ -306,10 +306,19 @@ impl BrokerState {
             None
         }
     }
-    fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<()> {
+    fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         self.peers.remove(&peer_id);
-        self.mounts.retain(|_, v| if let Mount::Peer(id) = v { *id != peer_id } else { true });
-        Ok(())
+        let mut mount_point = None;
+        self.mounts.retain(|k, v| {
+            if let Mount::Peer(id) = v {
+                if *id == peer_id {
+                    mount_point = Some(k.clone());
+                    return false
+                }
+            }
+            true
+        });
+        Ok(mount_point)
     }
     fn set_subscribe_path(&mut self, peer_id: PeerId, subscribe_path: SubscribePath) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&peer_id).ok_or("Peer not found")?;
@@ -709,6 +718,12 @@ pub(crate) fn state_reader(state: &SharedBrokerState) -> RwLockReadGuard<BrokerS
 pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<BrokerState> {
     state.write().unwrap()
 }
+fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
+    let ix = mount_point.rfind('/').ok_or("Empty path ???")?;
+    let dir = &mount_point[ix + 1 ..];
+    let prefix = &mount_point[..ix];
+    Ok((prefix, dir))
+}
 impl BrokerImpl {
     pub(crate) fn new(access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> Self {
         let (command_sender, command_receiver) = unbounded();
@@ -952,11 +967,31 @@ impl BrokerImpl {
                 sender} => {
                 info!("New peer, id: {peer_id}.");
                 state_writer(&self.state).add_peer(peer_id, user, peer_kind, mount_point, device_id, sender)?;
+                let mount_point = state_reader(&self.state).mount_point(peer_id);
+                if let Some(mount_point) = mount_point {
+                    let (shv_path, dir) = split_mount_point(&mount_point)?;
+                    let command_sender = state_reader(&self.state).command_sender.clone();
+                    command_sender.send(BrokerCommand::SendSignal {
+                        shv_path: shv_path.to_string(),
+                        signal: "lsmod".to_string(),
+                        source: "ls".to_string(),
+                        param: Map::from([(dir.to_string(), true.into())]).into(),
+                    }).await?;
+                }
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
             }
             BrokerCommand::PeerGone { peer_id } => {
                 info!("Peer gone, id: {peer_id}.");
-                state_writer(&self.state).remove_peer(peer_id)?;
+                let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
+                if let Some(mount_point) = mount_point {
+                    let (shv_path, dir) = split_mount_point(&mount_point)?;
+                    self.command_sender.send(BrokerCommand::SendSignal {
+                        shv_path: shv_path.to_string(),
+                        signal: "lsmod".to_string(),
+                        source: "ls".to_string(),
+                        param: Map::from([(dir.to_string(), false.into())]).into(),
+                    }).await?;
+                }
                 self.pending_rpc_calls.retain(|c| c.client_id != peer_id);
             }
             BrokerCommand::GetPassword { sender, user } => {

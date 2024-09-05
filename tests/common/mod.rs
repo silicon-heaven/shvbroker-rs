@@ -35,7 +35,9 @@ pub fn rpcmsg_from_output(output: Output) -> shvrpc::Result<RpcMessage> {
 pub fn rpcvalue_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     let out = bytes_from_output(output)?;
     let cpon = std::str::from_utf8(&out)?;
-    Ok(RpcValue::from_cpon(cpon)?)
+    let rv = RpcValue::from_cpon(cpon)?;
+    //println!("cpon: {}, rpc vla: {}", cpon, rv.to_cpon());
+    Ok(rv)
 }
 pub fn bytes_from_output(output: Output) -> shvrpc::Result<Vec<u8>> {
     if !output.status.success() {
@@ -56,19 +58,6 @@ pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     }
     Ok(values)
 }
-//pub fn value_list_from_output(output: Output) -> shv::Result<Vec<RpcValue>> {
-//    let mut values = List::new();
-//    let bytes = bytes_from_output(output)?;
-//    let mut buff: &[u8] = &bytes;
-//    let mut rd = CponReader::new(&mut buff);
-//    loop {
-//        match rd.read() {
-//            Ok(rv) => { values.push(rv) }
-//            Err(_) => { break; }
-//        }
-//    }
-//    Ok(values)
-//}
 pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     let msg = rpcmsg_from_output(output)?;
     let result = msg.result()?;
