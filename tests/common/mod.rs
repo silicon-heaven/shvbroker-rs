@@ -53,7 +53,7 @@ pub fn text_from_output(output: Output) -> shvrpc::Result<String> {
 pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     let bytes = text_from_output(output)?;
     let mut values = Vec::new();
-    for cpon in bytes.split(|b| b == '\n').filter(|line| !line.is_empty()) {
+    for cpon in bytes.split('\n').filter(|line| !line.is_empty()) {
         values.push(cpon.trim().to_owned());
     }
     Ok(values)

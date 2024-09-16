@@ -25,7 +25,7 @@ use async_std::stream::StreamExt;
 use futures::FutureExt;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::tunnelnode::{tunnel_task, OpenTunnelNode, ToRemoteMsg, TunnelNode};
+use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 
 #[derive(Debug)]
 pub(crate)  struct Subscription {
@@ -84,7 +84,8 @@ pub(crate) enum BrokerCommand {
     ExecSql {
         query: String,
     },
-    CloseTunnel(String),
+    TunnelActive(String),
+    TunnelClosed(String),
 }
 
 #[derive(Debug)]
@@ -217,7 +218,7 @@ pub struct BrokerState {
 
     pub(crate) command_sender: Sender<BrokerCommand>,
 
-    open_tunnels: BTreeMap<String, OpenTunnelNode>,
+    active_tunnels: BTreeMap<String, ActiveTunnel>,
     next_tunnel_number: u64,
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
@@ -633,52 +634,39 @@ impl BrokerState {
             let _ = sender.send(ExecSql { query }).await;
         });
     }
-    pub(crate) fn create_tunnel(&mut self, frame: &RpcFrame) -> shvrpc::Result<()> {
+    pub(crate) fn create_tunnel(&mut self, request: &RpcMessage) -> shvrpc::Result<(String, Receiver<ToRemoteMsg>)> {
         let tunid = self.next_tunnel_number;
         self.next_tunnel_number += 1;
         let tunid = format!("{tunid}");
         debug!("create_tunnel: {tunid}");
-        let rq = frame.to_rpcmesage()?;
-        let caller_ids = rq.caller_ids();
-        let param = rq.param().unwrap_or_default().as_map();
-        let host = param.get("host").ok_or("'host' parameter must be provided")?.as_str().to_string();
+        let caller_ids = request.caller_ids();
         let (sender, receiver) = channel::unbounded::<ToRemoteMsg>();
-        let tun = OpenTunnelNode { caller_ids, sender };
-        let rq_meta = frame.meta.clone();
-        self.open_tunnels.insert(tunid.clone(), tun);
-        let command_sender = self.command_sender.clone();
-        task::spawn(async move {
-            command_sender.send(BrokerCommand::SendSignal {
-                shv_path: format!(".app/tunnel/{tunid}"),
-                signal: "lsmod".to_string(),
-                source: "ls".to_string(),
-                param: Map::from([(tunid.clone(), true.into())]).into(),
-            }).await?;
-            if let Err(e) = tunnel_task(tunid.clone(), rq_meta, host, receiver, command_sender.clone()).await {
-                error!("{}", e)
-            }
-            command_sender.send(BrokerCommand::CloseTunnel(tunid)).await
-        });
-        Ok(())
+        let tun = ActiveTunnel { caller_ids, sender, last_activity: None };
+        self.active_tunnels.insert(tunid.clone(), tun);
+        Ok((tunid, receiver))
     }
-    pub(crate) fn close_tunnel(&mut self, tunid: &str) -> shvrpc::Result<bool> {
-        if let Some(tun) = self.open_tunnels.remove(tunid) {
+    pub(crate) fn close_tunnel(&mut self, tunid: &str) -> shvrpc::Result<Option<bool>> {
+        debug!("close_tunnel: {tunid}");
+        if let Some(tun) = self.active_tunnels.remove(tunid) {
             let sender = tun.sender;
             task::spawn(async move {
                 let _ = sender.send(ToRemoteMsg::DestroyConnection).await;
             });
-            Ok(true)
+            Ok(Some(tun.last_activity.is_some()))
         } else {
             // might be callback of previous close_tunel()
-            Ok(false)
+            Ok(None)
         }
     }
-    pub(crate) fn open_tunnel_ids(&self) -> Vec<String> {
-        let keys = self.open_tunnels.keys().cloned().collect();
+    pub(crate) fn active_tunnel_ids(&self) -> Vec<String> {
+        let keys = self.active_tunnels.iter()
+            //.filter(|(_id, tun)| tun.last_activity.is_some())
+            .map(|(id, _tun)| id.clone())
+            .collect();
         keys
     }
     pub(crate) fn is_request_granted(&self, tunid: &str, frame: &RpcFrame) -> bool {
-        if let Some(tun) = self.open_tunnels.get(tunid) {
+        if let Some(tun) = self.active_tunnels.get(tunid) {
             let cids = frame.caller_ids();
             cids == tun.caller_ids || AccessLevel::try_from(frame.access_level().unwrap_or(0)).unwrap_or(AccessLevel::Browse) == AccessLevel::Superuser
         } else {
@@ -686,14 +674,33 @@ impl BrokerState {
         }
     }
     pub(crate) fn write_tunnel(&self, tunid: &str, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
-        if let Some(tun) = self.open_tunnels.get(tunid) {
+        if let Some(tun) = self.active_tunnels.get(tunid) {
             let sender = tun.sender.clone();
             task::spawn(async move {
-                sender.send(ToRemoteMsg::SendData(rqid, data)).await
+                sender.send(ToRemoteMsg::WriteData(rqid, data)).await
             });
             Ok(())
         } else {
             Err(format!("Invalid tunnel ID: {tunid}").into())
+        }
+    }
+    pub(crate) fn touch_tunnel(&mut self, tunid: &str) {
+        if let Some(tun) = self.active_tunnels.get_mut(tunid) {
+            tun.last_activity = Some(Instant::now());
+        }
+    }
+    pub(crate) fn last_tunnel_activity(&self, tunid: &str) -> Option<Instant> {
+        if let Some(tun) = self.active_tunnels.get(tunid) {
+            tun.last_activity
+        } else {
+            None
+        }
+    }
+    pub(crate) fn is_tunnel_active(&self, tunid: &str) -> bool {
+        if let Some(tun) = self.active_tunnels.get(tunid) {
+            tun.last_activity.is_some()
+        } else {
+            false
         }
     }
 }
@@ -750,7 +757,7 @@ impl BrokerImpl {
             access,
             role_access,
             command_sender: command_sender.clone(),
-            open_tunnels: Default::default(),
+            active_tunnels: Default::default(),
             next_tunnel_number: 1,
         };
         let mut broker = Self {
@@ -1033,8 +1040,36 @@ impl BrokerImpl {
                     error!("SQL config is disabled, use --use-access-db CLI switch.")
                 }
             }
-            BrokerCommand::CloseTunnel(tunnel_id) => {
-                if state_writer(&self.state).close_tunnel(&tunnel_id)? {
+            BrokerCommand::TunnelActive(tunnel_id) => {
+                self.command_sender.send(BrokerCommand::SendSignal {
+                    shv_path: format!(".app/tunnel/{tunnel_id}"),
+                    signal: "lsmod".to_string(),
+                    source: "ls".to_string(),
+                    param: Map::from([(tunnel_id.clone(), true.into())]).into(),
+                }).await?;
+                let command_sender = self.command_sender.clone();
+                let state = self.state.clone();
+                let tunid = tunnel_id.clone();
+                task::spawn(async move {
+                    const TIMEOUT: Duration = Duration::from_secs(60 * 60);
+                    loop {
+                        let last_activity = state_reader(&state).last_tunnel_activity(&tunid);
+                        if let Some(last_activity) = last_activity {
+                            if Instant::now().duration_since(last_activity) > TIMEOUT {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                        task::sleep(TIMEOUT / 60).await;
+                    }
+                    log!(target: "Tunnel", Level::Warn, "Closing tunnel: {tunid} as inactive for {:#?}", TIMEOUT);
+                    command_sender.send(BrokerCommand::TunnelClosed(tunid)).await
+                });
+            }
+            BrokerCommand::TunnelClosed(tunnel_id) => {
+                let closed = state_writer(&self.state).close_tunnel(&tunnel_id)?;
+                if let Some(true) = closed {
                     self.command_sender.send(BrokerCommand::SendSignal {
                         shv_path: format!(".app/tunnel/{tunnel_id}"),
                         signal: "lsmod".to_string(),

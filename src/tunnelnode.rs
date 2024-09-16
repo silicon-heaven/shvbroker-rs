@@ -1,3 +1,4 @@
+use std::time::{Instant};
 use async_std::{channel, task};
 use async_std::channel::{Receiver, Sender};
 use async_std::io::{BufReader, BufWriter};
@@ -44,7 +45,7 @@ impl ShvNode for TunnelNode {
         }
     }
     fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
-        let tunnels = state_reader(broker_state).open_tunnel_ids();
+        let tunnels = state_reader(broker_state).active_tunnel_ids();
         if shv_path.is_empty() {
             Some(tunnels)
         } else if tunnels.contains(&shv_path.to_string()) {
@@ -71,7 +72,20 @@ impl ShvNode for TunnelNode {
         if tunid.is_empty() {
             match method {
                 METH_CREATE => {
-                    state_writer(&ctx.state).create_tunnel(frame)?;
+                    let rq = frame.to_rpcmesage()?;
+                    let param = rq.param().unwrap_or_default().as_map();
+                    let host = param.get("host").ok_or("'host' parameter must be provided")?.as_str().to_string();
+                    let (tunid, receiver) = state_writer(&ctx.state).create_tunnel(&rq)?;
+                    let rq_meta = rq.meta().clone();
+                    let state = ctx.state.clone();
+                    let command_sender = state_reader(&state).command_sender.clone();
+                    let tunid2 = tunid.clone();
+                    task::spawn(async move {
+                        if let Err(e) = tunnel_task(tunid2.clone(), rq_meta, host, receiver, state).await {
+                            error!("{}", e)
+                        }
+                        command_sender.send(BrokerCommand::TunnelClosed(tunid2)).await
+                    });
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 _ => {
@@ -87,8 +101,13 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let res = state_writer(&ctx.state).close_tunnel(tunid)?;
-                    Ok(ProcessRequestRetval::Retval(res.into()))
+                    let command_sender = state_reader(&ctx.state).command_sender.clone();
+                    let is_active = state_reader(&ctx.state).is_tunnel_active(tunid);
+                    let tunid = tunid.to_string();
+                    task::spawn(async move {
+                        let _ = command_sender.send(BrokerCommand::TunnelClosed(tunid)).await;
+                    });
+                    Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => {
                     Ok(ProcessRequestRetval::MethodNotFound)
@@ -99,17 +118,19 @@ impl ShvNode for TunnelNode {
 }
 #[derive(Debug)]
 pub(crate) enum ToRemoteMsg {
-    SendData(RqId, Vec<u8>),
+    WriteData(RqId, Vec<u8>),
     DestroyConnection,
 }
-pub(crate) struct OpenTunnelNode {
+pub(crate) struct ActiveTunnel {
     pub(crate) caller_ids: Vec<PeerId>,
     pub(crate) sender: Sender<ToRemoteMsg>,
+    pub(crate) last_activity: Option<Instant>,
 }
 
-pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: String, from_broker_receiver: Receiver<ToRemoteMsg>, to_broker_sender: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: String, from_broker_receiver: Receiver<ToRemoteMsg>, state: SharedBrokerState) -> shvrpc::Result<()> {
     let peer_id= *request_meta.caller_ids().first().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
+    let to_broker_sender = state_reader(&state).command_sender.clone();
     log!(target: "Tunnel", Level::Debug, "connecting to: {addr} ...");
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
@@ -130,10 +151,12 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
             return Err(e.to_string().into())
         }
     };
+    state_writer(&state).touch_tunnel(&tunnel_id);
+    to_broker_sender.send(BrokerCommand::TunnelActive(tunnel_id.clone())).await?;
     let (reader, writer) = stream.split();
     let mut read_buff: [u8; 256] = [0; 256];
     let mut response_buff: Vec<u8> = vec![];
-    let mut request_id = None;
+    let mut write_request_id = None;
     let mut reader = BufReader::new(reader);
     let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
     task::spawn(async move {
@@ -182,6 +205,7 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
             bytes_read = reader.read(&mut read_buff).fuse() => match bytes_read {
                 Ok(bytes_read) => {
                     log!(target: "Tunnel", Level::Trace, "Read {bytes_read} bytes from client socket.");
+                    state_writer(&state).touch_tunnel(&tunnel_id);
                     if bytes_read == 0 {
                         log!(target: "Tunnel", Level::Trace, "Client socket closed.");
                         break;
@@ -200,9 +224,10 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
                 Ok(cmd) => {
                     log!(target: "Tunnel", Level::Trace, "CMD: {:?}", cmd);
                     match cmd {
-                        ToRemoteMsg::SendData(rqid, data) => {
-                            if request_id.is_none() {
-                                request_id = Some(rqid);
+                        ToRemoteMsg::WriteData(rqid, data) => {
+                            state_writer(&state).touch_tunnel(&tunnel_id);
+                            if write_request_id.is_none() {
+                                write_request_id = Some(rqid);
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
                                     log!(target: "Tunnel", Level::Trace, "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
@@ -215,7 +240,9 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
                             }
                         }
                         ToRemoteMsg::DestroyConnection => {
-                            to_broker_sender.send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, "Tunnel closed."))).await?;
+                            if write_request_id.is_some() {
+                                to_broker_sender.send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")))).await?;
+                            }
                             break
                         }
                     }
@@ -229,6 +256,6 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
     }
     // cancel write task
     write_task_sender.send(vec![]).await?;
-    to_broker_sender.send(BrokerCommand::CloseTunnel(tunnel_id)).await?;
+    to_broker_sender.send(BrokerCommand::TunnelClosed(tunnel_id)).await?;
     Ok(())
 }
