@@ -660,7 +660,7 @@ impl BrokerState {
     }
     pub(crate) fn active_tunnel_ids(&self) -> Vec<String> {
         let keys = self.active_tunnels.iter()
-            //.filter(|(_id, tun)| tun.last_activity.is_some())
+            .filter(|(_id, tun)| tun.last_activity.is_some())
             .map(|(id, _tun)| id.clone())
             .collect();
         keys
@@ -1053,18 +1053,19 @@ impl BrokerImpl {
                 task::spawn(async move {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {
+                        task::sleep(TIMEOUT / 60).await;
                         let last_activity = state_reader(&state).last_tunnel_activity(&tunid);
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
+                                log!(target: "Tunnel", Level::Warn, "Closing tunnel: {tunid} as inactive for {:#?}", TIMEOUT);
+                                let _ = command_sender.send(BrokerCommand::TunnelClosed(tunid)).await;
                                 break;
                             }
                         } else {
+                            // tunnel closed already
                             break;
                         }
-                        task::sleep(TIMEOUT / 60).await;
                     }
-                    log!(target: "Tunnel", Level::Warn, "Closing tunnel: {tunid} as inactive for {:#?}", TIMEOUT);
-                    command_sender.send(BrokerCommand::TunnelClosed(tunid)).await
                 });
             }
             BrokerCommand::TunnelClosed(tunnel_id) => {
