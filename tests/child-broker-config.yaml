@@ -1,14 +1,16 @@
 listen:
   tcp: localhost:3756
-parent_broker:
-  enabled: true
+connections:
+- enabled: true
   client:
     url: tcp://child-broker@localhost:3755?password=child-broker
     device_id: "test-child-broker"
     mount: null
     heartbeat_interval: 1m
     reconnect_interval: null
-  exported_root: 'test'
+  tree_direction: !ToParentBroker
+    shv_root: 'test'
+
 access:
   users:
     tester:

@@ -14,16 +14,27 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub data_directory: Option<String>,
     #[serde(default)]
-    pub parent_broker: ParentBrokerConfig,
+    pub connections: Vec<BrokerConnectionConfig>,
     #[serde(default)]
     pub access: AccessConfig,
 }
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum TreeDirection {
+    ToParentBroker {shv_root: String},
+    ToChildBroker {shv_root: String, user: String},
+}
+impl Default for TreeDirection {
+    fn default() -> Self {
+        TreeDirection::ToParentBroker { shv_root: "".to_string() }
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ParentBrokerConfig {
+pub struct BrokerConnectionConfig {
     #[serde(default)]
     pub enabled:bool,
     pub client: ClientConfig,
-    pub exported_root: String,
+    #[serde(default)]
+    pub tree_direction: TreeDirection,
 }
 type DeviceId = String;
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -132,7 +143,9 @@ impl Default for BrokerConfig {
             use_access_db: false,
             shv2_compatibility: false,
             data_directory: None,
-            parent_broker: Default::default(),
+            connections: vec![
+                BrokerConnectionConfig::default(),
+            ],
             access: AccessConfig {
                 users: BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()] }),

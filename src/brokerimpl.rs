@@ -186,11 +186,13 @@ pub async fn accept_loop(config: BrokerConfig, access: AccessConfig, sql_connect
     if let Some(address) = config.listen.tcp.clone() {
         let broker_impl = BrokerImpl::new(&config, access, sql_connection);
         let broker_sender = broker_impl.command_sender.clone();
-        let parent_broker_peer_config = config.parent_broker.clone();
         let broker_task = task::spawn(broker_loop(broker_impl));
-        if parent_broker_peer_config.enabled {
-            let peer_id = next_peer_id();
-            crate::spawn_and_log_error(peer::parent_broker_peer_loop_with_reconnect(peer_id, parent_broker_peer_config, broker_sender.clone()));
+        let broker_peers = &config.connections;
+        for peer_config in broker_peers {
+            if peer_config.enabled {
+                let peer_id = next_peer_id();
+                crate::spawn_and_log_error(peer::client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
+            }
         }
         info!("Listening on TCP: {}", address);
         let listener = TcpListener::bind(address).await?;
@@ -200,7 +202,7 @@ pub async fn accept_loop(config: BrokerConfig, access: AccessConfig, sql_connect
             let stream = stream?;
             let peer_id = next_peer_id();
             debug!("Accepting from: {}", stream.peer_addr()?);
-            crate::spawn_and_log_error(peer::try_peer_loop(peer_id, broker_sender.clone(), stream));
+            crate::spawn_and_log_error(peer::try_server_peer_loop(peer_id, broker_sender.clone(), stream));
         }
         drop(broker_sender);
         broker_task.await;

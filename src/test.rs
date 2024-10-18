@@ -251,6 +251,7 @@ async fn test_tunnel_loop() {
     assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException);
 
     // service is running
+    // ncat -e /bin/cat -k -l 8888
     println!("To pass tests ensure that this is running: ncat -e /bin/cat -k -l 8888");
     let param = Map::from([("host".to_string(), "localhost:8888".into())]);
     let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
