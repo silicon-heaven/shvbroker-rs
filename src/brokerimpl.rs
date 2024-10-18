@@ -104,6 +104,7 @@ pub(crate) enum SubscribePath {
 pub(crate) enum PeerKind {
     Client,
     ParentBroker,
+    ChildBroker,
     Device {
         device_id: Option<String>,
         mount_point: String,
@@ -1019,7 +1020,9 @@ impl BrokerImpl {
             }
             BrokerCommand::SendSignal { shv_path, signal, source, param } => {
                 let msg = RpcMessage::new_signal_with_source(&shv_path, &signal, &source, Some(param));
-                let senders: Vec<_> = state_reader(&self.state).peers.values().map(|peer| peer.sender.clone()).collect();
+                let senders: Vec<_> = state_reader(&self.state).peers.values()
+                    //.filter(|peer| if let PeerKind::ChildBroker = peer.peer_kind { false } else { true })
+                    .map(|peer| peer.sender.clone()).collect();
                 for sender in senders {
                     sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
                 }

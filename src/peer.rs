@@ -228,6 +228,22 @@ fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
         None
     }
 }
+fn is_dot_local_granted(frame: &RpcFrame) -> bool {
+    frame.access_level()
+        .is_some_and(|access| access == AccessLevel::Superuser as i32)
+        ||
+        frame.tag(Tag::Access as i32)
+            .map(RpcValue::as_str)
+            .is_some_and(|s| s.split(',')
+                .any(|access| access == DOT_LOCAL_GRANT))
+}
+fn is_dot_local_request(frame: &RpcFrame) -> bool {
+    let shv_path = frame.shv_path().unwrap_or_default();
+    if starts_with_path(shv_path, DOT_LOCAL_DIR) {
+        return is_dot_local_granted(frame);
+    }
+    false
+}
 async fn process_client_peer_frame_from_parent_broker(peer_id: PeerId, mut frame: RpcFrame, config: &BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let TreeDirection::ToParentBroker { shv_root } = &config.tree_direction else {
         panic!("wrong enum path");
@@ -235,39 +251,7 @@ async fn process_client_peer_frame_from_parent_broker(peer_id: PeerId, mut frame
     // Only RPC requests can be received from parent broker,
     // no signals, no responses
     if frame.is_request() {
-        fn is_dot_local_granted(frame: &RpcFrame) -> bool {
-            frame.access_level()
-                .is_some_and(|access| access == AccessLevel::Superuser as i32)
-                ||
-                frame.tag(Tag::Access as i32)
-                    .map(RpcValue::as_str)
-                    .is_some_and(|s| s.split(',')
-                        .any(|access| access == DOT_LOCAL_GRANT))
-        }
-        fn is_dot_local_request(frame: &RpcFrame) -> bool {
-            let shv_path = frame.shv_path().unwrap_or_default();
-            if starts_with_path(shv_path, DOT_LOCAL_DIR) {
-                return is_dot_local_granted(frame);
-            }
-            false
-        }
-        let shv_path = frame.shv_path().unwrap_or_default().to_owned();
-        let shv_path = if starts_with_path(&shv_path, ".broker") {
-            // hack to enable parent broker to call paths under exported_root
-            if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
-                // prepend exported root to subscribed path
-                frame = fix_subscribe_param(frame, shv_root)?;
-            }
-            shv_path
-        } else if is_dot_local_request(&frame) {
-            strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
-        } else {
-            if shv_path.is_empty() && is_dot_local_granted(&frame) {
-                frame.meta.insert(DOT_LOCAL_HACK, true.into());
-            }
-            join_path(shv_root, &shv_path)
-        };
-        frame.set_shvpath(&shv_path);
+        frame = fix_request_frame_shv_root(frame, shv_root)?;
         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
     } else {
         warn!("RPC signal or response should not be received from client connection to parent broker: {}", &frame);
@@ -275,11 +259,15 @@ async fn process_client_peer_frame_from_parent_broker(peer_id: PeerId, mut frame
     Ok(())
 }
 async fn process_client_peer_frame_from_child_broker(peer_id: PeerId, frame: RpcFrame, config: &BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let TreeDirection::ToChildBroker { .. } = &config.tree_direction else {
+    let TreeDirection::ToChildBroker { shv_root, .. } = &config.tree_direction else {
         panic!("wrong enum path");
     };
     // Only RPC signals and responses can be received from parent broker,
     // no requests
+    let mut frame = frame;
+    if frame.is_signal() {
+        frame.set_shvpath(&join_path(shv_root, frame.shv_path().unwrap_or_default()));
+    }
     if frame.is_response() || frame.is_signal() {
         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
     } else {
@@ -380,10 +368,17 @@ async fn client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broke
                         BrokerToPeerMessage::SendFrame(frame) => {
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
-                            if let TreeDirection::ToParentBroker { shv_root } = &config.tree_direction {
-                                if frame.is_signal() {
-                                    if let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
-                                        frame.set_shvpath(&new_path);
+                            match &config.tree_direction {
+                                TreeDirection::ToParentBroker{shv_root} => {
+                                    if frame.is_signal() {
+                                        if let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
+                                            frame.set_shvpath(&new_path);
+                                        }
+                                    }
+                                }
+                                TreeDirection::ToChildBroker{shv_root, .. } => {
+                                    if frame.is_request() {
+                                        frame = fix_request_frame_shv_root(frame, shv_root)?;
                                     }
                                 }
                             }
@@ -399,7 +394,28 @@ async fn client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broke
     };
     Ok(())
 }
-
+fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Result<RpcFrame> {
+    let shv_path = frame.shv_path().unwrap_or_default().to_owned();
+    println!("current path: {shv_path}");
+    let shv_path = if starts_with_path(&shv_path, ".broker") {
+        if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
+            // prepend exported root to subscribed path
+            frame = fix_subscribe_param(frame, shv_root)?;
+        }
+        shv_path
+    } else if is_dot_local_request(&frame) {
+        // hack to enable parent broker to call paths under exported_root
+        strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
+    } else {
+        if shv_path.is_empty() && is_dot_local_granted(&frame) {
+            frame.meta.insert(DOT_LOCAL_HACK, true.into());
+        }
+        join_path(shv_root, &shv_path)
+    };
+    frame.set_shvpath(&shv_path);
+    println!("new path: {}", frame.shv_path().unwrap_or_default());
+    Ok(frame)
+}
 fn fix_subscribe_param(frame: RpcFrame, exported_root: &str) -> shvrpc::Result<RpcFrame> {
     let mut msg = frame.to_rpcmesage()?;
     let mut subpar = SubscriptionParam::from_rpcvalue(msg.param().unwrap_or_default())?;

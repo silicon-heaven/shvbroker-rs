@@ -21,7 +21,7 @@ pub struct BrokerConfig {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum TreeDirection {
     ToParentBroker {shv_root: String},
-    ToChildBroker {shv_root: String, user: String},
+    ToChildBroker {shv_root: String, user: String, mount_point: String},
 }
 impl Default for TreeDirection {
     fn default() -> Self {
