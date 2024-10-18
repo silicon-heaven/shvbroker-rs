@@ -10,6 +10,8 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub use_access_db: bool,
     #[serde(default)]
+    pub shv2_compatibility: bool,
+    #[serde(default)]
     pub data_directory: Option<String>,
     #[serde(default)]
     pub parent_broker: ParentBrokerConfig,
@@ -128,6 +130,7 @@ impl Default for BrokerConfig {
         Self {
             listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None },
             use_access_db: false,
+            shv2_compatibility: false,
             data_directory: None,
             parent_broker: Default::default(),
             access: AccessConfig {

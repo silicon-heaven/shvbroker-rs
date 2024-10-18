@@ -404,6 +404,11 @@ pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 
+pub const DIR_SHV2_BROKER_ETC_ACL_USERS: &str = ".broker/etc/acl/users";
+pub const DIR_SHV2_BROKER_ETC_ACL_ROLES: &str = ".broker/etc/acl/roles";
+pub const DIR_SHV2_BROKER_ETC_ACL_ACCESS: &str = ".broker/etc/acl/access";
+pub const DIR_SHV2_BROKER_ETC_ACL_MOUNTS: &str = ".broker/etc/acl/mounts";
+
 pub const METH_CLIENT_INFO: &str = "clientInfo";
 pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";
 pub const METH_CLIENTS: &str = "clients";

@@ -12,7 +12,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
-use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval};
+use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
 use shvrpc::metamethod::{AccessLevel};
@@ -184,7 +184,7 @@ pub(crate) async fn broker_loop(broker: BrokerImpl) {
 
 pub async fn accept_loop(config: BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
     if let Some(address) = config.listen.tcp.clone() {
-        let broker_impl = BrokerImpl::new(access, sql_connection);
+        let broker_impl = BrokerImpl::new(&config, access, sql_connection);
         let broker_sender = broker_impl.command_sender.clone();
         let parent_broker_peer_config = config.parent_broker.clone();
         let broker_task = task::spawn(broker_loop(broker_impl));
@@ -732,7 +732,7 @@ fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
     Ok((prefix, dir))
 }
 impl BrokerImpl {
-    pub(crate) fn new(access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> Self {
+    pub(crate) fn new(config: &BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> Self {
         let (command_sender, command_receiver) = unbounded();
         let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
         for (name, role) in &access.roles {
@@ -779,6 +779,10 @@ impl BrokerImpl {
         add_node(DIR_BROKER_ACCESS_MOUNTS, Box::new(BrokerAccessMountsNode::new()));
         add_node(DIR_BROKER_ACCESS_USERS, Box::new(BrokerAccessUsersNode::new()));
         add_node(DIR_BROKER_ACCESS_ROLES, Box::new(BrokerAccessRolesNode::new()));
+        if config.shv2_compatibility {
+            add_node(DIR_SHV2_BROKER_ETC_ACL_MOUNTS, Box::new(BrokerAccessMountsNode::new()));
+            add_node(DIR_SHV2_BROKER_ETC_ACL_USERS, Box::new(BrokerAccessUsersNode::new()));
+        }
         broker
     }
     pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
@@ -1232,7 +1236,7 @@ mod test {
     fn test_broker() {
         let config = BrokerConfig::default();
         let access = config.access.clone();
-        let broker = BrokerImpl::new(access, None);
+        let broker = BrokerImpl::new(&config, access, None);
         let roles = state_reader(&broker.state).flatten_roles("child-broker").unwrap();
         assert_eq!(roles, vec!["child-broker", "device", "client", "ping", "subscribe", "browse"]);
     }

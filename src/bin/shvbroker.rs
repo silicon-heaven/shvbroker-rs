@@ -25,6 +25,9 @@ struct CliOpts {
     /// Allow writing to access database
     #[arg(short = 'b', long)]
     use_access_db: bool,
+    /// SHV2 compatibility mode
+    #[arg(long = "shv2")]
+    shv2_compatibility: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -35,6 +38,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli = CliOpts::augment_args(cli);
     let cli_matches = cli.get_matches();
     let cli_use_access_db_set = cli_matches.try_get_one::<bool>("use_access_db").is_ok();
+    let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
 
     let mut logger = SimpleLogger::new();
@@ -48,7 +52,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     logger.init().unwrap();
 
     info!("=====================================================");
-    info!("{} starting", module_path!());
+    info!("{}", module_path!());
     info!("=====================================================");
     //trace!("trace message");
     //debug!("debug message");
@@ -58,7 +62,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     //log!(target: "RpcMsg", Level::Debug, "RPC message");
     //log!(target: "Access", Level::Debug, "Access control message");
 
-    let config = if let Some(config_file) = &cli_opts.config {
+    let mut config = if let Some(config_file) = &cli_opts.config {
         info!("Loading config file {config_file}");
         match BrokerConfig::from_file(config_file) {
             Ok(config) => {config}
@@ -80,6 +84,12 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Using default config");
         BrokerConfig::default()
     };
+    if cli_shv2_set {
+        config.shv2_compatibility = cli_opts.shv2_compatibility;
+    }
+    if config.shv2_compatibility {
+        info!("Running in SHV2 compatibility mode");
+    }
     let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
     let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
     let (access, sql_connection) = if use_access_db {
@@ -104,6 +114,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if let Some(file) = cli_opts.write_config {
         write_config_to_file(&file, &config, &access)?;
     }
+    info!("-----------------------------------------------------");
     task::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
 }
 

@@ -53,7 +53,7 @@ async fn test_broker_loop() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
     let sql = Connection::open_in_memory().unwrap();
-    let broker = BrokerImpl::new(access, Some(sql));
+    let broker = BrokerImpl::new(&config, access, Some(sql));
     let broker_sender = broker.command_sender.clone();
     let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -217,7 +217,7 @@ async fn test_broker_loop() {
 async fn test_tunnel_loop() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
-    let broker = BrokerImpl::new(access, None);
+    let broker = BrokerImpl::new(&config, access, None);
     let broker_sender = broker.command_sender.clone();
     let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -251,7 +251,7 @@ async fn test_tunnel_loop() {
     assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException);
 
     // service is running
-    // ncat -e /bin/cat -k -l 8888
+    println!("To pass tests ensure that this is running: ncat -e /bin/cat -k -l 8888");
     let param = Map::from([("host".to_string(), "localhost:8888".into())]);
     let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
     assert!(tunid.is_string());
