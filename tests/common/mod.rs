@@ -73,8 +73,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
     let output = match Command::new(SHVCALL_BINARY)
         .arg("-v").arg(".:T")
         .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
-        .arg("--path").arg(path)
-        .arg("--method").arg(method)
+        .arg("--method").arg(format!("{path}:{method}"))
         .arg("--param").arg(param)
         //.arg("--output-format").arg(output_format.as_str())
         .output() {

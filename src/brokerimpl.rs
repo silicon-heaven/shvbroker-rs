@@ -104,7 +104,7 @@ pub(crate) enum SubscribePath {
 pub(crate) enum PeerKind {
     Client,
     ParentBroker,
-    ChildBroker,
+    //ChildBroker,
     Device {
         device_id: Option<String>,
         mount_point: String,

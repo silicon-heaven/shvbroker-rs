@@ -1,8 +1,10 @@
 use std::process::{Command};
-use std::{thread, time::Duration};
+use std::{fs, thread, time::Duration};
 use shvproto::{RpcValue, rpcvalue};
+use shvrpc::client::ClientConfig;
 use shvrpc::metamethod;
 use shvrpc::metamethod::{Flag, MetaMethod};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, TreeDirection};
 use crate::common::{KillProcessGuard, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
 
@@ -17,12 +19,34 @@ fn test_broker() -> shvrpc::Result<()> {
     thread::sleep(Duration::from_millis(100));
     assert!(broker_process_guard.is_running());
 
-    let mut child_broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
-        .arg("--config").arg("tests/child-broker-config.yaml")
-        //.arg("-v").arg("Acc")
-        .spawn()?);
-    thread::sleep(Duration::from_millis(100));
-    assert!(child_broker_process_guard.is_running());
+    let _process_guard_3756 = {
+        let mut config = BrokerConfig::default();
+        config.listen.tcp = Some("localhost:3756".into());
+        config.connections = vec![
+            BrokerConnectionConfig {
+                enabled: true,
+                client: ClientConfig{
+                    url: "tcp://child-broker@localhost:3755?password=child-broker".to_string(),
+                    device_id: Some("test-child-broker".into()),
+                    mount: None,
+                    heartbeat_interval: "1m".to_string(),
+                    reconnect_interval: None,
+                },
+                tree_direction: TreeDirection::ToParentBroker {
+                    shv_root: "test".to_string(),
+                },
+            }
+        ];
+        let cfg_fn = "/tmp/test-broker-config1.yaml";
+        fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
+        let mut process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+            .arg("--config").arg(cfg_fn)
+            //.arg("-v").arg("Acc")
+            .spawn()?);
+        thread::sleep(Duration::from_millis(100));
+        assert!(process_guard.is_running());
+        process_guard
+    };
 
     pub fn shv_call_parent(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
         shv_call(path, method, param, None)
@@ -145,6 +169,46 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_parent("test/child-broker/device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
     assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, RpcValue::from(123));
     check_subscription("test/child-broker/device/state/number", "test/**", 3755)?;
+
+    //test_child_broker_as_client()?;
+
+    Ok(())
+}
+
+fn test_child_broker_as_client() -> shvrpc::Result<()> {
+    let mut config = BrokerConfig::default();
+    config.listen.tcp = Some("localhost:3754".into());
+    config.connections = vec![
+        BrokerConnectionConfig {
+            enabled: true,
+            client: ClientConfig{
+                url: "tcp://localhost:3755?user=test&password=test".to_string(),
+                device_id: None,
+                mount: None,
+                heartbeat_interval: "1m".to_string(),
+                reconnect_interval: None,
+            },
+            tree_direction: TreeDirection::ToChildBroker {
+                shv_root: "test/child-broker/device".to_string(),
+                mount_point: "test/child-device".to_string(),
+            },
+        }
+    ];
+    let cfg_fn = "/tmp/test-broker-config2.yaml";
+    fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
+    let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+        .arg("--config").arg(cfg_fn)
+        //.arg("-v").arg("Acc")
+        .spawn()?);
+    thread::sleep(Duration::from_millis(100));
+    assert!(broker_process_guard.is_running());
+
+    pub fn shv_call_3754(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
+        shv_call(path, method, param, Some(3754))
+    }
+    //assert_eq!(shv_call_3754("test/child-device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
+
+    thread::sleep(Duration::from_millis(1000 * 60 * 5));
 
     Ok(())
 }

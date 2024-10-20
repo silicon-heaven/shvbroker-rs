@@ -244,35 +244,32 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_client_peer_frame_from_parent_broker(peer_id: PeerId, mut frame: RpcFrame, config: &BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let TreeDirection::ToParentBroker { shv_root } = &config.tree_direction else {
-        panic!("wrong enum path");
+async fn process_client_peer_frame(peer_id: PeerId, mut frame: RpcFrame, config: &BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+    match &config.tree_direction {
+        TreeDirection::ToParentBroker{ shv_root } => {
+            // Only RPC requests can be received from parent broker,
+            // no signals, no responses
+            if frame.is_request() {
+                frame = fix_request_frame_shv_root(frame, shv_root)?;
+                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+            } else {
+                warn!("RPC signal or response should not be received from client connection to parent broker: {}", &frame);
+            }
+        }
+        TreeDirection::ToChildBroker{ shv_root, .. } => {
+            // Only RPC signals and responses can be received from parent broker,
+            // no requests
+            let mut frame = frame;
+            if frame.is_signal() {
+                frame.set_shvpath(&join_path(shv_root, frame.shv_path().unwrap_or_default()));
+            }
+            if frame.is_response() || frame.is_signal() {
+                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+            } else {
+                warn!("RPC request should not be received from client connection to child broker: {}", &frame);
+            }
+        }
     };
-    // Only RPC requests can be received from parent broker,
-    // no signals, no responses
-    if frame.is_request() {
-        frame = fix_request_frame_shv_root(frame, shv_root)?;
-        broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
-    } else {
-        warn!("RPC signal or response should not be received from client connection to parent broker: {}", &frame);
-    }
-    Ok(())
-}
-async fn process_client_peer_frame_from_child_broker(peer_id: PeerId, frame: RpcFrame, config: &BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let TreeDirection::ToChildBroker { shv_root, .. } = &config.tree_direction else {
-        panic!("wrong enum path");
-    };
-    // Only RPC signals and responses can be received from parent broker,
-    // no requests
-    let mut frame = frame;
-    if frame.is_signal() {
-        frame.set_shvpath(&join_path(shv_root, frame.shv_path().unwrap_or_default()));
-    }
-    if frame.is_response() || frame.is_signal() {
-        broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
-    } else {
-        warn!("RPC request should not be received from client connection to child broker: {}", &frame);
-    }
     Ok(())
 }
 async fn client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
@@ -336,14 +333,7 @@ async fn client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broke
             },
             res_frame = fut_receive_frame => match res_frame {
                 Ok(frame) => {
-                    match &config.tree_direction {
-                        TreeDirection::ToParentBroker{..} => {
-                            process_client_peer_frame_from_parent_broker(peer_id, frame, &config, broker_writer.clone()).await?;
-                        }
-                        TreeDirection::ToChildBroker{..} => {
-                            process_client_peer_frame_from_child_broker(peer_id, frame, &config, broker_writer.clone()).await?;
-                        }
-                    }
+                    process_client_peer_frame(peer_id, frame, &config, broker_writer.clone()).await?;
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
