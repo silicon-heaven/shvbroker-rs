@@ -19,22 +19,22 @@ pub struct BrokerConfig {
     pub access: AccessConfig,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum TreeDirection {
+pub enum ConnectionKind {
     ToParentBroker {shv_root: String},
     ToChildBroker {shv_root: String, mount_point: String},
 }
-impl Default for TreeDirection {
+impl Default for ConnectionKind {
     fn default() -> Self {
-        TreeDirection::ToParentBroker { shv_root: "".to_string() }
+        ConnectionKind::ToParentBroker { shv_root: "".to_string() }
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BrokerConnectionConfig {
     #[serde(default)]
     pub enabled:bool,
-    pub client: ClientConfig,
     #[serde(default)]
-    pub tree_direction: TreeDirection,
+    pub connection_kind: ConnectionKind,
+    pub client: ClientConfig,
 }
 type DeviceId = String;
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

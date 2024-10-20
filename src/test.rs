@@ -71,10 +71,12 @@ async fn test_broker_loop() {
     //let password = "admin";
     broker_sender.send(BrokerCommand::NewPeer {
         peer_id: client_id,
-        peer_kind: PeerKind::Client,
-        user: user.to_string(),
-        mount_point: Some("test/device".into()),
-        device_id: None,
+        peer_kind: PeerKind::Device{
+            user: user.to_string(),
+            device_id: None,
+            mount_point: "test/device".to_string(),
+            subscribe_path: None
+        },
         sender: peer_writer.clone() }).await.unwrap();
 
     loop {
@@ -404,10 +406,7 @@ async fn test_tunnel_loop() {
     //let password = "test";
     broker_sender.send(BrokerCommand::NewPeer {
         peer_id: client_id,
-        peer_kind: PeerKind::Client,
-        user: user.to_string(),
-        mount_point: None,
-        device_id: None,
+        peer_kind: PeerKind::Client{ user: user.to_string() },
         sender: peer_writer.clone() }).await.unwrap();
 
     let tunid = call(".app/tunnel", "create", None, &call_ctx).await;

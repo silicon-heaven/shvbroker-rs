@@ -7,7 +7,7 @@ use async_std::channel::{Receiver, Sender, unbounded};
 use async_std::{future};
 use async_std::net::TcpListener;
 use log::{debug, error, info, log, warn};
-use crate::config::{AccessConfig, BrokerConfig, Password};
+use crate::config::{AccessConfig, BrokerConfig, ConnectionKind, Password};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
@@ -62,9 +62,6 @@ pub(crate) enum BrokerCommand {
     NewPeer {
         peer_id: PeerId,
         peer_kind: PeerKind,
-        user: String,
-        mount_point: Option<String>,
-        device_id: Option<String>,
         sender: Sender<BrokerToPeerMessage>,
     },
     FrameReceived {
@@ -102,10 +99,12 @@ pub(crate) enum SubscribePath {
 }
 #[derive(Debug, Clone)]
 pub(crate) enum PeerKind {
-    Client,
-    ParentBroker,
-    //ChildBroker,
+    Client {
+        user: String,
+    },
+    Broker(ConnectionKind),
     Device {
+        user: String,
         device_id: Option<String>,
         mount_point: String,
         subscribe_path: Option<SubscribePath>,
@@ -114,7 +113,6 @@ pub(crate) enum PeerKind {
 #[derive(Debug)]
 pub(crate) struct Peer {
     pub(crate) peer_kind: PeerKind,
-    pub(crate) user: String,
     pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) subscriptions: Vec<Subscription>,
     pub(crate) forwarded_subscriptions: Vec<ForwardedSubscription>,
@@ -130,7 +128,14 @@ impl Peer {
         }
         false
     }
-}
+    pub(crate) fn user(&self) -> Option<&str> {
+        match &self.peer_kind {
+            PeerKind::Client { user, .. } => { Some(user) }
+            PeerKind::Broker(_) => None,
+            PeerKind::Device { user, .. } => { Some(user) }
+        }
+    }
+ }
 
 pub(crate) enum Mount {
     Peer(PeerId),
@@ -253,37 +258,51 @@ impl BrokerState {
                 return Err(RpcError::new(RpcErrorCode::InvalidRequest, e))
             }
         };
-        match peer.peer_kind {
-            PeerKind::ParentBroker => {
-                log!(target: "Access", Level::Debug, "ParentBroker: {}", client_id);
-                let access = frame.tag(Tag::Access as i32);
-                let access_level = frame.tag(Tag::AccessLevel as i32);
-                if access_level.is_some() || access.is_some() {
-                    log!(target: "Access", Level::Debug, "\tGranted access: {:?}, access level: {:?}", access, access_level);
-                    Ok((access_level.map(RpcValue::as_i32), access.map(RpcValue::as_str).map(|s| s.to_string())))
-                } else {
-                    log!(target: "Access", Level::Debug, "\tPermissionDenied");
-                    Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                }
-            }
-            _ => {
-                log!(target: "Access", Level::Debug, "Peer: {}", client_id);
-                if let Some(flatten_roles) = self.flatten_roles(&peer.user) {
-                    log!(target: "Access", Level::Debug, "user: {}, flatten roles: {:?}", &peer.user, flatten_roles);
-                    for role_name in flatten_roles {
-                        if let Some(rules) = self.role_access.get(&role_name) {
-                            log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
-                            for rule in rules {
-                                log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
-                                if rule.glob.match_shv_ri(&ri) {
-                                    log!(target: "Access", Level::Debug, "\t\t HIT");
-                                    return Ok((Some(rule.access_level as i32), Some(rule.access.clone())));
-                                }
+        if let Some(user) = peer.user() {
+            log!(target: "Access", Level::Debug, "Peer: {}", client_id);
+            if let Some(flatten_roles) = self.flatten_roles(user) {
+                log!(target: "Access", Level::Debug, "user: {}, flatten roles: {:?}", user, flatten_roles);
+                for role_name in flatten_roles {
+                    if let Some(rules) = self.role_access.get(&role_name) {
+                        log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
+                        for rule in rules {
+                            log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
+                            if rule.glob.match_shv_ri(&ri) {
+                                log!(target: "Access", Level::Debug, "\t\t HIT");
+                                return Ok((Some(rule.access_level as i32), Some(rule.access.clone())));
                             }
                         }
                     }
                 }
-                Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", peer.user)))
+            }
+            Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", user)))
+        } else {
+            match &peer.peer_kind {
+                PeerKind::Broker(connection_kind) => {
+                    match connection_kind {
+                        ConnectionKind::ToParentBroker { .. } => {
+                            log!(target: "Access", Level::Debug, "ParentBroker: {}", client_id);
+                            let access = frame.tag(Tag::Access as i32);
+                            let access_level = frame.tag(Tag::AccessLevel as i32);
+                            if access_level.is_some() || access.is_some() {
+                                log!(target: "Access", Level::Debug, "\tGranted access: {:?}, access level: {:?}", access, access_level);
+                                Ok((access_level.map(RpcValue::as_i32), access.map(RpcValue::as_str).map(|s| s.to_string())))
+                            } else {
+                                log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                                Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
+                            }
+                        }
+                        ConnectionKind::ToChildBroker { .. } => {
+                            // requests from child broker should not be allowed
+                            log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                            Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
+                        }
+                    }
+                }
+                _ => {
+                    log!(target: "Access", Level::Debug, "\tWeird peer kind");
+                    Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
+                }
             }
         }
     }
@@ -333,50 +352,44 @@ impl BrokerState {
             Err("Not a device".into())
         }
     }
-    fn add_peer(&mut self, peer_id: PeerId, user: String, peer_kind: PeerKind, mount_point: Option<String>, device_id: Option<String>, sender: Sender<BrokerToPeerMessage>) -> shvrpc::Result<()> {
+    fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> shvrpc::Result<()> {
         if self.peers.contains_key(&peer_id) {
             // this might happen when connection to parent broker is restored
             // after parent broker reset
-            // note that parent broker connection has always ID == 1
             panic!("Peer ID: {peer_id} exists already!");
         }
         let client_path = join_path(DIR_BROKER, &format!("client/{}", peer_id));
-        let effective_mount_point = 'mount_point: {
-            if let Some(ref mount_point) = mount_point {
+        let mut peer_kind = peer_kind;
+        let effective_mount_point = match &mut peer_kind {
+            PeerKind::Client { .. } => { None }
+            PeerKind::Broker(connection_kind) => {
+                match connection_kind {
+                    ConnectionKind::ToParentBroker { .. } => { None }
+                    ConnectionKind::ToChildBroker { mount_point, .. } => { Some(mount_point.to_string()) }
+                }
+            }
+            PeerKind::Device { device_id, mount_point, .. } => loop {
                 if mount_point.starts_with("test/") {
                     info!("Client id: {} mounted on path: '{}'", peer_id, &mount_point);
-                    break 'mount_point Some(mount_point.clone());
+                    break Some(mount_point.clone());
                 }
-            }
-            if let Some(device_id) = &device_id {
-                match self.access.mounts.get(device_id) {
-                    None => {
-                        warn!("Cannot find mount-point for device ID: {device_id}");
-                        None
+                if let Some(device_id) = &device_id {
+                    match self.access.mounts.get(device_id) {
+                        None => {
+                            return Err(format!("Cannot find mount-point for device ID: {device_id}").into());
+                        }
+                        Some(mount) => {
+                            *mount_point = mount.mount_point.clone();
+                            info!("Client id: {}, device id: {} mounted on path: '{}'", peer_id, device_id, &mount_point);
+                            break Some(mount_point.clone());
+                        }
                     }
-                    Some(mount) => {
-                        let mount_point = mount.mount_point.clone();
-                        info!("Client id: {}, device id: {} mounted on path: '{}'", peer_id, device_id, &mount_point);
-                        Some(mount_point)
-                    }
                 }
-            } else {
-                None
-            }
-        };
-        let effective_peer_kind = match peer_kind {
-            PeerKind::ParentBroker => { PeerKind::ParentBroker }
-            _ => {
-                if let Some(mount_point) = &effective_mount_point {
-                    PeerKind::Device{ device_id, mount_point: mount_point.clone(), subscribe_path: None }
-                } else {
-                    PeerKind::Client
-                }
+                break None
             }
         };
         let peer = Peer {
-            peer_kind: effective_peer_kind,
-            user,
+            peer_kind,
             sender,
             subscriptions: vec![],
             forwarded_subscriptions: vec![],
@@ -412,7 +425,7 @@ impl BrokerState {
         };
         rpcvalue::Map::from([
             ("clientId".to_string(), client_id.into()),
-            ("userName".to_string(), RpcValue::from(&peer.user)),
+            ("userName".to_string(), RpcValue::from(peer.user().unwrap_or_default())),
             ("deviceId".to_string(), RpcValue::from(device_id)),
             ("mountPoint".to_string(), RpcValue::from(mount_point)),
             ("subscriptions".to_string(), subs.into()),
@@ -974,13 +987,10 @@ impl BrokerImpl {
             }
             BrokerCommand::NewPeer {
                 peer_id,
-                user,
                 peer_kind,
-                mount_point,
-                device_id,
                 sender} => {
                 info!("New peer, id: {peer_id}.");
-                state_writer(&self.state).add_peer(peer_id, user, peer_kind, mount_point, device_id, sender)?;
+                state_writer(&self.state).add_peer(peer_id, peer_kind, sender)?;
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_mount_point(&mount_point)?;
