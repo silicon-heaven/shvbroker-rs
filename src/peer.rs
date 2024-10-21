@@ -405,9 +405,11 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionK
     };
     // println!("current path: {shv_path}");
     let shv_path = if starts_with_path(&shv_path, ".broker") {
-        if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
-            // prepend exported root to subscribed path
-            frame = fix_subscribe_param(frame, shv_root)?;
+        if let ConnectionKind::ToParentBroker { .. } = connection_kind {
+            if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
+                // prepend exported root to subscribed path
+                frame = fix_subscribe_param(frame, shv_root)?;
+            }
         }
         shv_path
     } else if is_dot_local_request(&frame) {
