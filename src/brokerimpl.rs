@@ -368,10 +368,10 @@ impl BrokerState {
                     ConnectionKind::ToChildBroker { mount_point, .. } => { Some(mount_point.to_string()) }
                 }
             }
-            PeerKind::Device { device_id, mount_point, .. } => loop {
+            PeerKind::Device { device_id, mount_point, .. } => 'find_mount: {
                 if mount_point.starts_with("test/") {
                     info!("Client id: {} mounted on path: '{}'", peer_id, &mount_point);
-                    break Some(mount_point.clone());
+                    break 'find_mount Some(mount_point.clone());
                 }
                 if let Some(device_id) = &device_id {
                     match self.access.mounts.get(device_id) {
@@ -381,11 +381,11 @@ impl BrokerState {
                         Some(mount) => {
                             *mount_point = mount.mount_point.clone();
                             info!("Client id: {}, device id: {} mounted on path: '{}'", peer_id, device_id, &mount_point);
-                            break Some(mount_point.clone());
+                            break 'find_mount Some(mount_point.clone());
                         }
                     }
                 }
-                break None
+                None
             }
         };
         let peer = Peer {

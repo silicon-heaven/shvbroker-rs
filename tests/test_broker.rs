@@ -37,7 +37,7 @@ fn test_broker() -> shvrpc::Result<()> {
                 },
             }
         ];
-        let cfg_fn = "/tmp/test-broker-config1.yaml";
+        let cfg_fn = "/tmp/test-broker-config3756.yaml";
         fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
         let mut process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
             .arg("--config").arg(cfg_fn)
@@ -170,45 +170,42 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, RpcValue::from(123));
     check_subscription("test/child-broker/device/state/number", "test/**", 3755)?;
 
-    //test_child_broker_as_client()?;
+    test_child_broker_as_client()?;
 
     Ok(())
 }
 
-// fn test_child_broker_as_client() -> shvrpc::Result<()> {
-//     let mut config = BrokerConfig::default();
-//     config.listen.tcp = Some("localhost:3754".into());
-//     config.connections = vec![
-//         BrokerConnectionConfig {
-//             enabled: true,
-//             client: ClientConfig{
-//                 url: "tcp://localhost:3755?user=test&password=test".to_string(),
-//                 device_id: None,
-//                 mount: None,
-//                 heartbeat_interval: "1m".to_string(),
-//                 reconnect_interval: None,
-//             },
-//             connection_kind: ConnectionKind::ToChildBroker {
-//                 shv_root: "test/child-broker/device".to_string(),
-//                 mount_point: "test/child-device".to_string(),
-//             },
-//         }
-//     ];
-//     let cfg_fn = "/tmp/test-broker-config2.yaml";
-//     fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
-//     let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
-//         .arg("--config").arg(cfg_fn)
-//         //.arg("-v").arg("Acc")
-//         .spawn()?);
-//     thread::sleep(Duration::from_millis(100));
-//     assert!(broker_process_guard.is_running());
-//
-//     pub fn shv_call_3754(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
-//         shv_call(path, method, param, Some(3754))
-//     }
-//     //assert_eq!(shv_call_3754("test/child-device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
-//
-//     thread::sleep(Duration::from_millis(1000 * 60 * 5));
-//
-//     Ok(())
-// }
+fn test_child_broker_as_client() -> shvrpc::Result<()> {
+    let mut config = BrokerConfig::default();
+    config.listen.tcp = Some("localhost:3754".into());
+    config.connections = vec![
+        BrokerConnectionConfig {
+            enabled: true,
+            client: ClientConfig{
+                url: "tcp://localhost:3755?user=test&password=test".to_string(),
+                device_id: None,
+                mount: None,
+                heartbeat_interval: "1m".to_string(),
+                reconnect_interval: None,
+            },
+            connection_kind: ConnectionKind::ToChildBroker {
+                shv_root: "test/child-broker/device".to_string(),
+                mount_point: "test/child-device".to_string(),
+            },
+        }
+    ];
+    let cfg_fn = "/tmp/test-broker-config3754.yaml";
+    fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
+    let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+        .arg("--config").arg(cfg_fn)
+        //.arg("-v").arg("Acc")
+        .spawn()?);
+    thread::sleep(Duration::from_millis(100));
+    assert!(broker_process_guard.is_running());
+
+    pub fn shv_call_3754(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
+        shv_call(path, method, param, Some(3754))
+    }
+    assert_eq!(shv_call_3754("test/child-device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
+    Ok(())
+}

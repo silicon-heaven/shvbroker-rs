@@ -104,7 +104,8 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         return None
     }
     let shv_path = frame.shv_path().unwrap_or_default();
-    let children_on_path = children_on_path(mounts, shv_path).map(|children| {
+    let children = children_on_path(mounts, shv_path);
+    let children = children.map(|children| {
         if frame.meta.get(DOT_LOCAL_HACK).is_some() {
             let mut children = children;
             children.insert(0, DOT_LOCAL_DIR.into());
@@ -114,13 +115,13 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         }
     });
     let mount_pair = find_longest_prefix(mounts, shv_path);
-    if mount_pair.is_none() && children_on_path.is_none() {
+    if mount_pair.is_none() && children.is_none() {
         // path doesn't exist
         return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {}", shv_path))))
     }
     let is_mount_point = mount_pair.is_some() && mount_pair.unwrap().1.is_empty();
-    let is_remote_dir = mount_pair.is_some() && children_on_path.is_none();
-    let is_tree_leaf = mount_pair.is_some() && children_on_path.is_some() && children_on_path.as_ref().unwrap().is_empty();
+    let is_remote_dir = mount_pair.is_some() && children.is_none();
+    let is_tree_leaf = mount_pair.is_some() && children.is_some() && children.as_ref().unwrap().is_empty();
     //println!("shv path: {shv_path}, method: {method}, mount pair: {:?}", mount_pair);
     //println!("is_mount_point: {is_mount_point}, is_tree_leaf: {is_tree_leaf}");
     if method == METH_DIR && !is_mount_point && !is_remote_dir && !is_tree_leaf {
@@ -135,7 +136,7 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
     if method == METH_LS && !is_tree_leaf && !is_remote_dir  {
         // ls on not-leaf node must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
-            let ls = ls_children_to_result(children_on_path, rpcmsg.param().into());
+            let ls = ls_children_to_result(children, rpcmsg.param().into());
             return Some(ls)
         } else {
             return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
