@@ -10,7 +10,7 @@ use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use shvrpc::util::strip_prefix_path;
-use crate::brokerimpl::{BrokerToPeerMessage, PeerKind};
+use crate::brokerimpl::{BrokerToPeerMessage};
 use crate::brokerimpl::{BrokerImpl, NodeRequestContext, SharedBrokerState, state_reader, state_writer};
 use crate::spawn::spawn_and_log_error;
 
@@ -482,9 +482,8 @@ impl ShvNode for BrokerNode {
             }
             METH_MOUNTS => {
                 let mounts: List = state_reader(&ctx.state).peers.values()
-                    .map(|peer| if let PeerKind::Device {mount_point, ..} = &peer.peer_kind {Some(mount_point)} else {None})
-                    .filter(|mount_point| mount_point.is_some())
-                    .map(|mount_point| RpcValue::from(mount_point.unwrap()))
+                    .filter(|peer| peer.mount_point.is_some())
+                    .map(|peer| if let Some(mount_point) = &peer.mount_point {RpcValue::from(mount_point)} else { RpcValue::null() } )
                     .collect();
                 Ok(ProcessRequestRetval::Retval(mounts.into()))
             }

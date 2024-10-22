@@ -142,10 +142,8 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_parent("test", "ls", r#""child-broker""#)?, RpcValue::from(true));
     assert_eq!(shv_call_parent("test/child-broker/device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
     assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, RpcValue::from(123));
-    check_subscription("test/child-broker/device/state/number", "test/**", 3755)?;
-    check_subscription("test/child-broker/device/state/number", "test/child-broker/**", 3755)?;
-    check_subscription("test/child-broker/device/state/number", "test/child-broker/device/**", 3755)?;
-    check_subscription("test/child-broker/device/state/number", "test/child-broker/device/state/**", 3755)?;
+
+    check_subscription_along_property_path("test/child-broker/device/state/number", 3755)?;
 
     test_child_broker_as_client()?;
 
@@ -160,7 +158,7 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
         format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#),
         format!(r#"{property_path}:set 123"#),
     ];
-    println!("shv_call_many property: {property_path}");
+    println!("shv_call_many property: {property_path}, port: {port}");
     for c in calls.iter() { println!("\t{}", c); }
     let values = shv_call_many(calls, Some(port))?;
     println!("shv_call_many result:");
@@ -217,6 +215,6 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
         shv_call(path, method, param, Some(3754))
     }
     assert_eq!(shv_call_3754("test/child-device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
-    //check_subscription_along_property_path("test/child-device/state/number", 3754)?;
+    check_subscription_along_property_path("test/child-device/state/number", 3754)?;
     Ok(())
 }

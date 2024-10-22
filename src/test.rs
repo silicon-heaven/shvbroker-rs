@@ -74,8 +74,7 @@ async fn test_broker_loop() {
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
-            mount_point: "test/device".to_string(),
-            subscribe_path: None
+            mount_point: Some("test/device".to_string()),
         },
         sender: peer_writer.clone() }).await.unwrap();
 
