@@ -385,7 +385,8 @@ async fn test_broker_loop() {
 
 #[async_std::test]
 async fn test_tunnel_loop() {
-    let config = BrokerConfig::default();
+    let mut config = BrokerConfig::default();
+    config.tunnelling.enabled = true;
     let access = config.access.clone();
     let broker = BrokerImpl::new(&config, access, None);
     let broker_sender = broker.command_sender.clone();

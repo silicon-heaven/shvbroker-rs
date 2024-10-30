@@ -784,7 +784,9 @@ impl BrokerImpl {
             broker.nodes.insert(path.into(), node);
         };
         add_node(DIR_APP, Box::new(AppNode::new()));
-        add_node(".app/tunnel", Box::new(TunnelNode::new()));
+        if config.tunnelling.enabled {
+            add_node(".app/tunnel", Box::new(TunnelNode::new()));
+        }
         add_node(DIR_BROKER, Box::new(BrokerNode::new()));
         add_node(DIR_BROKER_CURRENT_CLIENT, Box::new(BrokerCurrentClientNode::new()));
         add_node(DIR_BROKER_ACCESS_MOUNTS, Box::new(BrokerAccessMountsNode::new()));

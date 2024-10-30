@@ -17,6 +17,13 @@ pub struct BrokerConfig {
     pub connections: Vec<BrokerConnectionConfig>,
     #[serde(default)]
     pub access: AccessConfig,
+    #[serde(default)]
+    pub tunnelling: TunnellingConfig,
+}
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct TunnellingConfig {
+    #[serde(default)]
+    pub enabled:bool,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionKind {
@@ -199,6 +206,7 @@ impl Default for BrokerConfig {
                     ("test-child-broker".into(), Mount{ mount_point: "test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
             },
+            tunnelling: Default::default(),
         }
     }
 }

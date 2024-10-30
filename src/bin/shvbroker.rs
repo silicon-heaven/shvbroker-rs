@@ -25,6 +25,9 @@ struct CliOpts {
     /// Allow writing to access database
     #[arg(short = 'b', long)]
     use_access_db: bool,
+    /// Enable broker tunneling feature
+    #[arg(long)]
+    tunneling: bool,
     /// SHV2 compatibility mode
     #[arg(long = "shv2")]
     shv2_compatibility: bool,
@@ -38,6 +41,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli = CliOpts::augment_args(cli);
     let cli_matches = cli.get_matches();
     let cli_use_access_db_set = cli_matches.try_get_one::<bool>("use_access_db").is_ok();
+    let cli_tunelling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
     let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
 
@@ -84,6 +88,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Using default config");
         BrokerConfig::default()
     };
+    if cli_tunelling_set {
+        config.tunnelling.enabled = cli_opts.tunneling;
+    }
     if cli_shv2_set {
         config.shv2_compatibility = cli_opts.shv2_compatibility;
     }
