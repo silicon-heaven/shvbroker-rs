@@ -33,10 +33,10 @@ pub(crate)  fn next_peer_id() -> i64 {
 pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
     match server_peer_loop(peer_id, broker_writer.clone(), stream).await {
         Ok(_) => {
-            info!("Client loop exit OK, peer id: {peer_id}");
+            debug!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
-            info!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            debug!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
@@ -135,7 +135,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     };
     let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
     let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
-    debug!("Client ID: {peer_id} login success.");
+    info!("Client ID: {peer_id} login success.");
     let peer_kind = if device_id.is_some() || mount_point.is_some() {
         PeerKind::Device {
             user,
@@ -191,6 +191,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             }
         }
     }
+    info!("Client ID: {peer_id} gone.");
     Ok(())
 }
 pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {

@@ -31,8 +31,6 @@ pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
 pub const DOT_LOCAL_HACK: &str = "dot-local-hack";
 pub const DIR_APP: &str = ".app";
-pub const DIR_APP_DEVICE: &str = ".app/device";
-
 pub enum DirParam {
     Brief,
     Full,

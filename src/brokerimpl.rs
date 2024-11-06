@@ -737,10 +737,13 @@ pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<Broker
     state.write().unwrap()
 }
 fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
-    let ix = mount_point.rfind('/').ok_or("Empty path ???")?;
-    let dir = &mount_point[ix + 1 ..];
-    let prefix = &mount_point[..ix];
-    Ok((prefix, dir))
+    if let Some(ix) = mount_point.rfind('/') {
+        let dir = &mount_point[ix + 1 ..];
+        let prefix = &mount_point[..ix];
+        Ok((prefix, dir))
+    } else {
+        Ok(("", mount_point))
+    }
 }
 impl BrokerImpl {
     pub(crate) fn new(config: &BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> Self {
@@ -993,7 +996,7 @@ impl BrokerImpl {
                 peer_id,
                 peer_kind,
                 sender} => {
-                info!("New peer, id: {peer_id}.");
+                debug!("New peer, id: {peer_id}.");
                 state_writer(&self.state).add_peer(peer_id, peer_kind, sender)?;
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
@@ -1009,7 +1012,7 @@ impl BrokerImpl {
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
             }
             BrokerCommand::PeerGone { peer_id } => {
-                info!("Peer gone, id: {peer_id}.");
+                debug!("Peer gone, id: {peer_id}.");
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_mount_point(&mount_point)?;

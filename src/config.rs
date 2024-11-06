@@ -145,6 +145,8 @@ impl BrokerConfig {
 }
 impl Default for BrokerConfig {
     fn default() -> Self {
+        let mut child_broker_config = BrokerConnectionConfig::default();
+        child_broker_config.connection_kind = ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "".to_string() };
         Self {
             listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None },
             use_access_db: false,
@@ -152,6 +154,7 @@ impl Default for BrokerConfig {
             data_directory: None,
             connections: vec![
                 BrokerConnectionConfig::default(),
+                child_broker_config,
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
