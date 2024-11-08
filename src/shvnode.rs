@@ -707,11 +707,15 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
                 let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
-                let user = rv.map(crate::config::User::try_from);
-                let user = match user {
-                    None => None,
-                    Some(Ok(user)) => {Some(user)}
-                    Some(Err(e)) => { return Err(e.into() )}
+                let user = if let Some(rv) = rv {
+                    match crate::config::User::try_from(rv) {
+                        Ok(user) => { Some(user) }
+                        Err(e) => {
+                            return Err(e.into())
+                        }
+                    }
+                } else {
+                    None
                 };
                 state_writer(&ctx.state).set_access_user(key.as_str(), user);
                 Ok(ProcessRequestRetval::Retval(().into()))

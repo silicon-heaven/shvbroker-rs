@@ -68,12 +68,26 @@ impl User {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
         RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
+    fn from_v2(user: UserV2) -> Result<Self, String> {
+        Ok(Self {
+            password: Password::from_v2(user.password)?,
+            roles: user.roles
+        })
+    }
 }
 impl TryFrom<&RpcValue> for User {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
         let cpon = value.to_cpon();
-        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+        match serde_json::from_str(&cpon) {
+            Ok(user) => { Ok(user) }
+            Err(e) => {
+                match UserV2::try_from(cpon.as_str()) {
+                    Ok(user) => { User::from_v2(user) }
+                    Err(_) => { Err(e.to_string()) }
+                }
+            }
+        }
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -81,6 +95,32 @@ impl TryFrom<&RpcValue> for User {
 pub enum Password {
     Plain(String),
     Sha1(String),
+}
+impl Password {
+    fn from_v2(password: PasswordV2) -> Result<Self, String> {
+        let format = password.format.to_lowercase();
+        match format.as_str()  {
+            "plain" => { Ok(Password::Plain(password.password)) }
+            "sha1" => { Ok(Password::Sha1(password.password)) }
+            s => { Err(format!("Invalid password format {s}")) }
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UserV2 {
+    pub password: PasswordV2,
+    pub roles: Vec<String>,
+}
+impl TryFrom<&str> for UserV2 {
+    type Error = String;
+    fn try_from(cpon: &str) -> Result<Self, Self::Error> {
+        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+    }
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PasswordV2 {
+    format: String,
+    password: String,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(PartialEq)]
