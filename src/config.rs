@@ -19,6 +19,13 @@ pub struct BrokerConfig {
     pub access: AccessConfig,
     #[serde(default)]
     pub tunnelling: TunnellingConfig,
+    #[serde(default)]
+    pub azure: AzureConfig,
+}
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct AzureConfig {
+    #[serde(default)]
+    pub group_mapping: BTreeMap<String, Vec<String>>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
@@ -252,6 +259,7 @@ impl Default for BrokerConfig {
                 ]),
             },
             tunnelling: Default::default(),
+            azure: Default::default(),
         }
     }
 }
