@@ -132,7 +132,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 }
             }
         }
-    };
+    }
     let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
     let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
     info!("Client ID: {peer_id} login success.");
