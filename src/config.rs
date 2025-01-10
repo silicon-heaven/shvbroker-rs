@@ -19,6 +19,13 @@ pub struct BrokerConfig {
     pub access: AccessConfig,
     #[serde(default)]
     pub tunnelling: TunnellingConfig,
+    #[serde(default)]
+    pub azure: AzureConfig,
+}
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct AzureConfig {
+    #[serde(default)]
+    pub group_mapping: BTreeMap<String, Vec<String>>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
@@ -114,7 +121,7 @@ pub struct UserV2 {
 impl TryFrom<&str> for UserV2 {
     type Error = String;
     fn try_from(cpon: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+        serde_json::from_str(cpon).map_err(|e| e.to_string())
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -185,8 +192,10 @@ impl BrokerConfig {
 }
 impl Default for BrokerConfig {
     fn default() -> Self {
-        let mut child_broker_config = BrokerConnectionConfig::default();
-        child_broker_config.connection_kind = ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "".to_string() };
+        let child_broker_config = BrokerConnectionConfig {
+            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "".to_string() },
+            ..BrokerConnectionConfig::default()
+        };
         Self {
             listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None },
             use_access_db: false,
@@ -250,6 +259,7 @@ impl Default for BrokerConfig {
                 ]),
             },
             tunnelling: Default::default(),
+            azure: Default::default(),
         }
     }
 }

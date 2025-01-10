@@ -59,6 +59,14 @@ pub(crate) enum BrokerCommand {
         sender: Sender<BrokerToPeerMessage>,
         user: String,
     },
+    SetAzureGroups {
+        peer_id: PeerId,
+        groups: Vec<String>,
+    },
+    GetAzureGroupMapping {
+        sender: Sender<BrokerToPeerMessage>,
+        groups: Vec<String>,
+    },
     NewPeer {
         peer_id: PeerId,
         peer_kind: PeerKind,
@@ -89,6 +97,7 @@ pub(crate) enum BrokerCommand {
 pub(crate) enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
+    AzureMappingGroups(Vec<String>),
     DisconnectByBroker,
 }
 
@@ -224,6 +233,9 @@ pub struct BrokerState {
     mounts: BTreeMap<String, Mount>,
     pub(crate) access: AccessConfig,
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
+    azure_group_mapping: BTreeMap<String, Vec<String>>,
+
+    azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
     pub(crate) command_sender: Sender<BrokerCommand>,
 
@@ -251,10 +263,9 @@ impl BrokerState {
                 return Err(RpcError::new(RpcErrorCode::InvalidRequest, e))
             }
         };
-        if let Some(user) = peer.user() {
-            log!(target: "Access", Level::Debug, "Peer: {}", client_id);
-            if let Some(flatten_roles) = self.flatten_roles(user) {
-                log!(target: "Access", Level::Debug, "user: {}, flatten roles: {:?}", user, flatten_roles);
+
+        let grant_from_flatten_roles = |flatten_roles| {
+            let found_grant = (|| {
                 for role_name in flatten_roles {
                     if let Some(rules) = self.role_access.get(&role_name) {
                         log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
@@ -262,13 +273,27 @@ impl BrokerState {
                             log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
                             if rule.glob.match_shv_ri(&ri) {
                                 log!(target: "Access", Level::Debug, "\t\t HIT");
-                                return Ok((Some(rule.access_level as i32), Some(rule.access.clone())));
+                                return Some((rule.access_level as i32, rule.access.clone()));
                             }
                         }
                     }
                 }
+                None
+            })();
+
+            match found_grant {
+                Some((access_level, access)) => Ok((Some(access_level), Some(access))),
+                None => Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", &client_id)))
             }
-            Err(RpcError::new(RpcErrorCode::PermissionDenied, format!("Access denied for user: {}", user)))
+        };
+
+        if let Some(roles) = self.azure_user_groups.get(&client_id) {
+            let flatten_roles = self.impl_flatten_roles(roles);
+            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &client_id, flatten_roles);
+            grant_from_flatten_roles(flatten_roles)
+        } else if let Some(user) = peer.user() {
+            log!(target: "Access", Level::Debug, "Peer: {}", client_id);
+            grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
         } else {
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {
@@ -300,27 +325,28 @@ impl BrokerState {
         }
     }
     fn flatten_roles(&self, user: &str) -> Option<Vec<String>> {
-        if let Some(user) = self.access.users.get(user) {
-            let mut queue: VecDeque<String> = VecDeque::new();
-            fn enqueue(queue: &mut VecDeque<String>, role: &str) {
-                let role = role.to_string();
-                if !queue.contains(&role) {
-                    queue.push_back(role);
-                }
+        self.access.users.get(user).map(|user| self.impl_flatten_roles(&user.roles))
+    }
+
+    fn impl_flatten_roles(&self, roles: &[String]) -> Vec<String> {
+        let mut queue: VecDeque<String> = VecDeque::new();
+        fn enqueue(queue: &mut VecDeque<String>, role: &str) {
+            let role = role.to_string();
+            if !queue.contains(&role) {
+                queue.push_back(role);
             }
-            for role in user.roles.iter() { enqueue(&mut queue, role); }
-            let mut flatten_roles = Vec::new();
-            while !queue.is_empty() {
-                let role_name = queue.pop_front().unwrap();
-                if let Some(role) = self.access.roles.get(&role_name) {
-                    for role in role.roles.iter() { enqueue(&mut queue, role); }
-                }
-                flatten_roles.push(role_name);
-            }
-            Some(flatten_roles)
-        } else {
-            None
         }
+        for role in roles.iter() { enqueue(&mut queue, role); }
+        let mut flatten_roles = Vec::new();
+        while !queue.is_empty() {
+            let role_name = queue.pop_front().unwrap();
+            if let Some(role) = self.access.roles.get(&role_name) {
+                for role in role.roles.iter() { enqueue(&mut queue, role); }
+            }
+            flatten_roles.push(role_name);
+        }
+
+        flatten_roles
     }
     fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         let mount_point = self.mount_point(peer_id);
@@ -352,7 +378,7 @@ impl BrokerState {
             PeerKind::Broker(connection_kind) => {
                 match connection_kind {
                     ConnectionKind::ToParentBroker { .. } => { None }
-                    ConnectionKind::ToChildBroker { mount_point, .. } => { 
+                    ConnectionKind::ToChildBroker { mount_point, .. } => {
                         if mount_point.is_empty() {
                             None
                         } else {
@@ -770,6 +796,8 @@ impl BrokerImpl {
             mounts: Default::default(),
             access,
             role_access,
+            azure_group_mapping: config.azure.group_mapping.clone(),
+            azure_user_groups: Default::default(),
             command_sender: command_sender.clone(),
             active_tunnels: Default::default(),
             next_tunnel_number: 1,
@@ -1028,6 +1056,19 @@ impl BrokerImpl {
             BrokerCommand::GetPassword { sender, user } => {
                 let shapwd = state_reader(&self.state).sha_password(&user);
                 sender.send(BrokerToPeerMessage::PasswordSha1(shapwd)).await?;
+            }
+            BrokerCommand::SetAzureGroups { peer_id, groups } => {
+                state_writer(&self.state).azure_user_groups.insert(peer_id, groups);
+            }
+            BrokerCommand::GetAzureGroupMapping { sender, groups } => {
+                let mapped_groups = groups
+                    .into_iter()
+                    .flat_map(|azure_group| state_reader(&self.state).azure_group_mapping
+                        .get(&azure_group)
+                        .cloned()
+                        .unwrap_or_default())
+                    .collect::<Vec<_>>();
+                sender.send(BrokerToPeerMessage::AzureMappingGroups(mapped_groups)).await?;
             }
             BrokerCommand::SendResponse { peer_id, meta, result } => {
                 let mut msg = RpcMessage::from_meta(meta);

@@ -6,6 +6,7 @@ use async_std::net::TcpStream;
 use futures::select;
 use futures::FutureExt;
 use futures::io::BufWriter;
+use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
 use rand::distributions::{Alphanumeric, DistString};
 use shvproto::RpcValue;
@@ -88,6 +89,76 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             let password = login.get("password").ok_or("Password login param is missing")?.as_str();
             let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
 
+            if login_type == "AZURE" {
+                let client = GraphClient::new(password);
+
+                #[derive(serde::Deserialize)]
+                struct MeResponse {
+                    mail: String
+                }
+                let me_response = client
+                    .me()
+                    .get_user()
+                    .send()
+                    .await?
+                    .json::<MeResponse>()
+                    .await?;
+                user = me_response.mail;
+
+                #[derive(serde::Deserialize)]
+                struct TransitiveMemberOfValue {
+                    #[serde(rename = "@odata.type")]
+                    value_type: String,
+                    id: String
+                }
+
+                #[derive(serde::Deserialize)]
+                struct TransitiveMemberOfResponse {
+                    value: Vec<TransitiveMemberOfValue>
+                }
+
+                let groups_response = client
+                    .me()
+                    .transitive_member_of()
+                    .list_transitive_member_of()
+                    .send()
+                    .await?
+                    .json::<TransitiveMemberOfResponse>()
+                    .await?;
+
+                let groups_from_azure = groups_response.value
+                    .into_iter()
+                    .filter(|group| group.value_type == "#microsoft.graph.group")
+                    .map(|group| group.id)
+                    .collect::<Vec<_>>();
+
+                broker_writer.send(BrokerCommand::GetAzureGroupMapping { sender: peer_writer.clone(), groups: groups_from_azure }).await?;
+                let broker_to_peer_message = peer_reader.recv().await?;
+                let mut mapped_groups = match broker_to_peer_message {
+                    BrokerToPeerMessage::AzureMappingGroups(groups) => groups,
+                    _ => panic!("Internal error, PeerEvent::AzureMappingGroups expected")
+                };
+
+                if mapped_groups.is_empty() {
+                    debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
+                    frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
+                    continue;
+                }
+
+                debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
+                let mut result = shvproto::Map::new();
+                result.insert("clientId".into(), RpcValue::from(peer_id));
+                frame_writer.send_result(resp_meta.clone(), result.into()).await?;
+                if let Some(options) = params.get("options") {
+                    if let Some(device) = options.as_map().get("device") {
+                        device_options = device.clone();
+                    }
+                }
+                mapped_groups.insert(0, user.clone());
+                broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
+                break;
+            }
+
             broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
             match peer_reader.recv().await? {
                 BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
@@ -132,7 +203,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 }
             }
         }
-    };
+    }
     let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
     let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
     info!("Client ID: {peer_id} login success.");
@@ -176,6 +247,9 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                     match event {
                         BrokerToPeerMessage::PasswordSha1(_) => {
                             panic!("PasswordSha1 cannot be received here")
+                        }
+                        BrokerToPeerMessage::AzureMappingGroups(_) => {
+                            panic!("AzureMappingGroups cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by broker, client ID: {peer_id}");
@@ -352,6 +426,9 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
                     match event {
                         BrokerToPeerMessage::PasswordSha1(_) => {
                             panic!("PasswordSha1 cannot be received here")
+                        }
+                        BrokerToPeerMessage::AzureMappingGroups(_) => {
+                            panic!("AzureMappingGroups cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by parent broker, client ID: {peer_id}");
