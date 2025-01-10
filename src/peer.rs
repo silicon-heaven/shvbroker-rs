@@ -92,44 +92,44 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             if login_type == "AZURE" {
                 let client = GraphClient::new(password);
 
+                #[derive(serde::Deserialize)]
+                struct MeResponse {
+                    mail: String
+                }
                 let me_response = client
                     .me()
                     .get_user()
                     .send()
+                    .await?
+                    .json::<MeResponse>()
                     .await?;
-                let me_json: serde_json::Value = me_response.json().await?;
-                user = me_json
-                    .as_object()
-                    .and_then(|user_obj| user_obj.get("mail"))
-                    .and_then(|mail| mail.as_str())
-                    .map(|mail| "azure:".to_string() + mail)
-                    .ok_or("Azure: unexpected `me` response")?;
+                user = me_response.mail;
+
+                #[derive(serde::Deserialize)]
+                struct TransitiveMemberOfValue {
+                    #[serde(rename = "@odata.type")]
+                    value_type: String,
+                    id: String
+                }
+
+                #[derive(serde::Deserialize)]
+                struct TransitiveMemberOfResponse {
+                    value: Vec<TransitiveMemberOfValue>
+                }
 
                 let groups_response = client
                     .me()
                     .transitive_member_of()
                     .list_transitive_member_of()
                     .send()
+                    .await?
+                    .json::<TransitiveMemberOfResponse>()
                     .await?;
 
-                let groups_json: serde_json::Value = groups_response.json().await?;
-                let groups_from_azure = groups_json
-                    .as_object()
-                    .and_then(|obj| obj.get("value"))
-                    .and_then(|value_obj| value_obj.as_array())
-                    .map(|group_array| group_array
-                        .iter()
-                        .filter_map(|group_array_values| group_array_values.as_object())
-                        .filter(|value| value
-                            .get("@odata.type")
-                            .and_then(|x| x.as_str())
-                            .is_some_and(|data_type| data_type == "#microsoft.graph.group"))
-                        .filter_map(|group| group
-                            .get("id")
-                            .and_then(|id| id.as_str())
-                            ))
-                    .ok_or("Azure: unexpected error response")?
-                    .map(String::from)
+                let groups_from_azure = groups_response.value
+                    .into_iter()
+                    .filter(|group| group.value_type == "#microsoft.graph.group")
+                    .map(|group| group.id)
                     .collect::<Vec<_>>();
 
                 broker_writer.send(BrokerCommand::GetAzureGroupMapping { sender: peer_writer.clone(), groups: groups_from_azure }).await?;
