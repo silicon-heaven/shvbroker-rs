@@ -10,7 +10,6 @@ use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
 use rand::distributions::{Alphanumeric, DistString};
 use shvproto::RpcValue;
-use url::Url;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -269,20 +268,15 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     Ok(())
 }
 pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let url = Url::parse(&config.client.url)?;
+    let url = &config.client.url;
     if url.scheme() != "tcp" {
         return Err(format!("Scheme {} is not supported yet.", url.scheme()).into());
     }
-    let reconnect_interval: std::time::Duration = 'interval: {
-        if let Some(time_str) = &config.client.reconnect_interval {
-            if let Ok(interval) = duration_str::parse(time_str) {
-                break 'interval interval;
-            }
-        }
+    let reconnect_interval = config.client.reconnect_interval.unwrap_or_else(|| {
         const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
         info!("Parent broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC} will be used.");
         std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
-    };
+    });
     info!("Reconnect interval set to: {:?}", reconnect_interval);
     loop {
         match broker_client_connection_loop(peer_id, config.clone(), broker_writer.clone()).await {
@@ -343,7 +337,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
     Ok(())
 }
 async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let url = Url::parse(&config.client.url)?;
+    let url = &config.client.url;
     let (scheme, host, port) = (url.scheme(), url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
     if scheme != "tcp" {
         return Err(format!("Scheme {scheme} is not supported yet.").into());
@@ -362,8 +356,8 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
     frame_writer.set_peer_id(peer_id);
 
     // login
-    let (user, password) = login_from_url(&url);
-    let heartbeat_interval = config.client.heartbeat_interval_duration()?;
+    let (user, password) = login_from_url(url);
+    let heartbeat_interval = config.client.heartbeat_interval;
     let login_params = LoginParams{
         user,
         password,

@@ -1,10 +1,11 @@
-use std::process::{Command};
+use std::process::Command;
 use std::{fs, thread, time::Duration};
 use shvproto::{RpcValue, rpcvalue};
 use shvrpc::client::ClientConfig;
 use shvrpc::metamethod;
 use shvrpc::metamethod::{Flag, MetaMethod};
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind};
+use url::Url;
 use crate::common::{KillProcessGuard, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
 
@@ -26,10 +27,10 @@ fn test_broker() -> shvrpc::Result<()> {
             BrokerConnectionConfig {
                 enabled: true,
                 client: ClientConfig{
-                    url: "tcp://child-broker@localhost:3755?password=child-broker".to_string(),
+                    url: Url::parse("tcp://child-broker@localhost:3755?password=child-broker")?,
                     device_id: Some("test-child-broker".into()),
                     mount: None,
-                    heartbeat_interval: "1m".to_string(),
+                    heartbeat_interval: duration_str::parse("1m")?,
                     reconnect_interval: None,
                 },
                 connection_kind: ConnectionKind::ToParentBroker {
@@ -190,10 +191,10 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
         BrokerConnectionConfig {
             enabled: true,
             client: ClientConfig{
-                url: "tcp://localhost:3755?user=test&password=test".to_string(),
+                url: Url::parse("tcp://localhost:3755?user=test&password=test")?,
                 device_id: None,
                 mount: None,
-                heartbeat_interval: "1m".to_string(),
+                heartbeat_interval: duration_str::parse("1m")?,
                 reconnect_interval: None,
             },
             connection_kind: ConnectionKind::ToChildBroker {
