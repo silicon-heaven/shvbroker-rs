@@ -14,7 +14,7 @@ mod common;
 #[test]
 fn test_broker() -> shvrpc::Result<()> {
     let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
-        .arg("-v").arg(":I")
+        .arg("-v").arg("=I")
         //.arg("-v").arg("Acc")
         .spawn()?);
     thread::sleep(Duration::from_millis(100));

@@ -8,7 +8,7 @@ use futures::FutureExt;
 use futures::io::BufWriter;
 use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distr::{Alphanumeric, SampleString};
 use shvproto::RpcValue;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
@@ -67,7 +67,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 continue;
             }
             debug!("Client ID: {peer_id}, hello received.");
-            let nonce = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+            let nonce = Alphanumeric.sample_string(&mut rand::rng(), 16);
             let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
             frame_writer.send_result(resp_meta, result.into()).await?;
