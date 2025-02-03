@@ -1,9 +1,12 @@
 [package]
 name = "shvbroker"
-version = "3.2.3"
+version = "3.2.4"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dev-dependencies]
+shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["async_std"] }
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }

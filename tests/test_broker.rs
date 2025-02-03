@@ -1,8 +1,13 @@
 use std::process::Command;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
+use async_std::sync::RwLock;
+use shvclient::appnodes::{DotAppNode, DotDeviceNode};
+use shvclient::clientnode::SIG_CHNG;
+use shvclient::AppState;
 use shvproto::{RpcValue, rpcvalue};
 use shvrpc::client::ClientConfig;
-use shvrpc::metamethod;
+use shvrpc::{metamethod, RpcMessage};
 use shvrpc::metamethod::{Flag, MetaMethod};
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind};
 use url::Url;
@@ -108,14 +113,8 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_child(".app", "ping", "")?, RpcValue::null());
 
     println!("====== device =====");
-    let mut device_process_guard = common::KillProcessGuard {
-        child: Command::new("shvbrokertestingdevice")
-            .arg("--url").arg("tcp://test:test@localhost:3756")
-            .arg("--mount").arg("test/device")
-            .spawn()?
-    };
-    thread::sleep(Duration::from_millis(100));
-    assert!(device_process_guard.is_running());
+    run_testing_device(Url::parse("tcp://test:test@localhost:3756").unwrap(), "test/device");
+    thread::sleep(Duration::from_millis(200));
 
     println!("---broker---: test:ls()");
     assert_eq!(shv_call_child("test", "ls", "")?, vec![RpcValue::from("device")].into());
@@ -150,6 +149,69 @@ fn test_broker() -> shvrpc::Result<()> {
 
     Ok(())
 }
+
+fn run_testing_device(url: Url, mount_point: &str) {
+    struct State {
+        number: AtomicI32,
+        text: RwLock<String>,
+    }
+
+    const NUMBER_MOUNT: &str = "state/number";
+    const TEXT_MOUNT: &str = "state/text";
+
+    let client_config = ClientConfig {
+        url,
+        mount: Some(mount_point.into()),
+        ..Default::default()
+    };
+
+    let state = AppState::new(State{ number: 0.into(), text: "".to_string().into() });
+
+    let number_node = shvclient::fixed_node!{
+        number_node_handler(request, client_cmd_tx, app_state: State) {
+            "get" [IsGetter, Read, "Null", "Int"] => {
+                    Some(Ok(app_state.number.load(Ordering::SeqCst).into()))
+            }
+            "set" [IsSetter, Write, "Int", "Null"] (param: i32) => {
+                if app_state.number.load(Ordering::SeqCst) != param {
+                    app_state.number.store(param, Ordering::SeqCst);
+                    let sigchng = RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
+                    let _ = client_cmd_tx.send_message(sigchng);
+                }
+                Some(Ok(().into()))
+            }
+       }
+    };
+    let text_node = shvclient::fixed_node!{
+        text_node_handler(request, client_cmd_tx, app_state: State) {
+            "get" [IsGetter, Read, "String", "Null"] => {
+                let s = &*app_state.text.read().await;
+                Some(Ok(s.into()))
+            }
+            "set" [IsSetter, Write, "Null", "String"] (param: String) => {
+                if *app_state.text.read().await != param {
+                    let mut writer = app_state.text.write().await;
+                    *writer = param.clone();
+                    let sigchng = RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
+                    let _ = client_cmd_tx.send_message(sigchng);
+                }
+                Some(Ok(().into()))
+            }
+       }
+    };
+
+    async_std::task::spawn(async move {
+        shvclient::Client::new(DotAppNode::new("shvbrokertestingdevice"))
+            .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
+            .mount(NUMBER_MOUNT, number_node)
+            .mount(TEXT_MOUNT, text_node)
+            .with_app_state(state)
+            //.run_with_init(&client_config, init_task)
+            .run(&client_config)
+            .await
+    });
+}
+
 fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shvrpc::Result<()> {
     //let info = shv_call_child(".broker/currentClient", "info", "")?;
     //println!("INFO: {info}");
