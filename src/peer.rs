@@ -70,6 +70,15 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             let nonce = Alphanumeric.sample_string(&mut rand::rng(), 16);
             let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
+            broker_writer.send(BrokerCommand::GetAzureClientId { sender: peer_writer.clone() })
+                .await
+                .unwrap_or_else(|err| panic!("Failed to retrieve client id: {err}"));
+            let broker_to_peer_message = peer_reader.recv().await?;
+            let client_id = match broker_to_peer_message {
+                BrokerToPeerMessage::AzureClientId(client_id) => client_id,
+                _ => panic!("Internal error, BrokerToPeerMessage::AzureClientId expected")
+            };
+            result.insert("azureClientId".into(), client_id.into());
             frame_writer.send_result(resp_meta, result.into()).await?;
             nonce
         };
@@ -250,6 +259,9 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                         BrokerToPeerMessage::AzureMappingGroups(_) => {
                             panic!("AzureMappingGroups cannot be received here")
                         }
+                        BrokerToPeerMessage::AzureClientId(_) => {
+                            panic!("AzureClientId cannot be received here")
+                        }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by broker, client ID: {peer_id}");
                             break;
@@ -423,6 +435,9 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
                         }
                         BrokerToPeerMessage::AzureMappingGroups(_) => {
                             panic!("AzureMappingGroups cannot be received here")
+                        }
+                        BrokerToPeerMessage::AzureClientId(_) => {
+                            panic!("AzureClientId cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by parent broker, client ID: {peer_id}");

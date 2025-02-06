@@ -67,6 +67,9 @@ pub(crate) enum BrokerCommand {
         sender: Sender<BrokerToPeerMessage>,
         groups: Vec<String>,
     },
+    GetAzureClientId {
+        sender: Sender<BrokerToPeerMessage>,
+    },
     NewPeer {
         peer_id: PeerId,
         peer_kind: PeerKind,
@@ -97,6 +100,7 @@ pub(crate) enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
     AzureMappingGroups(Vec<String>),
+    AzureClientId(String),
     DisconnectByBroker,
 }
 
@@ -233,6 +237,7 @@ pub struct BrokerState {
     pub(crate) access: AccessConfig,
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
     azure_group_mapping: BTreeMap<String, Vec<String>>,
+    azure_client_id: String,
 
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
@@ -796,6 +801,7 @@ impl BrokerImpl {
             access,
             role_access,
             azure_group_mapping: config.azure.group_mapping.clone(),
+            azure_client_id: config.azure.client_id.clone(),
             azure_user_groups: Default::default(),
             command_sender: command_sender.clone(),
             active_tunnels: Default::default(),
@@ -1066,6 +1072,10 @@ impl BrokerImpl {
                         .unwrap_or_default())
                     .collect::<Vec<_>>();
                 sender.send(BrokerToPeerMessage::AzureMappingGroups(mapped_groups)).await?;
+            }
+            BrokerCommand::GetAzureClientId { sender } => {
+                let client_id = state_reader(&self.state).azure_client_id.to_string();
+                sender.send(BrokerToPeerMessage::AzureClientId(client_id)).await?;
             }
             BrokerCommand::SendResponse { peer_id, meta, result } => {
                 let mut msg = RpcMessage::from_meta(meta);
