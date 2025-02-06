@@ -73,10 +73,8 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             broker_writer.send(BrokerCommand::GetAzureClientId { sender: peer_writer.clone() })
                 .await
                 .unwrap_or_else(|err| panic!("Failed to retrieve client id: {err}"));
-            let broker_to_peer_message = peer_reader.recv().await?;
-            let client_id = match broker_to_peer_message {
-                BrokerToPeerMessage::AzureClientId(client_id) => client_id,
-                _ => panic!("Internal error, BrokerToPeerMessage::AzureClientId expected")
+            let BrokerToPeerMessage::AzureClientId(client_id) = peer_reader.recv().await? else {
+                panic!("Internal error, BrokerToPeerMessage::AzureClientId expected")
             };
             result.insert("azureClientId".into(), client_id.into());
             frame_writer.send_result(resp_meta, result.into()).await?;
@@ -141,10 +139,8 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                     .collect::<Vec<_>>();
 
                 broker_writer.send(BrokerCommand::GetAzureGroupMapping { sender: peer_writer.clone(), groups: groups_from_azure }).await?;
-                let broker_to_peer_message = peer_reader.recv().await?;
-                let mut mapped_groups = match broker_to_peer_message {
-                    BrokerToPeerMessage::AzureMappingGroups(groups) => groups,
-                    _ => panic!("Internal error, PeerEvent::AzureMappingGroups expected")
+                let BrokerToPeerMessage::AzureMappingGroups(mut mapped_groups) = peer_reader.recv().await? else {
+                    panic!("Internal error, PeerEvent::AzureMappingGroups expected")
                 };
 
                 if mapped_groups.is_empty() {
