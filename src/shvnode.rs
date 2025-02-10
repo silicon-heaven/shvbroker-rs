@@ -19,6 +19,7 @@ pub const METH_LS: &str = "ls";
 pub const METH_GET: &str = "get";
 pub const METH_SET: &str = "set";
 pub const SIG_CHNG: &str = "chng";
+pub const SIG_LSMOD: &str = "lsmod";
 pub const METH_NAME: &str = "name";
 pub const METH_PING: &str = "ping";
 pub const METH_SUBSCRIBE: &str = "subscribe";

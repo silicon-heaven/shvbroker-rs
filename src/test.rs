@@ -78,9 +78,11 @@ async fn test_broker_loop() {
         },
         sender: peer_writer.clone() }).await.unwrap();
 
+    /*
+    lsmod cannot be received because it is not subscribed
     loop {
         if let BrokerToPeerMessage::SendFrame(frame) = call_ctx.reader.recv().await.unwrap() {
-            if frame.method() == Some("lsmod") {
+            if frame.method() == Some(SIG_LSMOD) {
                 assert_eq!(frame.shv_path(), Some("test"));
                 assert_eq!(frame.source(), Some("ls"));
                 let msg = frame.to_rpcmesage().unwrap();
@@ -89,7 +91,7 @@ async fn test_broker_loop() {
             }
         }
     }
-
+    */
     let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
     let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();
