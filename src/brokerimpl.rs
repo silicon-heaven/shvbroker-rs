@@ -12,7 +12,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
-use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS};
+use crate::shvnode::{AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, find_longest_prefix, METH_DIR, METH_SUBSCRIBE, process_local_dir_ls, ShvNode, ProcessRequestRetval, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, SIG_LSMOD, METH_LS};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use log::Level;
 use shvrpc::metamethod::{AccessLevel};
@@ -80,7 +80,6 @@ pub(crate) enum BrokerCommand {
         peer_id: PeerId,
     },
     SendResponse {peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>},
-    SendSignal {shv_path: String, signal: String, source: String, param: RpcValue},
     RpcCall {
         peer_id: PeerId,
         request: RpcMessage,
@@ -931,36 +930,43 @@ impl BrokerImpl {
                 self.process_pending_broker_rpc_call(peer_id, frame).await?;
             }
         } else if frame.is_signal() {
-            let mut frames = vec![];
-            {
-                let state = state_reader(&self.state);
-                if let Some(peer) = state.peers.get(&peer_id) {
-                    let mut shv_path = frame.shv_path().unwrap_or_default().to_string();
-                    if let PeerKind::Broker(ConnectionKind::ToChildBroker { shv_root, .. }) = &peer.peer_kind {
-                        // remove shv_root in notifications coming from child broker
-                        if let Some(new_path) = cut_prefix(&shv_path, shv_root) {
-                            shv_path = new_path;
-                        }
-                    }
-                    if let Some(mount_point) = &peer.mount_point {
-                        let new_path = join_path(mount_point, &shv_path);
-                        for (tested_peer_id, peer) in state.peers.iter() {
-                            let ri = ShvRI::from_path_method_signal(&new_path, frame.source().unwrap_or_default(), frame.method())?;
-                            if &peer_id != tested_peer_id && peer.is_signal_subscribed(&ri) {
-                                let mut frame = frame.clone();
-                                frame.set_shvpath(&new_path);
-                                frames.push((frame, peer.sender.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-            for (frame, sender) in frames {
-                sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
-            }
+            self.emit_rpc_signal_frame(peer_id, &frame).await?;
         }
         Ok(())
     }
+    pub(crate) async fn emit_rpc_signal_frame(&mut self, peer_id: PeerId, signal_frame: &RpcFrame) -> shvrpc::Result<()> {
+        assert!(signal_frame.is_signal());
+        let frames: Vec<_> = {
+            let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
+            let state = state_reader(&self.state);
+            if let Some(peer) = state.peers.get(&peer_id) {
+                if let PeerKind::Broker(ConnectionKind::ToChildBroker { shv_root, .. }) = &peer.peer_kind {
+                    // remove shv_root in notifications coming from child broker
+                    if let Some(new_path) = cut_prefix(&shv_path, shv_root) {
+                        shv_path = new_path;
+                    }
+                }
+                if let Some(mount_point) = &peer.mount_point {
+                    shv_path = join_path(mount_point, &shv_path);
+                }
+            }
+            let ri = ShvRI::from_path_method_signal(&shv_path, signal_frame.source().unwrap_or_default(), signal_frame.method())?;
+            state.peers
+                .iter()
+                .filter(|(&tested_peer_id, peer)| peer_id != tested_peer_id && peer.is_signal_subscribed(&ri))
+                .map(|(_, peer)| {
+                    let mut frame = signal_frame.clone();
+                    frame.set_shvpath(&shv_path);
+                    (frame, peer.sender.clone())
+                })
+                .collect()
+        };
+        for (frame, sender) in frames {
+            sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
+        }
+        Ok(())
+    }
+
     async fn start_broker_rpc_call(&mut self, request: RpcMessage, pending_call: PendingRpcCall) -> shvrpc::Result<()> {
         //self.pending_calls.retain(|r| !r.sender.is_closed());
         let sender = {
@@ -1029,13 +1035,8 @@ impl BrokerImpl {
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_mount_point(&mount_point)?;
-                    let command_sender = state_reader(&self.state).command_sender.clone();
-                    command_sender.send(BrokerCommand::SendSignal {
-                        shv_path: shv_path.to_string(),
-                        signal: "lsmod".to_string(),
-                        source: "ls".to_string(),
-                        param: Map::from([(dir.to_string(), true.into())]).into(),
-                    }).await?;
+                    let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS, Some(Map::from([(dir.to_string(), true.into())]).into()));
+                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?).await?;
                 }
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
             }
@@ -1044,12 +1045,8 @@ impl BrokerImpl {
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_mount_point(&mount_point)?;
-                    self.command_sender.send(BrokerCommand::SendSignal {
-                        shv_path: shv_path.to_string(),
-                        signal: "lsmod".to_string(),
-                        source: "ls".to_string(),
-                        param: Map::from([(dir.to_string(), false.into())]).into(),
-                    }).await?;
+                    let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS, Some(Map::from([(dir.to_string(), false.into())]).into()));
+                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?).await?;
                 }
                 self.pending_rpc_calls.retain(|c| c.client_id != peer_id);
             }
@@ -1076,15 +1073,6 @@ impl BrokerImpl {
                 let peer_sender = state_reader(&self.state).peers.get(&peer_id).ok_or("Invalid peer ID")?.sender.clone();
                 peer_sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
             }
-            BrokerCommand::SendSignal { shv_path, signal, source, param } => {
-                let msg = RpcMessage::new_signal_with_source(&shv_path, &signal, &source, Some(param));
-                let senders: Vec<_> = state_reader(&self.state).peers.values()
-                    //.filter(|peer| if let PeerKind::ChildBroker = peer.peer_kind { false } else { true })
-                    .map(|peer| peer.sender.clone()).collect();
-                for sender in senders {
-                    sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
-                }
-            }
             BrokerCommand::RpcCall { peer_id: client_id, request, response_sender } => {
                 let request_meta = request.meta().clone();
                 let mut rq2 = request;
@@ -1108,12 +1096,8 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::TunnelActive(tunnel_id) => {
-                self.command_sender.send(BrokerCommand::SendSignal {
-                    shv_path: format!(".app/tunnel/{tunnel_id}"),
-                    signal: "lsmod".to_string(),
-                    source: "ls".to_string(),
-                    param: Map::from([(tunnel_id.clone(), true.into())]).into(),
-                }).await?;
+                let msg = RpcMessage::new_signal_with_source(&format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS, Some(Map::from([(tunnel_id.clone(), true.into())]).into()));
+                self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 let command_sender = self.command_sender.clone();
                 let state = self.state.clone();
                 let tunid = tunnel_id.clone();
@@ -1138,12 +1122,8 @@ impl BrokerImpl {
             BrokerCommand::TunnelClosed(tunnel_id) => {
                 let closed = state_writer(&self.state).close_tunnel(&tunnel_id)?;
                 if let Some(true) = closed {
-                    self.command_sender.send(BrokerCommand::SendSignal {
-                        shv_path: format!(".app/tunnel/{tunnel_id}"),
-                        signal: "lsmod".to_string(),
-                        source: "ls".to_string(),
-                        param: Map::from([(tunnel_id, false.into())]).into(),
-                    }).await?;
+                    let msg = RpcMessage::new_signal_with_source(&format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS, Some(Map::from([(tunnel_id.clone(), false.into())]).into()));
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 }
             }
         }
