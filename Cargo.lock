@@ -2522,8 +2522,8 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.4.0"
-source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?branch=main#45dc4deb3f48e64ac50adb0250ff0b2d872dfb3b"
+version = "0.4.1"
+source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?branch=main#eba8dc2500d0141ebbbe7c534ed7dcd25b29cddd"
 dependencies = [
  "async-broadcast",
  "async-std",
