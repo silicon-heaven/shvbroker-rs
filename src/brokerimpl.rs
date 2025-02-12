@@ -63,13 +63,6 @@ pub(crate) enum BrokerCommand {
         peer_id: PeerId,
         groups: Vec<String>,
     },
-    GetAzureGroupMapping {
-        sender: Sender<BrokerToPeerMessage>,
-        groups: Vec<String>,
-    },
-    GetAzureClientId {
-        sender: Sender<BrokerToPeerMessage>,
-    },
     NewPeer {
         peer_id: PeerId,
         peer_kind: PeerKind,
@@ -99,8 +92,6 @@ pub(crate) enum BrokerCommand {
 pub(crate) enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
-    AzureMappingGroups(Vec<String>),
-    AzureClientId(String),
     DisconnectByBroker,
 }
 
@@ -221,7 +212,7 @@ pub async fn accept_loop(config: BrokerConfig, access: AccessConfig, sql_connect
             let stream = stream?;
             let peer_id = next_peer_id();
             debug!("Accepting from: {}", stream.peer_addr()?);
-            crate::spawn_and_log_error(peer::try_server_peer_loop(peer_id, broker_sender.clone(), stream));
+            crate::spawn_and_log_error(peer::try_server_peer_loop(peer_id, broker_sender.clone(), stream, config.azure.clone()));
         }
         drop(broker_sender);
         broker_task.await;
@@ -236,8 +227,6 @@ pub struct BrokerState {
     mounts: BTreeMap<String, Mount>,
     pub(crate) access: AccessConfig,
     role_access: HashMap<String, Vec<ParsedAccessRule>>,
-    azure_group_mapping: BTreeMap<String, Vec<String>>,
-    azure_client_id: String,
 
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
@@ -800,8 +789,6 @@ impl BrokerImpl {
             mounts: Default::default(),
             access,
             role_access,
-            azure_group_mapping: config.azure.group_mapping.clone(),
-            azure_client_id: config.azure.client_id.clone(),
             azure_user_groups: Default::default(),
             command_sender: command_sender.clone(),
             active_tunnels: Default::default(),
@@ -1062,20 +1049,6 @@ impl BrokerImpl {
             }
             BrokerCommand::SetAzureGroups { peer_id, groups } => {
                 state_writer(&self.state).azure_user_groups.insert(peer_id, groups);
-            }
-            BrokerCommand::GetAzureGroupMapping { sender, groups } => {
-                let mapped_groups = groups
-                    .into_iter()
-                    .flat_map(|azure_group| state_reader(&self.state).azure_group_mapping
-                        .get(&azure_group)
-                        .cloned()
-                        .unwrap_or_default())
-                    .collect::<Vec<_>>();
-                sender.send(BrokerToPeerMessage::AzureMappingGroups(mapped_groups)).await?;
-            }
-            BrokerCommand::GetAzureClientId { sender } => {
-                let client_id = state_reader(&self.state).azure_client_id.to_string();
-                sender.send(BrokerToPeerMessage::AzureClientId(client_id)).await?;
             }
             BrokerCommand::SendResponse { peer_id, meta, result } => {
                 let mut msg = RpcMessage::from_meta(meta);

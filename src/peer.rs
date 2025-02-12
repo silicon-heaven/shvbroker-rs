@@ -21,7 +21,7 @@ use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
-use crate::config::{BrokerConnectionConfig, ConnectionKind};
+use crate::config::{AzureConfig, BrokerConnectionConfig, ConnectionKind};
 use crate::cut_prefix;
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
@@ -30,8 +30,8 @@ pub(crate)  fn next_peer_id() -> i64 {
     old_id + 1
 }
 
-pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
-    match server_peer_loop(peer_id, broker_writer.clone(), stream).await {
+pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
+    match server_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             debug!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -42,7 +42,7 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -70,13 +70,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             let nonce = Alphanumeric.sample_string(&mut rand::rng(), 16);
             let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
-            broker_writer.send(BrokerCommand::GetAzureClientId { sender: peer_writer.clone() })
-                .await
-                .unwrap_or_else(|err| panic!("Failed to retrieve client id: {err}"));
-            let BrokerToPeerMessage::AzureClientId(client_id) = peer_reader.recv().await? else {
-                panic!("Internal error, BrokerToPeerMessage::AzureClientId expected")
-            };
-            result.insert("azureClientId".into(), client_id.into());
+            result.insert("azureClientId".into(), azure_config.client_id.as_str().into());
             frame_writer.send_result(resp_meta, result.into()).await?;
             nonce
         };
@@ -135,13 +129,14 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 let groups_from_azure = groups_response.value
                     .into_iter()
                     .filter(|group| group.value_type == "#microsoft.graph.group")
-                    .map(|group| group.id)
-                    .collect::<Vec<_>>();
+                    .map(|group| group.id);
 
-                broker_writer.send(BrokerCommand::GetAzureGroupMapping { sender: peer_writer.clone(), groups: groups_from_azure }).await?;
-                let BrokerToPeerMessage::AzureMappingGroups(mut mapped_groups) = peer_reader.recv().await? else {
-                    panic!("Internal error, PeerEvent::AzureMappingGroups expected")
-                };
+                let mut mapped_groups = groups_from_azure
+                    .flat_map(|azure_group| azure_config.group_mapping
+                        .get(&azure_group)
+                        .cloned()
+                        .unwrap_or_default())
+                    .collect::<Vec<_>>();
 
                 if mapped_groups.is_empty() {
                     debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
@@ -251,12 +246,6 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                     match event {
                         BrokerToPeerMessage::PasswordSha1(_) => {
                             panic!("PasswordSha1 cannot be received here")
-                        }
-                        BrokerToPeerMessage::AzureMappingGroups(_) => {
-                            panic!("AzureMappingGroups cannot be received here")
-                        }
-                        BrokerToPeerMessage::AzureClientId(_) => {
-                            panic!("AzureClientId cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by broker, client ID: {peer_id}");
@@ -428,12 +417,6 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
                     match event {
                         BrokerToPeerMessage::PasswordSha1(_) => {
                             panic!("PasswordSha1 cannot be received here")
-                        }
-                        BrokerToPeerMessage::AzureMappingGroups(_) => {
-                            panic!("AzureMappingGroups cannot be received here")
-                        }
-                        BrokerToPeerMessage::AzureClientId(_) => {
-                            panic!("AzureClientId cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker => {
                             info!("Disconnected by parent broker, client ID: {peer_id}");
