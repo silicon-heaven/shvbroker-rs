@@ -26,6 +26,7 @@ pub struct BrokerConfig {
 pub struct AzureConfig {
     #[serde(default)]
     pub group_mapping: BTreeMap<String, Vec<String>>,
+    pub client_id: String,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
