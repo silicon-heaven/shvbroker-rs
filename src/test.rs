@@ -1,6 +1,7 @@
 use crate::brokerimpl::BrokerImpl;
 use async_std::channel::{Receiver, Sender};
 use async_std::{channel, task};
+use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use rusqlite::Connection;
 use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
@@ -420,10 +421,60 @@ async fn test_tunnel_loop() {
     // service not running
     assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException);
 
-    // service is running
-    // ncat -e /bin/cat -k -l 8888
-    println!("To pass tests ensure that this is running: ncat -e /bin/cat -k -l 8888");
-    let param = Map::from([("host".to_string(), "localhost:8888".into())]);
+    // echo loop
+    const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
+    async_std::task::spawn(async move {
+        let listener = async_std::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
+        println!("Echo server is listening on {}", listener.local_addr().unwrap());
+
+        while let Some(stream) = listener.incoming().next().await {
+            match stream {
+                Ok(mut socket) => {
+                    let addr = socket.peer_addr().unwrap();
+                    println!("New connection from: {}", addr);
+
+                    async_std::task::spawn(async move {
+                        let mut buffer = vec![0; 1024];
+
+                        loop {
+                            match socket.read(&mut buffer).await {
+                                Ok(0) => {
+                                    println!("Connection closed by client: {}", addr);
+                                    return;
+                                }
+                                Ok(n) => {
+                                    if socket.write_all(&buffer[..n]).await.is_err() {
+                                        println!("Failed to send data to: {}", addr);
+                                        return;
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("Error reading from {}: {}", addr, e);
+                                    return;
+                                }
+                            }
+                        }
+                    });
+                }
+                Err(e) => println!("Connection failed: {}", e),
+            }
+        }
+    });
+
+    // Wait for the echo loop to initialize
+    async fn wait_for_server(address: &str, timeout: std::time::Duration) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if async_std::net::TcpStream::connect(address).await.is_ok() {
+                return;
+            }
+            async_std::task::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        panic!("Could not connect to: {address}");
+    }
+    wait_for_server(ECHO_LOOP_ADDRESS, std::time::Duration::from_secs(3)).await;
+
+    let param = Map::from([("host".to_string(), ECHO_LOOP_ADDRESS.into())]);
     let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
     assert!(tunid.is_string());
 

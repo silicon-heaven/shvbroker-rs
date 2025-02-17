@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::LazyLock;
 use std::thread;
 use shvproto::{RpcValue};
 use shvrpc::{RpcMessage};
@@ -66,11 +67,21 @@ pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     Ok(result.clone())
 }
 
-const SHVCALL_BINARY: &str = "shvcall";
+static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
+    let shvcall_package = cargo_run_bin::metadata::get_binary_packages()
+        .unwrap()
+        .iter()
+        .find(|p| p.package == "shvcall")
+        .unwrap()
+        .to_owned();
+    cargo_run_bin::binary::install(shvcall_package).unwrap()
+});
+
 pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcValue> {
     let port = port.unwrap_or(3755);
     println!("shvcall port: {port} {path}:{method} param: {}", param);
-    let output = match Command::new(SHVCALL_BINARY)
+    let shvcall_binary = &*SHVCALL_BINARY;
+    let output = match Command::new(shvcall_binary)
         .arg("-v").arg(".:T")
         .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
         .arg("--method").arg(format!("{path}:{method}"))
@@ -79,7 +90,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         .output() {
         Ok(output) => {output}
         Err(e) => {
-            panic!("{SHVCALL_BINARY} exec error: {e}");
+            panic!("{shvcall_binary} exec error: {e}");
         }
     };
 
@@ -87,7 +98,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
 }
 pub fn shv_call_many(calls: Vec<String>, port: Option<i32>) -> shvrpc::Result<Vec<String>> {
     let port = port.unwrap_or(3755);
-    let mut cmd = Command::new(SHVCALL_BINARY);
+    let mut cmd = Command::new(&*SHVCALL_BINARY);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
