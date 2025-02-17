@@ -1,4 +1,5 @@
 use std::process::Command;
+use assert_cmd::prelude::*;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
 use async_std::sync::RwLock;
@@ -18,7 +19,8 @@ mod common;
 
 #[test]
 fn test_broker() -> shvrpc::Result<()> {
-    let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+    let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
+        .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
         .arg("-v").arg("=I")
         //.arg("-v").arg("Acc")
         .spawn()?);
@@ -45,7 +47,8 @@ fn test_broker() -> shvrpc::Result<()> {
         ];
         let cfg_fn = "/tmp/test-broker-config3756.yaml";
         fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
-        let mut process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+        let mut process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
+            .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
             .arg("--config").arg(cfg_fn)
             //.arg("-v").arg("Acc")
             .spawn()?);
@@ -267,7 +270,8 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
     ];
     let cfg_fn = "/tmp/test-broker-config3754.yaml";
     fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
-    let mut broker_process_guard = KillProcessGuard::new(Command::new("target/debug/shvbroker")
+    let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
+        .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
         .arg("--config").arg(cfg_fn)
         //.arg("-v").arg("Acc")
         .spawn()?);
