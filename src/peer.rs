@@ -70,7 +70,6 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
             let nonce = Alphanumeric.sample_string(&mut rand::rng(), 16);
             let mut result = shvproto::Map::new();
             result.insert("nonce".into(), RpcValue::from(&nonce));
-            result.insert("azureClientId".into(), azure_config.client_id.as_str().into());
             frame_writer.send_result(resp_meta, result.into()).await?;
             nonce
         };
