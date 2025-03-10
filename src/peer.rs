@@ -96,9 +96,13 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 let password = login.get("password").ok_or("Password login param is missing")?.as_str();
                 let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
 
-                if login_type == "TOKEN" {
+                if login_type == "TOKEN" || login_type == "AZURE" {
                     const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
-                    let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) else {
+                    let access_token = if login_type == "AZURE" {
+                        password
+                    } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
+                        access_token
+                    } else {
                         frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
                         continue 'login_loop;
                     };
