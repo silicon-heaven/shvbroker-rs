@@ -30,7 +30,7 @@ pub(crate)  fn next_peer_id() -> i64 {
     old_id + 1
 }
 
-pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
+pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     match server_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             debug!("Client loop exit OK, peer id: {peer_id}");
@@ -42,7 +42,7 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -85,6 +85,12 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                         frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
                         continue 'login_loop;
                     };
+
+                    let Some(azure_config) = &azure_config else {
+                        frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
+                        continue 'login_loop;
+                    };
+
                     let client = GraphClient::new(access_token);
 
                     #[derive(serde::Deserialize)]

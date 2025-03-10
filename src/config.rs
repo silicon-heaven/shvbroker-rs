@@ -20,7 +20,7 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub tunnelling: TunnellingConfig,
     #[serde(default)]
-    pub azure: AzureConfig,
+    pub azure: Option<AzureConfig>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
