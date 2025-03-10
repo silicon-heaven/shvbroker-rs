@@ -80,7 +80,12 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
 
                 if login_type == "TOKEN" {
-                    let client = GraphClient::new(password);
+                    const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
+                    let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) else {
+                        frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
+                        continue 'login_loop;
+                    };
+                    let client = GraphClient::new(access_token);
 
                     #[derive(serde::Deserialize)]
                     struct MeResponse {
