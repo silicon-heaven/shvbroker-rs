@@ -9,7 +9,7 @@ use futures::io::BufWriter;
 use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
-use shvproto::RpcValue;
+use shvproto::{make_list, make_map, RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -70,6 +70,23 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 let mut result = shvproto::Map::new();
                 result.insert("nonce".into(), RpcValue::from(nonce));
                 frame_writer.send_result(resp_meta, result.into()).await?;
+            },
+            "workflows" => {
+                debug!("Client ID: {peer_id}, workflows received.");
+                let mut workflows = make_list!{
+                    "PLAIN",
+                    "SHA1",
+                };
+                if let Some(azure_config) = &azure_config {
+                    workflows.push(make_map!{
+                        "type" => "oauth2-azure",
+                        "clientId" => azure_config.client_id.clone(),
+                        "authorizeUrl" => azure_config.authorize_url.clone(),
+                        "tokenUrl" => azure_config.token_url.clone(),
+                        "scopes" => azure_config.scopes.clone(),
+                    }.into());
+                };
+                frame_writer.send_result(resp_meta, workflows.into()).await?;
             },
             "login" => {
                 debug!("Client ID: {peer_id}, login received.");

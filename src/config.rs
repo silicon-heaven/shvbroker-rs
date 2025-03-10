@@ -27,6 +27,9 @@ pub struct AzureConfig {
     #[serde(default)]
     pub group_mapping: BTreeMap<String, Vec<String>>,
     pub client_id: String,
+    pub authorize_url: String,
+    pub token_url: String,
+    pub scopes: String,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
