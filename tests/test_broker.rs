@@ -1,5 +1,6 @@
 use std::process::Command;
 use assert_cmd::prelude::*;
+use tempfile::NamedTempFile;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
 use async_std::sync::RwLock;
@@ -45,11 +46,11 @@ fn test_broker() -> shvrpc::Result<()> {
                 },
             }
         ];
-        let cfg_fn = "/tmp/test-broker-config3756.yaml";
-        fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
+        let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
+        fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
         let mut process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
             .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
-            .arg("--config").arg(cfg_fn)
+            .arg("--config").arg(cfg_fn.as_ref())
             //.arg("-v").arg("Acc")
             .spawn()?);
         thread::sleep(Duration::from_millis(100));
@@ -268,11 +269,11 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
             },
         }
     ];
-    let cfg_fn = "/tmp/test-broker-config3754.yaml";
-    fs::write(cfg_fn, &serde_yaml::to_string(&config)?)?;
+    let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
+    fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
         .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
-        .arg("--config").arg(cfg_fn)
+        .arg("--config").arg(cfg_fn.as_ref())
         //.arg("-v").arg("Acc")
         .spawn()?);
     thread::sleep(Duration::from_millis(100));
