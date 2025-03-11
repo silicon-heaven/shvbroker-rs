@@ -93,8 +93,8 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 let params = rpcmsg.param().ok_or("No login params")?.as_map();
                 let login = params.get("login").ok_or("Invalid login params")?.as_map();
                 user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
-                let password = login.get("password").ok_or("Password login param is missing")?.as_str();
                 let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
+                let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
                 if login_type == "TOKEN" || login_type == "AZURE" {
                     const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
