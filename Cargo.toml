@@ -9,6 +9,7 @@ edition = "2021"
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.0"
 shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["async_std"] }
+tempfile = "3"
 
 [package.metadata.bin]
 shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "3.5.0" }
