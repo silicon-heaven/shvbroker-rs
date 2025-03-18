@@ -9,7 +9,7 @@ use futures::io::BufWriter;
 use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
-use shvproto::RpcValue;
+use shvproto::{make_list, make_map, RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -30,7 +30,7 @@ pub(crate)  fn next_peer_id() -> i64 {
     old_id + 1
 }
 
-pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
+pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     match server_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             debug!("Client loop exit OK, peer id: {peer_id}");
@@ -42,7 +42,7 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: AzureConfig) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
     let (socket_reader, socket_writer) = (&stream, &stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -57,149 +57,187 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
 
     let mut device_options = RpcValue::null();
     let mut user;
-    loop {
-        let nonce = {
-            let frame = frame_reader.receive_frame().await?;
-            let rpcmsg = frame.to_rpcmesage()?;
-            let resp_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-            if rpcmsg.method().unwrap_or("") != "hello" {
-                frame_writer.send_error(resp_meta, "Invalid login message.").await?;
-                continue;
-            }
-            debug!("Client ID: {peer_id}, hello received.");
-            let nonce = Alphanumeric.sample_string(&mut rand::rng(), 16);
-            let mut result = shvproto::Map::new();
-            result.insert("nonce".into(), RpcValue::from(&nonce));
-            result.insert("azureClientId".into(), azure_config.client_id.as_str().into());
-            frame_writer.send_result(resp_meta, result.into()).await?;
-            nonce
-        };
-        {
-            let frame = frame_reader.receive_frame().await?;
-            let rpcmsg = frame.to_rpcmesage()?;
-            let resp_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-            if rpcmsg.method().unwrap_or("") != "login" {
-                frame_writer.send_error(resp_meta, "Invalid login message.").await?;
-                continue;
-            }
-            debug!("Client ID: {peer_id}, login received.");
-            let params = rpcmsg.param().ok_or("No login params")?.as_map();
-            let login = params.get("login").ok_or("Invalid login params")?.as_map();
-            user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
-            let password = login.get("password").ok_or("Password login param is missing")?.as_str();
-            let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
-
-            if login_type == "AZURE" {
-                let client = GraphClient::new(password);
-
-                #[derive(serde::Deserialize)]
-                struct MeResponse {
-                    mail: String
-                }
-                let me_response = client
-                    .me()
-                    .get_user()
-                    .send()
-                    .await?
-                    .json::<MeResponse>()
-                    .await?;
-                user = me_response.mail;
-
-                #[derive(serde::Deserialize)]
-                struct TransitiveMemberOfValue {
-                    #[serde(rename = "@odata.type")]
-                    value_type: String,
-                    id: String
-                }
-
-                #[derive(serde::Deserialize)]
-                struct TransitiveMemberOfResponse {
-                    value: Vec<TransitiveMemberOfValue>
-                }
-
-                let groups_response = client
-                    .me()
-                    .transitive_member_of()
-                    .list_transitive_member_of()
-                    .send()
-                    .await?
-                    .json::<TransitiveMemberOfResponse>()
-                    .await?;
-
-                let groups_from_azure = groups_response.value
-                    .into_iter()
-                    .filter(|group| group.value_type == "#microsoft.graph.group")
-                    .map(|group| group.id);
-
-                let mut mapped_groups = groups_from_azure
-                    .flat_map(|azure_group| azure_config.group_mapping
-                        .get(&azure_group)
-                        .cloned()
-                        .unwrap_or_default())
-                    .collect::<Vec<_>>();
-
-                if mapped_groups.is_empty() {
-                    debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
-                    frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
-                    continue;
-                }
-
-                debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
+    let mut nonce = None;
+    'login_loop: loop {
+        let frame = frame_reader.receive_frame().await?;
+        let rpcmsg = frame.to_rpcmesage()?;
+        let resp_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+        let method = rpcmsg.method().unwrap_or("");
+        match method {
+            "hello" => {
+                debug!("Client ID: {peer_id}, hello received.");
+                let nonce: &String = nonce.get_or_insert_with(|| Alphanumeric.sample_string(&mut rand::rng(), 16));
                 let mut result = shvproto::Map::new();
-                result.insert("clientId".into(), RpcValue::from(peer_id));
-                frame_writer.send_result(resp_meta.clone(), result.into()).await?;
-                if let Some(options) = params.get("options") {
-                    if let Some(device) = options.as_map().get("device") {
-                        device_options = device.clone();
-                    }
-                }
-                mapped_groups.insert(0, user.clone());
-                broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
-                break;
-            }
+                result.insert("nonce".into(), RpcValue::from(nonce));
+                frame_writer.send_result(resp_meta, result.into()).await?;
+            },
+            "workflows" => {
+                debug!("Client ID: {peer_id}, workflows received.");
+                let mut workflows = make_list!{
+                    "PLAIN",
+                    "SHA1",
+                };
+                if let Some(azure_config) = &azure_config {
+                    workflows.push(make_map!{
+                        "type" => "oauth2-azure",
+                        "clientId" => azure_config.client_id.clone(),
+                        "authorizeUrl" => azure_config.authorize_url.clone(),
+                        "tokenUrl" => azure_config.token_url.clone(),
+                        "scopes" => azure_config.scopes.clone(),
+                    }.into());
+                };
+                frame_writer.send_result(resp_meta, workflows.into()).await?;
+            },
+            "login" => {
+                debug!("Client ID: {peer_id}, login received.");
+                let params = rpcmsg.param().ok_or("No login params")?.as_map();
+                let login = params.get("login").ok_or("Invalid login params")?.as_map();
+                user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
+                let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
+                let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
-            broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
-            match peer_reader.recv().await? {
-                BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
-                    let chkpwd = || {
-                        match broker_shapass {
-                            None => {false}
-                            Some(broker_shapass) => {
-                                if login_type == "PLAIN" {
-                                    let client_shapass = sha1_hash(password.as_bytes());
-                                    client_shapass == broker_shapass
-                                } else {
-                                    let mut data = nonce.as_bytes().to_vec();
-                                    data.extend_from_slice(&broker_shapass[..]);
-                                    let broker_shapass = sha1_hash(&data);
-                                    //info!("nonce: {}", nonce);
-                                    //info!("client password: {}", password);
-                                    //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
-                                    password.as_bytes() == broker_shapass
+                if login_type == "TOKEN" || login_type == "AZURE" {
+                    const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
+                    let access_token = if login_type == "AZURE" {
+                        password
+                    } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
+                        access_token
+                    } else {
+                        frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
+                        continue 'login_loop;
+                    };
+
+                    let Some(azure_config) = &azure_config else {
+                        frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
+                        continue 'login_loop;
+                    };
+
+                    let client = GraphClient::new(access_token);
+
+                    #[derive(serde::Deserialize)]
+                    struct MeResponse {
+                        mail: String
+                    }
+                    let me_response = client
+                        .me()
+                        .get_user()
+                        .send()
+                        .await?
+                        .json::<MeResponse>()
+                        .await?;
+                    user = me_response.mail;
+
+                    #[derive(serde::Deserialize)]
+                    struct TransitiveMemberOfValue {
+                        #[serde(rename = "@odata.type")]
+                        value_type: String,
+                        id: String
+                    }
+
+                    #[derive(serde::Deserialize)]
+                    struct TransitiveMemberOfResponse {
+                        value: Vec<TransitiveMemberOfValue>
+                    }
+
+                    let groups_response = client
+                        .me()
+                        .transitive_member_of()
+                        .list_transitive_member_of()
+                        .send()
+                        .await?
+                        .json::<TransitiveMemberOfResponse>()
+                        .await?;
+
+                    let groups_from_azure = groups_response.value
+                        .into_iter()
+                        .filter(|group| group.value_type == "#microsoft.graph.group")
+                        .map(|group| group.id);
+
+                    let mut mapped_groups = groups_from_azure
+                        .flat_map(|azure_group| azure_config.group_mapping
+                            .get(&azure_group)
+                            .cloned()
+                            .unwrap_or_default())
+                        .collect::<Vec<_>>();
+
+                    if mapped_groups.is_empty() {
+                        debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
+                        frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
+                        continue 'login_loop;
+                    }
+
+                    debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
+                    let mut result = shvproto::Map::new();
+                    result.insert("clientId".into(), RpcValue::from(peer_id));
+                    frame_writer.send_result(resp_meta.clone(), result.into()).await?;
+                    if let Some(options) = params.get("options") {
+                        if let Some(device) = options.as_map().get("device") {
+                            device_options = device.clone();
+                        }
+                    }
+                    mapped_groups.insert(0, user.clone());
+                    broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
+                    break 'login_loop;
+                }
+
+                broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
+                match peer_reader.recv().await? {
+                    BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
+                        let chkpwd = || {
+                            match broker_shapass {
+                                None => {false}
+                                Some(broker_shapass) => {
+                                    match login_type {
+                                        "PLAIN" => {
+                                            let client_shapass = sha1_hash(password.as_bytes());
+                                            client_shapass == broker_shapass
+                                        },
+                                        "SHA1" => {
+                                            if let Some(nonce) = &nonce {
+                                                let mut data = nonce.as_bytes().to_vec();
+                                                data.extend_from_slice(&broker_shapass[..]);
+                                                let broker_shapass = sha1_hash(&data);
+                                                //info!("nonce: {}", nonce);
+                                                //info!("client password: {}", password);
+                                                //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
+                                                password.as_bytes() == broker_shapass
+                                            } else {
+                                                debug!("Client ID: {peer_id}, user tried SHA1 login without using `:hello`.");
+                                                false
+                                            }
+                                        },
+                                        _ => {
+                                            debug!("Client ID: {peer_id}, unknown login type '{login_type}'.");
+                                            false
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    };
-                    if chkpwd() {
-                        debug!("Client ID: {peer_id}, password OK.");
-                        let mut result = shvproto::Map::new();
-                        result.insert("clientId".into(), RpcValue::from(peer_id));
-                        frame_writer.send_result(resp_meta, result.into()).await?;
-                        if let Some(options) = params.get("options") {
-                            if let Some(device) = options.as_map().get("device") {
-                                device_options = device.clone();
+                        };
+                        if chkpwd() {
+                            debug!("Client ID: {peer_id}, password OK.");
+                            let mut result = shvproto::Map::new();
+                            result.insert("clientId".into(), RpcValue::from(peer_id));
+                            frame_writer.send_result(resp_meta, result.into()).await?;
+                            if let Some(options) = params.get("options") {
+                                if let Some(device) = options.as_map().get("device") {
+                                    device_options = device.clone();
+                                }
                             }
+                            break 'login_loop;
+                        } else {
+                            debug!("Client ID: {peer_id}, invalid login credentials.");
+                            frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
+                            continue 'login_loop;
                         }
-                        break;
-                    } else {
-                        debug!("Client ID: {peer_id}, invalid login credentials.");
-                        frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
-                        continue;
+                    }
+                    _ => {
+                        panic!("Internal error, PeerEvent::PasswordSha1 expected");
                     }
                 }
-                _ => {
-                    panic!("Internal error, PeerEvent::PasswordSha1 expected");
-                }
+            },
+            _ => {
+                frame_writer.send_error(resp_meta, "Invalid login message.").await?;
             }
         }
     }
