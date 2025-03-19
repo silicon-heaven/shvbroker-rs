@@ -10,12 +10,13 @@ mod tunnelnode;
 mod spawn {
     use log::error;
     use std::future::Future;
-    use async_std::task;
-    pub fn spawn_and_log_error<F>(fut: F) -> task::JoinHandle<()>
+    use smol::Task;
+
+    pub fn spawn_and_log_error<F>(fut: F) -> Task<()>
     where
         F: Future<Output = shvrpc::Result<()>> + Send + 'static,
     {
-        task::spawn(async move {
+        smol::spawn(async move {
             if let Err(e) = fut.await {
                 error!("{}", e)
             }

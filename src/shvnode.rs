@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
 use std::format;
-use async_std::task;
 use log::{Level, log};
 use shvrpc::metamethod::{Flag, MetaMethod};
 use shvrpc::{metamethod, RpcMessageMetaTags};
@@ -489,7 +488,7 @@ impl ShvNode for BrokerNode {
             METH_DISCONNECT_CLIENT => {
                 if let Some(peer) = state_reader(&ctx.state).peers.get(&ctx.peer_id) {
                     let peer_sender = peer.sender.clone();
-                    task::spawn(async move {
+                    let _ = smol::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker).await;
                     });
                     Ok(ProcessRequestRetval::Retval(().into()))
@@ -531,7 +530,7 @@ impl BrokerCurrentClientNode {
         if state_writer(state).subscribe(peer_id, subpar)? {
             state_writer(state).gc_subscriptions();
             state_writer(state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
+            let _ = spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
             Ok(true)
         } else {
             Ok(false)
@@ -542,7 +541,7 @@ impl BrokerCurrentClientNode {
         if state_writer(state).unsubscribe(peer_id, subpar)? {
             state_writer(state).gc_subscriptions();
             state_writer(state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
+            let _ = spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
             Ok(true)
         } else {
             Ok(false)

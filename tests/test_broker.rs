@@ -3,7 +3,6 @@ use assert_cmd::prelude::*;
 use tempfile::NamedTempFile;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
-use async_std::sync::RwLock;
 use shvclient::appnodes::{DotAppNode, DotDeviceNode};
 use shvclient::clientnode::SIG_CHNG;
 use shvclient::AppState;
@@ -11,6 +10,7 @@ use shvproto::{RpcValue, rpcvalue};
 use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
 use shvrpc::metamethod::{Flag, MetaMethod};
+use smol::lock::RwLock;
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind};
 use url::Url;
 use crate::common::{KillProcessGuard, shv_call, shv_call_many};
@@ -204,7 +204,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
        }
     };
 
-    async_std::task::spawn(async move {
+    let _ = smol::spawn(async move {
         shvclient::Client::new(DotAppNode::new("shvbrokertestingdevice"))
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
             .mount(NUMBER_MOUNT, number_node)

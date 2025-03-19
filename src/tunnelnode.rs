@@ -1,8 +1,4 @@
 use std::time::{Instant};
-use async_std::{channel, task};
-use async_std::channel::{Receiver, Sender};
-use async_std::io::{BufReader, BufWriter};
-use async_std::net::{TcpStream};
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use shvproto::{MetaMap, RpcValue};
 use shvrpc::{Error, RpcMessageMetaTags};
@@ -13,6 +9,10 @@ use crate::brokerimpl::{state_reader, state_writer, BrokerCommand, NodeRequestCo
 use crate::shvnode::{is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR, METH_LS};
 use futures::FutureExt;
 use log::{error, log, Level};
+use smol::channel;
+use smol::channel::{Receiver, Sender};
+use smol::io::{BufReader, BufWriter};
+use smol::net::TcpStream;
 use crate::shvnode;
 
 const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "DirParam", result: "DirResult", signals: &[], description: "" };
@@ -80,7 +80,7 @@ impl ShvNode for TunnelNode {
                     let state = ctx.state.clone();
                     let command_sender = state_reader(&state).command_sender.clone();
                     let tunid2 = tunid.clone();
-                    task::spawn(async move {
+                    smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid2.clone(), rq_meta, host, receiver, state).await {
                             error!("{}", e)
                         }
@@ -104,7 +104,7 @@ impl ShvNode for TunnelNode {
                     let command_sender = state_reader(&ctx.state).command_sender.clone();
                     let is_active = state_reader(&ctx.state).is_tunnel_active(tunid);
                     let tunid = tunid.to_string();
-                    task::spawn(async move {
+                    smol::spawn(async move {
                         let _ = command_sender.send(BrokerCommand::TunnelClosed(tunid)).await;
                     });
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
@@ -159,7 +159,7 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
     let mut write_request_id = None;
     let mut reader = BufReader::new(reader);
     let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
-    task::spawn(async move {
+    smol::spawn(async move {
         log!(target: "Tunnel", Level::Debug, "ENTER write task");
         let mut writer = BufWriter::new(writer);
         loop {

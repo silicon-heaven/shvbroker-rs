@@ -1,6 +1,4 @@
 use crate::brokerimpl::BrokerImpl;
-use async_std::channel::{Receiver, Sender};
-use async_std::{channel, task};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use rusqlite::Connection;
 use shvproto::{Map, RpcValue};
@@ -9,6 +7,8 @@ use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
+use smol::channel;
+use smol::channel::{Receiver, Sender};
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, User};
 use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
@@ -49,14 +49,17 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
     ret.map(|(_rqid, val)| val )
 }
 
-#[async_std::test]
-async fn test_broker_loop() {
+#[test]
+fn test_broker_loop() {
+    smol::block_on(test_broker_loop_async())
+}
+async fn test_broker_loop_async() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
     let sql = Connection::open_in_memory().unwrap();
     let broker = BrokerImpl::new(&config, access, Some(sql));
     let broker_sender = broker.command_sender.clone();
-    let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
+    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
     let client_id = 2;
@@ -386,14 +389,17 @@ async fn test_broker_loop() {
 //     broker_task.cancel().await;
 // }
 
-#[async_std::test]
-async fn test_tunnel_loop() {
+#[test]
+fn test_tunnel_loop() {
+    smol::block_on(test_tunnel_loop_async())
+}
+async fn test_tunnel_loop_async() {
     let mut config = BrokerConfig::default();
     config.tunnelling.enabled = true;
     let access = config.access.clone();
     let broker = BrokerImpl::new(&config, access, None);
     let broker_sender = broker.command_sender.clone();
-    let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
+    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
     let client_id = 3;
@@ -423,8 +429,8 @@ async fn test_tunnel_loop() {
 
     // echo loop
     const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
-    async_std::task::spawn(async move {
-        let listener = async_std::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
+    let _ = smol::spawn(async move {
+        let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
         println!("Echo server is listening on {}", listener.local_addr().unwrap());
 
         while let Some(stream) = listener.incoming().next().await {
@@ -433,7 +439,7 @@ async fn test_tunnel_loop() {
                     let addr = socket.peer_addr().unwrap();
                     println!("New connection from: {}", addr);
 
-                    async_std::task::spawn(async move {
+                    let _ = smol::spawn(async move {
                         let mut buffer = vec![0; 1024];
 
                         loop {
@@ -465,10 +471,10 @@ async fn test_tunnel_loop() {
     async fn wait_for_server(address: &str, timeout: std::time::Duration) {
         let start = std::time::Instant::now();
         while start.elapsed() < timeout {
-            if async_std::net::TcpStream::connect(address).await.is_ok() {
+            if smol::net::TcpStream::connect(address).await.is_ok() {
                 return;
             }
-            async_std::task::sleep(std::time::Duration::from_millis(200)).await;
+            smol::Timer::after(std::time::Duration::from_millis(200)).await;
         }
         panic!("Could not connect to: {address}");
     }
