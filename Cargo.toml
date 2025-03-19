@@ -17,7 +17,8 @@ shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
 shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
-async-std = { version = "1.12.0", features = ["attributes", "tokio1"] }
+smol = "2"
+smol-timeout = "0.6"
 futures = "0.3.30"
 log = "0.4.21"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
@@ -35,9 +36,11 @@ serde_json = "1.0"
 clap = { version = "4.4.12", features = ["derive"] }
 crc = "3.2.1"
 rusqlite = { version = "0.33.0", features = ["bundled"] }
-graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls"] }
+graph-rs-sdk = { version = "2.0.3", default-features = false, features = [
+    "rustls-tls",
+] }
 
- # For local development
+# For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
 #shvproto = { path = "../libshvproto-rs" }
 #[patch."https://github.com/silicon-heaven/libshvrpc-rs"]

@@ -1,8 +1,4 @@
 use std::sync::atomic::{AtomicI64, Ordering};
-use async_std::{channel, future};
-use async_std::channel::Sender;
-use async_std::io::BufReader;
-use async_std::net::TcpStream;
 use futures::select;
 use futures::FutureExt;
 use futures::io::BufWriter;
@@ -21,6 +17,10 @@ use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
+use smol::{channel};
+use smol::channel::Sender;
+use smol::io::BufReader;
+use smol::net::TcpStream;
 use crate::config::{AzureConfig, BrokerConnectionConfig, ConnectionKind};
 use crate::cut_prefix;
 
@@ -44,7 +44,7 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
 }
 pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
-    let (socket_reader, socket_writer) = (&stream, &stream);
+    let (socket_reader, socket_writer) = (stream.clone(), stream);
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
     let brd = BufReader::new(socket_reader);
@@ -261,7 +261,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
         }).await?;
 
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
-    let mut fut_receive_broker_event = peer_reader.recv().fuse();
+    let mut fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
     loop {
         select! {
             frame = fut_receive_frame => match frame {
@@ -294,7 +294,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                             frame_writer.send_frame(frame).await?;
                         }
                     }
-                    fut_receive_broker_event = peer_reader.recv().fuse();
+                    fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
                 }
             }
         }
@@ -324,7 +324,7 @@ pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: Bro
         }
         broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
         info!("Reconnecting to parent broker after: {:?}", reconnect_interval);
-        async_std::task::sleep(reconnect_interval).await;
+        smol::Timer::after(reconnect_interval).await;
     }
 }
 
@@ -380,8 +380,8 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
     let address = format!("{host}:{port}");
     // Establish a connection
     info!("Connecting to broker peer: tcp://{address}");
-    let stream = TcpStream::connect(&address).await?;
-    let (reader, writer) = (&stream, &stream);
+    let reader = TcpStream::connect(&address).await?;
+    let writer = reader.clone();
 
     let brd = BufReader::new(reader);
     let bwr = BufWriter::new(writer);
@@ -421,15 +421,15 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
     }).await?;
 
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
-    let mut fut_receive_broker_event = broker_to_peer_receiver.recv().fuse();
+    let mut fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
     let make_timeout = || {
-        Box::pin(future::timeout(heartbeat_interval, future::pending::<()>())).fuse()
+        Box::pin(smol::Timer::after(heartbeat_interval)).fuse()
+        // Box::pin(timeout(heartbeat_interval, futures::future::pending::<()>())).fuse()
     };
     let mut fut_timeout = make_timeout();
     loop {
         select! {
-            res_timeout = fut_timeout => {
-                assert!(res_timeout.is_err());
+            _ = fut_timeout => {
                 // send heartbeat
                 let msg = RpcMessage::new_request(".app", METH_PING, None);
                 debug!("sending ping");
@@ -482,7 +482,7 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
                             fut_timeout = make_timeout();
                         }
                     }
-                    fut_receive_broker_event = broker_to_peer_receiver.recv().fuse();
+                    fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
                 }
             }
         }

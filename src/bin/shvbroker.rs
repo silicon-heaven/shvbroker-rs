@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use async_std::task;
 use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::{join_path, parse_log_verbosity};
@@ -121,7 +120,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         write_config_to_file(&file, &config, &access)?;
     }
     info!("-----------------------------------------------------");
-    task::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
+    smol::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
 }
 
 fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
