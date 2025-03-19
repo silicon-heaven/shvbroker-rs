@@ -204,7 +204,8 @@ fn run_testing_device(url: Url, mount_point: &str) {
        }
     };
 
-    let _ = smol::spawn(async move {
+    #[allow(unused)]
+    smol::spawn(async move {
         shvclient::Client::new(DotAppNode::new("shvbrokertestingdevice"))
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
             .mount(NUMBER_MOUNT, number_node)

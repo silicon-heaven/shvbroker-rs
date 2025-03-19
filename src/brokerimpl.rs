@@ -215,6 +215,7 @@ pub async fn accept_loop(
         for peer_config in broker_peers {
             if peer_config.enabled {
                 let peer_id = next_peer_id();
+                #[allow(unused)]
                 spawn_and_log_error(peer::client_peer_loop_with_reconnect(
                     peer_id,
                     peer_config.clone(),
@@ -230,7 +231,7 @@ pub async fn accept_loop(
             let stream = stream?;
             let peer_id = next_peer_id();
             debug!("Accepting from: {}", stream.peer_addr()?);
-            crate::spawn_and_log_error(peer::try_server_peer_loop(
+            spawn_and_log_error(peer::try_server_peer_loop(
                 peer_id,
                 broker_sender.clone(),
                 stream,
@@ -758,8 +759,9 @@ impl BrokerState {
             }
         };
         let sender = self.command_sender.clone();
+        #[allow(unused)]
         smol::spawn(async move {
-            let _ = sender.send(ExecSql { query }).await;
+            sender.send(ExecSql { query }).await;
         });
     }
     pub(crate) fn create_tunnel(
@@ -784,6 +786,7 @@ impl BrokerState {
         debug!("close_tunnel: {tunid}");
         if let Some(tun) = self.active_tunnels.remove(tunid) {
             let sender = tun.sender;
+            #[allow(unused)]
             smol::spawn(async move {
                 let _ = sender.send(ToRemoteMsg::DestroyConnection).await;
             });
@@ -821,6 +824,7 @@ impl BrokerState {
     ) -> shvrpc::Result<()> {
         if let Some(tun) = self.active_tunnels.get(tunid) {
             let sender = tun.sender.clone();
+            #[allow(unused)]
             smol::spawn(async move { sender.send(ToRemoteMsg::WriteData(rqid, data)).await });
             Ok(())
         } else {
@@ -1370,6 +1374,7 @@ impl BrokerImpl {
                 let command_sender = self.command_sender.clone();
                 let state = self.state.clone();
                 let tunid = tunnel_id.clone();
+                #[allow(unused)]
                 smol::spawn(async move {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {

@@ -429,7 +429,8 @@ async fn test_tunnel_loop_async() {
 
     // echo loop
     const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
-    let _ = smol::spawn(async move {
+    #[allow(unused)]
+    smol::spawn(async move {
         let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
         println!("Echo server is listening on {}", listener.local_addr().unwrap());
 
@@ -439,7 +440,8 @@ async fn test_tunnel_loop_async() {
                     let addr = socket.peer_addr().unwrap();
                     println!("New connection from: {}", addr);
 
-                    let _ = smol::spawn(async move {
+                    #[allow(unused)]
+                    smol::spawn(async move {
                         let mut buffer = vec![0; 1024];
 
                         loop {
