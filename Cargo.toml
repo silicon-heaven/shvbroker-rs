@@ -8,23 +8,24 @@ edition = "2021"
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.0"
-shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["async_std"] }
+shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["smol"] }
 tempfile = "3"
 
 [package.metadata.bin]
-shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "3.5.0" }
+shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.6" }
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
 shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
-async-std = { version = "1.12.0", features = ["attributes", "tokio1"] }
+smol = "2"
+smol-timeout = "0.6"
 futures = "0.3.30"
 log = "0.4.21"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 bytes = "1.6.0"
 sha1 = "0.10.6"
 chrono = "0.4.31"
-duration-str = "0.12.0"
+duration-str = "0.16.1"
 hex = "0.4.3"
 rand = "0.9.0"
 url = "2.4.1"
@@ -34,10 +35,12 @@ serde_yaml = "0.9"
 serde_json = "1.0"
 clap = { version = "4.4.12", features = ["derive"] }
 crc = "3.2.1"
-rusqlite = { version = "0.33.0", features = ["bundled"] }
-graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls"] }
+rusqlite = { version = "0.34.0", features = ["bundled"] }
+graph-rs-sdk = { version = "2.0.3", default-features = false, features = [
+    "rustls-tls",
+] }
 
- # For local development
+# For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
 #shvproto = { path = "../libshvproto-rs" }
 #[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
