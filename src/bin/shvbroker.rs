@@ -36,6 +36,12 @@ struct CliOpts {
 }
 
 pub(crate) fn main() -> shvrpc::Result<()> {
+    const SMOL_THREADS: &str = "SMOL_THREADS";
+    if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent)) {
+        if let Ok(num_threads) = std::thread::available_parallelism() {
+            std::env::set_var(SMOL_THREADS, num_threads.to_string());
+        }
+    }
     let cli = Command::new("CLI");//.arg(arg!(-b - -built).action(clap::ArgAction::SetTrue));
     let cli = CliOpts::augment_args(cli);
     let cli_matches = cli.get_matches();
