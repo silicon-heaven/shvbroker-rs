@@ -80,13 +80,12 @@ impl ShvNode for TunnelNode {
                     let state = ctx.state.clone();
                     let command_sender = state_reader(&state).command_sender.clone();
                     let tunid2 = tunid.clone();
-                    #[allow(unused)]
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid2.clone(), rq_meta, host, receiver, state).await {
                             error!("{}", e)
                         }
                         command_sender.send(BrokerCommand::TunnelClosed(tunid2)).await
-                    });
+                    }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 _ => {
@@ -105,10 +104,9 @@ impl ShvNode for TunnelNode {
                     let command_sender = state_reader(&ctx.state).command_sender.clone();
                     let is_active = state_reader(&ctx.state).is_tunnel_active(tunid);
                     let tunid = tunid.to_string();
-                    #[allow(unused)]
                     smol::spawn(async move {
                         let _ = command_sender.send(BrokerCommand::TunnelClosed(tunid)).await;
-                    });
+                    }).detach();
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => {
@@ -161,7 +159,6 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
     let mut write_request_id = None;
     let mut reader = BufReader::new(reader);
     let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
-    #[allow(unused)]
     smol::spawn(async move {
         log!(target: "Tunnel", Level::Debug, "ENTER write task");
         let mut writer = BufWriter::new(writer);
@@ -186,7 +183,7 @@ pub(crate) async fn tunnel_task(tunnel_id: String, request_meta: MetaMap, addr: 
         }
         log!(target: "Tunnel", Level::Debug, "EXIT write task");
         Ok::<(), Error>(())
-    });
+    }).detach();
     fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> BrokerCommand {
         let blob = RpcValue::from(&data[..]);
         data.clear();

@@ -172,7 +172,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
     let state = AppState::new(State{ number: 0.into(), text: "".to_string().into() });
 
     let number_node = shvclient::fixed_node!{
-        number_node_handler(request, client_cmd_tx, app_state: State) {
+        number_node_handler<State>(request, client_cmd_tx, app_state) {
             "get" [IsGetter, Read, "Null", "Int"] => {
                     Some(Ok(app_state.number.load(Ordering::SeqCst).into()))
             }
@@ -187,7 +187,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
        }
     };
     let text_node = shvclient::fixed_node!{
-        text_node_handler(request, client_cmd_tx, app_state: State) {
+        text_node_handler<State>(request, client_cmd_tx, app_state) {
             "get" [IsGetter, Read, "String", "Null"] => {
                 let s = &*app_state.text.read().await;
                 Some(Ok(s.into()))
@@ -204,7 +204,6 @@ fn run_testing_device(url: Url, mount_point: &str) {
        }
     };
 
-    #[allow(unused)]
     smol::spawn(async move {
         shvclient::Client::new(DotAppNode::new("shvbrokertestingdevice"))
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
@@ -214,7 +213,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
             //.run_with_init(&client_config, init_task)
             .run(&client_config)
             .await
-    });
+    }).detach();
 }
 
 fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shvrpc::Result<()> {

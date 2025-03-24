@@ -15,12 +15,11 @@ mod spawn {
     where
         F: Future<Output = shvrpc::Result<()>> + Send + 'static,
     {
-        #[allow(unused)]
         smol::spawn(async move {
             if let Err(e) = fut.await {
                 error!("{}", e)
             }
-        });
+        }).detach();
     }
 }
 

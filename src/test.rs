@@ -429,7 +429,6 @@ async fn test_tunnel_loop_async() {
 
     // echo loop
     const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
-    #[allow(unused)]
     smol::spawn(async move {
         let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
         println!("Echo server is listening on {}", listener.local_addr().unwrap());
@@ -440,7 +439,6 @@ async fn test_tunnel_loop_async() {
                     let addr = socket.peer_addr().unwrap();
                     println!("New connection from: {}", addr);
 
-                    #[allow(unused)]
                     smol::spawn(async move {
                         let mut buffer = vec![0; 1024];
 
@@ -462,12 +460,12 @@ async fn test_tunnel_loop_async() {
                                 }
                             }
                         }
-                    });
+                    }).detach();
                 }
                 Err(e) => println!("Connection failed: {}", e),
             }
         }
-    });
+    }).detach();
 
     // Wait for the echo loop to initialize
     async fn wait_for_server(address: &str, timeout: std::time::Duration) {
