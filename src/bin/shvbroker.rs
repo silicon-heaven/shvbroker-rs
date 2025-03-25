@@ -15,9 +15,9 @@ struct CliOpts {
     /// Create default config file if one specified by --config is not found
     #[arg(long)]
     generate_config: bool,
-    /// Write default config to stdout
+    /// Print default config to stdout
     #[arg(long)]
-    write_config: Option<String>,
+    print_config: bool,
     /// RW directory location, where access database will bee stored
     #[arg(short, long)]
     data_directory: Option<String>,
@@ -95,6 +95,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if cli_tunelling_set {
         config.tunnelling.enabled = cli_opts.tunneling;
     }
+    if config.tunnelling.enabled {
+        info!("Tunneling enabled");
+    }
     if cli_shv2_set {
         config.shv2_compatibility = cli_opts.shv2_compatibility;
     }
@@ -122,21 +125,22 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     } else {
         (config.access.clone(), None)
     };
-    if let Some(file) = cli_opts.write_config {
-        write_config_to_file(&file, &config, &access)?;
+    if cli_opts.print_config {
+        print_config(&config, &access)?;
+        return Ok(());
     }
     info!("-----------------------------------------------------");
     smol::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
 }
 
-fn write_config_to_file(file: &str, config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
-    info!("Writing config to file: {file}");
-    if let Some(path) = Path::new(file).parent() {
-        fs::create_dir_all(path)?;
-    }
+fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
+    // info!("Writing config to file: {file}");
+    // if let Some(path) = Path::new(file).parent() {
+    //     fs::create_dir_all(path)?;
+    // }
     let mut config = config.clone();
     config.access = access.clone();
-    fs::write(file, &serde_yaml::to_string(&config)?)?;
+    println!("{}", &serde_yaml::to_string(&config)?);
     Ok(())
 }
 

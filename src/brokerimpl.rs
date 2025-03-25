@@ -1,4 +1,3 @@
-use futures::StreamExt;
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, BrokerConfig, ConnectionKind, Password};
 use crate::peer::next_peer_id;
@@ -15,6 +14,7 @@ use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer};
 use futures::select;
 use futures::FutureExt;
+use futures::StreamExt;
 use log::Level;
 use log::{debug, error, info, log, warn};
 use shvproto::{rpcvalue, Map, MetaMap, RpcValue};
@@ -25,13 +25,13 @@ use shvrpc::rpcmessage::Tag::RevCallerIds;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
+use smol::channel;
+use smol::channel::{unbounded, Receiver, Sender};
+use smol_timeout::TimeoutExt;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
-use smol::channel;
-use smol::channel::{unbounded, Receiver, Sender};
-use smol_timeout::TimeoutExt;
 
 #[derive(Debug)]
 pub(crate) struct Subscription {
@@ -94,8 +94,8 @@ pub(crate) enum BrokerCommand {
     ExecSql {
         query: String,
     },
-    TunnelActive(String),
-    TunnelClosed(String),
+    TunnelActive(TunnelId),
+    TunnelClosed(TunnelId),
 }
 
 #[derive(Debug)]
@@ -245,6 +245,7 @@ pub async fn accept_loop(
     Ok(())
 }
 
+pub type TunnelId = u64;
 pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
@@ -255,8 +256,8 @@ pub struct BrokerState {
 
     pub(crate) command_sender: Sender<BrokerCommand>,
 
-    active_tunnels: BTreeMap<String, ActiveTunnel>,
-    next_tunnel_number: u64,
+    active_tunnels: BTreeMap<TunnelId, ActiveTunnel>,
+    next_tunnel_number: TunnelId,
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
@@ -760,16 +761,16 @@ impl BrokerState {
         let sender = self.command_sender.clone();
         smol::spawn(async move {
             let _ = sender.send(ExecSql { query }).await;
-        }).detach();
+        })
+        .detach();
     }
     pub(crate) fn create_tunnel(
         &mut self,
         request: &RpcMessage,
-    ) -> shvrpc::Result<(String, Receiver<ToRemoteMsg>)> {
+    ) -> shvrpc::Result<(TunnelId, Receiver<ToRemoteMsg>)> {
         let tunid = self.next_tunnel_number;
         self.next_tunnel_number += 1;
-        let tunid = format!("{tunid}");
-        debug!("create_tunnel: {tunid}");
+        debug!(target: "Tunnel", "create_tunnel: {tunid}");
         let caller_ids = request.caller_ids();
         let (sender, receiver) = channel::unbounded::<ToRemoteMsg>();
         let tun = ActiveTunnel {
@@ -777,33 +778,38 @@ impl BrokerState {
             sender,
             last_activity: None,
         };
-        self.active_tunnels.insert(tunid.clone(), tun);
+        self.active_tunnels.insert(tunid, tun);
         Ok((tunid, receiver))
     }
-    pub(crate) fn close_tunnel(&mut self, tunid: &str) -> shvrpc::Result<Option<bool>> {
-        debug!("close_tunnel: {tunid}");
-        if let Some(tun) = self.active_tunnels.remove(tunid) {
+    pub(crate) fn close_tunnel(&mut self, tunid: TunnelId) -> shvrpc::Result<Option<bool>> {
+        debug!(target: "Tunnel", "close_tunnel: {tunid}");
+        if let Some(tun) = self.active_tunnels.remove(&tunid) {
             let sender = tun.sender;
             smol::spawn(async move {
                 let _ = sender.send(ToRemoteMsg::DestroyConnection).await;
-            }).detach();
+            })
+            .detach();
             Ok(Some(tun.last_activity.is_some()))
         } else {
             // might be callback of previous close_tunel()
             Ok(None)
         }
     }
-    pub(crate) fn active_tunnel_ids(&self) -> Vec<String> {
+    pub(crate) fn active_tunnel_ids(&self) -> Vec<TunnelId> {
         let keys = self
             .active_tunnels
             .iter()
             .filter(|(_id, tun)| tun.last_activity.is_some())
-            .map(|(id, _tun)| id.clone())
+            .map(|(id, _tun)| *id)
             .collect();
         keys
     }
-    pub(crate) fn is_request_granted(&self, tunid: &str, frame: &RpcFrame) -> bool {
-        if let Some(tun) = self.active_tunnels.get(tunid) {
+    pub(crate) fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
+        // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
+        let Ok(tunid) = tunid.parse::<TunnelId>() else {
+            return false;
+        };
+        if let Some(tun) = self.active_tunnels.get(&tunid) {
             let cids = frame.caller_ids();
             cids == tun.caller_ids
                 || AccessLevel::try_from(frame.access_level().unwrap_or(0))
@@ -815,32 +821,33 @@ impl BrokerState {
     }
     pub(crate) fn write_tunnel(
         &self,
-        tunid: &str,
+        tunid: TunnelId,
         rqid: RqId,
         data: Vec<u8>,
     ) -> shvrpc::Result<()> {
-        if let Some(tun) = self.active_tunnels.get(tunid) {
+        if let Some(tun) = self.active_tunnels.get(&tunid) {
             let sender = tun.sender.clone();
-            smol::spawn(async move { sender.send(ToRemoteMsg::WriteData(rqid, data)).await }).detach();
+            smol::spawn(async move { sender.send(ToRemoteMsg::WriteData(rqid, data)).await })
+                .detach();
             Ok(())
         } else {
             Err(format!("Invalid tunnel ID: {tunid}").into())
         }
     }
-    pub(crate) fn touch_tunnel(&mut self, tunid: &str) {
-        if let Some(tun) = self.active_tunnels.get_mut(tunid) {
+    pub(crate) fn touch_tunnel(&mut self, tunid: TunnelId) {
+        if let Some(tun) = self.active_tunnels.get_mut(&tunid) {
             tun.last_activity = Some(Instant::now());
         }
     }
-    pub(crate) fn last_tunnel_activity(&self, tunid: &str) -> Option<Instant> {
-        if let Some(tun) = self.active_tunnels.get(tunid) {
+    pub(crate) fn last_tunnel_activity(&self, tunid: TunnelId) -> Option<Instant> {
+        if let Some(tun) = self.active_tunnels.get(&tunid) {
             tun.last_activity
         } else {
             None
         }
     }
-    pub(crate) fn is_tunnel_active(&self, tunid: &str) -> bool {
-        if let Some(tun) = self.active_tunnels.get(tunid) {
+    pub(crate) fn is_tunnel_active(&self, tunid: TunnelId) -> bool {
+        if let Some(tun) = self.active_tunnels.get(&tunid) {
             tun.last_activity.is_some()
         } else {
             false
@@ -1364,23 +1371,20 @@ impl BrokerImpl {
                     &format!(".app/tunnel/{tunnel_id}"),
                     SIG_LSMOD,
                     METH_LS,
-                    Some(Map::from([(tunnel_id.clone(), true.into())]).into()),
+                    Some(Map::from([(format!("{tunnel_id}"), true.into())]).into()),
                 );
                 self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 let command_sender = self.command_sender.clone();
                 let state = self.state.clone();
-                let tunid = tunnel_id.clone();
                 smol::spawn(async move {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {
                         smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = state_reader(&state).last_tunnel_activity(&tunid);
+                        let last_activity = state_reader(&state).last_tunnel_activity(tunnel_id);
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
-                                log!(target: "Tunnel", Level::Warn, "Closing tunnel: {tunid} as inactive for {:#?}", TIMEOUT);
-                                let _ = command_sender
-                                    .send(BrokerCommand::TunnelClosed(tunid))
-                                    .await;
+                                debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {:#?}", TIMEOUT);
+                                let _ = command_sender.send(BrokerCommand::TunnelClosed(tunnel_id)).await;
                                 break;
                             }
                         } else {
@@ -1391,13 +1395,13 @@ impl BrokerImpl {
                 }).detach();
             }
             BrokerCommand::TunnelClosed(tunnel_id) => {
-                let closed = state_writer(&self.state).close_tunnel(&tunnel_id)?;
+                let closed = state_writer(&self.state).close_tunnel(tunnel_id)?;
                 if let Some(true) = closed {
                     let msg = RpcMessage::new_signal_with_source(
                         &format!(".app/tunnel/{tunnel_id}"),
                         SIG_LSMOD,
                         METH_LS,
-                        Some(Map::from([(tunnel_id.clone(), false.into())]).into()),
+                        Some(Map::from([(format!("{tunnel_id}"), false.into())]).into()),
                     );
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 }
@@ -1455,7 +1459,10 @@ impl BrokerImpl {
                 }
                 Ok(None)
             }
-            match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
+            match check_path(client_id, path, broker_command_sender)
+                .timeout(Duration::from_secs(5))
+                .await
+            {
                 None => Err("Timeout".into()),
                 Some(res) => res,
             }
@@ -1542,11 +1549,13 @@ impl BrokerImpl {
         }
         const TIMEOUT: u64 = 10;
         match call_subscribe1(
-                peer_id,
-                subscribe_path,
-                subscription.clone(),
-                &broker_command_sender,
-        ).timeout(Duration::from_secs(TIMEOUT)).await
+            peer_id,
+            subscribe_path,
+            subscription.clone(),
+            &broker_command_sender,
+        )
+        .timeout(Duration::from_secs(TIMEOUT))
+        .await
         {
             Some(r) => {
                 match r {
