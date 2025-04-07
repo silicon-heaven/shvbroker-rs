@@ -2,6 +2,7 @@ use std::time::Duration;
 use futures::io::BufWriter;
 use log::{debug, info};
 use serialport::SerialPort;
+use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcmessage::PeerId;
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
 use smol::{Unblock};
@@ -40,6 +41,11 @@ pub(crate) async fn try_serial_peer_loop(peer_id: PeerId, broker_writer: Sender<
 }
 async fn serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, port_name: &str, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering serial peer loop client ID: {peer_id}.");
+    let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+}
+
+pub(crate) fn create_serial_frame_reader_writer(port_name: &str) -> shvrpc::Result<(impl FrameReader, impl FrameWriter)> {
     let (rd, wr) = open_serial(port_name)?;
     let serial_reader = Unblock::new(rd);
     let serial_writer = Unblock::new(wr);
@@ -50,5 +56,5 @@ async fn serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>,
     let frame_reader = SerialFrameReader::new(brd).with_crc_check(true);
     let frame_writer = SerialFrameWriter::new(bwr).with_crc_check(true);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+    Ok((frame_reader, frame_writer))
 }

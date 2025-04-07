@@ -23,6 +23,7 @@ use smol::io::BufReader;
 use smol::net::TcpStream;
 use crate::config::{AzureConfig, BrokerConnectionConfig, ConnectionKind};
 use crate::cut_prefix;
+use crate::serial::create_serial_frame_reader_writer;
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
 pub(crate)  fn next_peer_id() -> i64 {
@@ -56,7 +57,7 @@ async fn server_peer_loop1(peer_id: PeerId, broker_writer: Sender<BrokerCommand>
 
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader, mut frame_writer: impl FrameWriter + std::marker::Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader, mut frame_writer: impl FrameWriter + Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
@@ -311,10 +312,6 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     Ok(())
 }
 pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
-    let url = &config.client.url;
-    if url.scheme() != "tcp" {
-        return Err(format!("Scheme {} is not supported yet.", url.scheme()).into());
-    }
     let reconnect_interval = config.client.reconnect_interval.unwrap_or_else(|| {
         const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
         info!("Parent broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC} will be used.");
@@ -381,24 +378,33 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
 }
 async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = &config.client.url;
-    let (scheme, host, port) = (url.scheme(), url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
-    if scheme != "tcp" {
-        return Err(format!("Scheme {scheme} is not supported yet.").into());
-    }
-    let address = format!("{host}:{port}");
-    // Establish a connection
-    info!("Connecting to broker peer: tcp://{address}");
-    let reader = TcpStream::connect(&address).await?;
-    let writer = reader.clone();
+    let scheme = url.scheme();
+    if scheme == "tcp" {
+        let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
+        let address = format!("{host}:{port}");
+        // Establish a connection
+        info!("Connecting to broker peer: tcp://{address}");
+        let reader = TcpStream::connect(&address).await?;
+        let writer = reader.clone();
 
-    let brd = BufReader::new(reader);
-    let bwr = BufWriter::new(writer);
-    let mut frame_reader = StreamFrameReader::new(brd);
-    let mut frame_writer = StreamFrameWriter::new(bwr);
+        let brd = BufReader::new(reader);
+        let bwr = BufWriter::new(writer);
+        let frame_reader = StreamFrameReader::new(brd);
+        let frame_writer = StreamFrameWriter::new(bwr);
+        return broker_client_connection_loop2(peer_id, config, broker_writer, frame_reader, frame_writer).await
+    } else if scheme == "serial" {
+        let port_name = url.path();
+        let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
+        return broker_client_connection_loop2(peer_id, config, broker_writer, frame_reader, frame_writer).await
+    }
+    Err(format!("Scheme {scheme} is not supported yet.").into())
+}
+async fn broker_client_connection_loop2(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
 
     // login
+    let url = &config.client.url;
     let (user, password) = login_from_url(url);
     let heartbeat_interval = config.client.heartbeat_interval;
     let login_params = LoginParams{
