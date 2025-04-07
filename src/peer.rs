@@ -31,7 +31,7 @@ pub(crate)  fn next_peer_id() -> i64 {
 }
 
 pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
-    match server_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
+    match server_peer_loop1(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             debug!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -42,10 +42,9 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
-    debug!("Entering peer loop client ID: {peer_id}.");
+async fn server_peer_loop1(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+
     let (socket_reader, socket_writer) = (stream.clone(), stream);
-    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
     let brd = BufReader::new(socket_reader);
     let bwr = BufWriter::new(socket_writer);
@@ -54,6 +53,15 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     let mut frame_writer = StreamFrameWriter::new(bwr);
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
+
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+}
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader, mut frame_writer: impl FrameWriter + std::marker::Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    debug!("Entering peer loop client ID: {peer_id}.");
+    frame_reader.set_peer_id(peer_id);
+    frame_writer.set_peer_id(peer_id);
+
+    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
     let mut device_options = RpcValue::null();
     let mut user;

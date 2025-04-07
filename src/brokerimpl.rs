@@ -11,7 +11,7 @@ use crate::shvnode::{
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
-use crate::{cut_prefix, peer};
+use crate::{cut_prefix, peer, serial};
 use futures::select;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -207,21 +207,10 @@ pub async fn accept_loop(
     access: AccessConfig,
     sql_connection: Option<rusqlite::Connection>,
 ) -> shvrpc::Result<()> {
-    if let Some(address) = config.listen.tcp.clone() {
-        let broker_impl = BrokerImpl::new(&config, access, sql_connection);
-        let broker_sender = broker_impl.command_sender.clone();
-        let broker_task = smol::spawn(broker_loop(broker_impl));
-        let broker_peers = &config.connections;
-        for peer_config in broker_peers {
-            if peer_config.enabled {
-                let peer_id = next_peer_id();
-                spawn_and_log_error(peer::client_peer_loop_with_reconnect(
-                    peer_id,
-                    peer_config.clone(),
-                    broker_sender.clone(),
-                ));
-            }
-        }
+    let broker_impl = BrokerImpl::new(&config, access, sql_connection);
+    let broker_sender = broker_impl.command_sender.clone();
+    let broker_task = smol::spawn(broker_loop(broker_impl));
+    if let Some(address) = &config.listen.tcp {
         info!("Listening on TCP: {}", address);
         let listener = smol::net::TcpListener::bind(address).await?;
         info!("bind OK");
@@ -237,11 +226,30 @@ pub async fn accept_loop(
                 config.azure.clone(),
             ));
         }
-        drop(broker_sender);
-        broker_task.await;
-    } else {
-        return Err("No port to listen on specified".into());
     }
+    if let Some(port) = &config.listen.serial {
+        let peer_id = next_peer_id();
+        spawn_and_log_error(serial::try_serial_peer_loop(
+            peer_id,
+            broker_sender.clone(),
+            port.clone(),
+            config.azure.clone(),
+        ));
+    }
+
+    let broker_peers = &config.connections;
+    for peer_config in broker_peers {
+        if peer_config.enabled {
+            let peer_id = next_peer_id();
+            spawn_and_log_error(peer::client_peer_loop_with_reconnect(
+                peer_id,
+                peer_config.clone(),
+                broker_sender.clone(),
+            ));
+        }
+    }
+    drop(broker_sender);
+    broker_task.await;
     Ok(())
 }
 

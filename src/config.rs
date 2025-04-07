@@ -66,6 +66,8 @@ pub struct Listen {
     pub tcp: Option<String>,
     #[serde(default)]
     pub ssl: Option<String>,
+    #[serde(default)]
+    pub serial: Option<String>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(PartialEq)]
@@ -200,7 +202,7 @@ impl Default for BrokerConfig {
             ..BrokerConnectionConfig::default()
         };
         Self {
-            listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None },
+            listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None, serial: None },
             use_access_db: false,
             shv2_compatibility: false,
             data_directory: None,
