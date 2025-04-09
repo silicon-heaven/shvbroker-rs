@@ -31,8 +31,8 @@ pub(crate)  fn next_peer_id() -> i64 {
     old_id + 1
 }
 
-pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
-    match server_peer_loop1(peer_id, broker_writer.clone(), stream, azure_config).await {
+pub(crate) async fn try_server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             debug!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -43,7 +43,7 @@ pub(crate) async fn try_server_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-async fn server_peer_loop1(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
 
     let (socket_reader, socket_writer) = (stream.clone(), stream);
 
@@ -299,7 +299,6 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
-                            // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             frame_writer.send_frame(frame).await?;
                         }
                     }
@@ -312,6 +311,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     Ok(())
 }
 pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+    info!("Spawning broker peer connection loop: {}", config.name);
     let reconnect_interval = config.client.reconnect_interval.unwrap_or_else(|| {
         const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
         info!("Parent broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC} will be used.");
@@ -383,7 +383,7 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
         let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
         let address = format!("{host}:{port}");
         // Establish a connection
-        info!("Connecting to broker peer: tcp://{address}");
+        info!("Connecting to broker TCP peer: {address}");
         let reader = TcpStream::connect(&address).await?;
         let writer = reader.clone();
 
@@ -394,6 +394,7 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
         return broker_client_connection_loop2(peer_id, config, broker_writer, frame_reader, frame_writer).await
     } else if scheme == "serial" {
         let port_name = url.path();
+        info!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
         return broker_client_connection_loop2(peer_id, config, broker_writer, frame_reader, frame_writer).await
     }
@@ -407,7 +408,7 @@ async fn broker_client_connection_loop2(peer_id: PeerId, config: BrokerConnectio
     let url = &config.client.url;
     let (user, password) = login_from_url(url);
     let heartbeat_interval = config.client.heartbeat_interval;
-    let login_params = LoginParams{
+    let login_params = LoginParams {
         user,
         password,
         mount_point: config.client.mount.clone().unwrap_or_default().to_owned(),

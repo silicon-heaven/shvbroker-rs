@@ -1,5 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, BrokerConfig, ConnectionKind, Password};
+use crate::config::{AccessConfig, AzureConfig, BrokerConfig, ConnectionKind, Password};
 use crate::peer::next_peer_id;
 use crate::shvnode::{
     find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode,
@@ -202,30 +202,42 @@ pub(crate) async fn broker_loop(broker: BrokerImpl) {
     }
 }
 
-pub async fn accept_loop(
-    config: BrokerConfig,
+async fn tcp_server_accept_loop(
+    address: String,
+    broker_sender: Sender<BrokerCommand>,
+    azure_config: Option<AzureConfig>,
+) -> shvrpc::Result<()> {
+    info!("Listening on TCP: {}", address);
+    let listener = smol::net::TcpListener::bind(address).await?;
+    info!("bind OK");
+    let mut incoming = listener.incoming();
+    while let Some(stream) = incoming.next().await {
+        let stream = stream?;
+        let peer_id = next_peer_id();
+        debug!("Accepting from: {}", stream.peer_addr()?);
+        spawn_and_log_error(peer::try_server_tcp_peer_loop(
+            peer_id,
+            broker_sender.clone(),
+            stream,
+            azure_config.clone(),
+        ));
+    }
+    Ok(())
+}
+pub async fn create_broker_peer_connections(
+    config: &BrokerConfig,
     access: AccessConfig,
     sql_connection: Option<rusqlite::Connection>,
 ) -> shvrpc::Result<()> {
-    let broker_impl = BrokerImpl::new(&config, access, sql_connection);
+    let broker_impl = BrokerImpl::new(config, access, sql_connection);
     let broker_sender = broker_impl.command_sender.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
     if let Some(address) = &config.listen.tcp {
-        info!("Listening on TCP: {}", address);
-        let listener = smol::net::TcpListener::bind(address).await?;
-        info!("bind OK");
-        let mut incoming = listener.incoming();
-        while let Some(stream) = incoming.next().await {
-            let stream = stream?;
-            let peer_id = next_peer_id();
-            debug!("Accepting from: {}", stream.peer_addr()?);
-            spawn_and_log_error(peer::try_server_peer_loop(
-                peer_id,
-                broker_sender.clone(),
-                stream,
-                config.azure.clone(),
-            ));
-        }
+        spawn_and_log_error(tcp_server_accept_loop(
+            address.clone(),
+            broker_sender.clone(),
+            config.azure.clone(),
+        ));
     }
     if let Some(port) = &config.listen.serial {
         let peer_id = next_peer_id();
@@ -239,6 +251,7 @@ pub async fn accept_loop(
 
     let broker_peers = &config.connections;
     for peer_config in broker_peers {
+        debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
         if peer_config.enabled {
             let peer_id = next_peer_id();
             spawn_and_log_error(peer::client_peer_loop_with_reconnect(
