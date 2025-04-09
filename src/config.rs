@@ -3,6 +3,7 @@ use std::fs;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
+use url::Url;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BrokerConfig {
@@ -47,6 +48,7 @@ impl Default for ConnectionKind {
 }
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BrokerConnectionConfig {
+    pub name: String,
     #[serde(default)]
     pub enabled:bool,
     #[serde(default)]
@@ -197,9 +199,19 @@ impl BrokerConfig {
 }
 impl Default for BrokerConfig {
     fn default() -> Self {
-        let child_broker_config = BrokerConnectionConfig {
+        let child_tcp_broker_config = BrokerConnectionConfig {
+            name: "TCP-to-child-broker".to_string(),
             connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "".to_string() },
             ..BrokerConnectionConfig::default()
+        };
+        let child_serial_broker_config = BrokerConnectionConfig {
+            name: "serial-to-child-broker".to_string(),
+            enabled: false,
+            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            client: ClientConfig {
+                url: Url::parse("serial:///dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
+                ..ClientConfig::default()
+            },
         };
         Self {
             listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None, serial: None },
@@ -207,8 +219,12 @@ impl Default for BrokerConfig {
             shv2_compatibility: false,
             data_directory: None,
             connections: vec![
-                BrokerConnectionConfig::default(),
-                child_broker_config,
+                BrokerConnectionConfig {
+                    name: "TCP-to-parent-broker".to_string(),
+                    ..BrokerConnectionConfig::default()
+                },
+                child_tcp_broker_config,
+                child_serial_broker_config,
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
