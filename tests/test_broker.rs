@@ -33,6 +33,7 @@ fn test_broker() -> shvrpc::Result<()> {
         config.listen.tcp = Some("localhost:3756".into());
         config.connections = vec![
             BrokerConnectionConfig {
+                name: "test1".to_string(),
                 enabled: true,
                 client: ClientConfig{
                     url: Url::parse("tcp://child-broker@localhost:3755?password=child-broker")?,
@@ -255,6 +256,7 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
     config.listen.tcp = Some("localhost:3754".into());
     config.connections = vec![
         BrokerConnectionConfig {
+            name: "test2".to_string(),
             enabled: true,
             client: ClientConfig{
                 url: Url::parse("tcp://localhost:3755?user=test&password=test")?,

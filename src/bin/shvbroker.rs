@@ -12,10 +12,7 @@ struct CliOpts {
     /// Config file path
     #[arg(short, long)]
     config: Option<String>,
-    /// Create default config file if one specified by --config is not found
-    #[arg(long)]
-    generate_config: bool,
-    /// Print default config to stdout
+    /// Print current config to stdout
     #[arg(long)]
     print_config: bool,
     /// RW directory location, where access database will bee stored
@@ -49,12 +46,6 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli_tunelling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
     let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
-
-    if cli_opts.generate_config {
-        let config = BrokerConfig::default();
-        print!("{}", serde_yaml::to_string(&config)?);
-        return Ok(())
-    }
 
     let mut logger = SimpleLogger::new();
     logger = logger.with_level(LevelFilter::Info);
@@ -130,7 +121,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    smol::block_on(shvbroker::brokerimpl::accept_loop(config, access, sql_connection))
+    smol::block_on(shvbroker::brokerimpl::create_broker_peer_connections(&config, access, sql_connection))
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
