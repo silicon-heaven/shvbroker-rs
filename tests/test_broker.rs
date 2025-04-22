@@ -206,7 +206,8 @@ fn run_testing_device(url: Url, mount_point: &str) {
     };
 
     smol::spawn(async move {
-        shvclient::Client::new(DotAppNode::new("shvbrokertestingdevice"))
+        shvclient::Client::new()
+            .app(DotAppNode::new("shvbrokertestingdevice"))
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
             .mount(NUMBER_MOUNT, number_node)
             .mount(TEXT_MOUNT, text_node)

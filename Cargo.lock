@@ -542,9 +542,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.36"
+version = "4.5.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2df961d8c8a0d08aa9945718ccf584145eee3f3aa06cddbeac12933781102e04"
+checksum = "eccb054f56cbd38340b380d4a8e69ef1f02f1af43db2f0cc817a4774d80ae071"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -552,9 +552,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.36"
+version = "4.5.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "132dbda40fb6753878316a489d5a1242a8ef2f0d9e47ba01c951ea8aa7d013a5"
+checksum = "efd9466fac8543255d3b1fcad4762c5e116ffe808c8a3043d4263cd4fd4862a2"
 dependencies = [
  "anstream",
  "anstyle",
@@ -791,20 +791,6 @@ dependencies = [
  "thiserror 2.0.12",
  "time",
  "winnow 0.6.26",
-]
-
-[[package]]
-name = "duration-str"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5edd16e9a9d5022b1ebc6ff96eb31eed3233a1b186a52b7ebe4c59483377ab40"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde",
- "thiserror 2.0.12",
- "time",
- "winnow 0.7.6",
 ]
 
 [[package]]
@@ -2262,13 +2248,12 @@ checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 
 [[package]]
 name = "rand"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3779b94aeb87e8bd4e834cee3650289ee9e0d5677f976ecdb6d219e5f4f6cd94"
+checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
 dependencies = [
  "rand_chacha",
  "rand_core",
- "zerocopy",
 ]
 
 [[package]]
@@ -2716,11 +2701,11 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.6.0"
-source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?branch=main#3ae6b5f2625899ec828685d89abd982136f51c39"
+version = "0.7.1"
+source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?branch=main#509f1c7a3634490811fe60b6b2d54a77429a8ea6"
 dependencies = [
  "async-broadcast",
- "duration-str 0.16.1",
+ "duration-str 0.17.0",
  "futures",
  "futures-time",
  "log",
@@ -2766,9 +2751,9 @@ dependencies = [
 
 [[package]]
 name = "signal-hook-registry"
-version = "1.4.2"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9e9e0b4211b72e7b8b6e85c807d36c212bdb33ea8587f7569562a84df5465b1"
+checksum = "9203b8055f63a2a00e2f593bb0510367fe707d7ff1e5c872de2f537b339e5410"
 dependencies = [
  "libc",
 ]
@@ -2788,8 +2773,7 @@ dependencies = [
 [[package]]
 name = "simple_logger"
 version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8c5dfa5e08767553704aa0ffd9d9794d527103c736aba9854773851fd7497eb"
+source = "git+https://github.com/fvacek/rust-simple_logger.git?branch=main#6a10f8fd57c89e6d3dbac3390f0f2dca1f77782b"
 dependencies = [
  "colored",
  "log",

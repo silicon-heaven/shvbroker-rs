@@ -44,6 +44,8 @@ serialport = "4.7.1"
 #shvproto = { path = "../libshvproto-rs" }
 #[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
 #shvrpc = { path = "../libshvrpc-rs" }
+[patch.crates-io]
+simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", branch = "main" }
 
 [[bin]]
 name = "shvbroker"
