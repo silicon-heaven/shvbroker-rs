@@ -280,6 +280,8 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                 frame = fut_receive_frame => match frame {
                     Ok(frame) => {
                         if frame.protocol == Protocol::ResetSession {
+                            // delete peer state
+                            broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
                             continue 'session_loop;
                         }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
@@ -319,7 +321,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
     info!("Client ID: {peer_id} gone.");
     Ok(())
 }
-pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+pub(crate) async fn broker_as_client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     info!("Spawning broker peer connection loop: {}", config.name);
     let reconnect_interval = config.client.reconnect_interval.unwrap_or_else(|| {
         const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
@@ -328,7 +330,7 @@ pub(crate) async fn client_peer_loop_with_reconnect(peer_id: PeerId, config: Bro
     });
     info!("Reconnect interval set to: {:?}", reconnect_interval);
     loop {
-        match broker_client_connection_loop_from_url(peer_id, config.clone(), broker_writer.clone()).await {
+        match broker_as_client_peer_loop_from_url(peer_id, config.clone(), broker_writer.clone()).await {
             Ok(_) => {
                 info!("Parent broker peer loop finished without error");
             }
@@ -385,7 +387,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
     };
     Ok(())
 }
-async fn broker_client_connection_loop_from_url(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
     let url = &config.client.url;
     let scheme = url.scheme();
     if scheme == "tcp" {
@@ -400,16 +402,16 @@ async fn broker_client_connection_loop_from_url(peer_id: PeerId, config: BrokerC
         let bwr = BufWriter::new(writer);
         let frame_reader = StreamFrameReader::new(brd);
         let frame_writer = StreamFrameWriter::new(bwr);
-        return broker_client_connection_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
     } else if scheme == "serial" {
         let port_name = url.path();
         info!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
-        return broker_client_connection_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
     }
     Err(format!("Scheme {scheme} is not supported yet.").into())
 }
-async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
+async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
 
@@ -426,6 +428,9 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
         ..Default::default()
     };
 
+    info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
+    client::login(&mut frame_reader, &mut frame_writer, &login_params).await?;
+
     match &config.connection_kind {
         ConnectionKind::ToParentBroker { .. } => {
             info!("Login to parent broker OK");
@@ -434,8 +439,6 @@ async fn broker_client_connection_loop(peer_id: PeerId, config: BrokerConnection
             info!("Login to child broker OK");
         }
     }
-    info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
-    client::login(&mut frame_reader, &mut frame_writer, &login_params).await?;
 
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {

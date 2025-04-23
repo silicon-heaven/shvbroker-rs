@@ -178,7 +178,7 @@ impl ParsedAccessRule {
 }
 
 pub(crate) struct PendingRpcCall {
-    pub(crate) client_id: PeerId,
+    pub(crate) peer_id: PeerId,
     pub(crate) request_meta: MetaMap,
     pub(crate) response_sender: Sender<RpcFrame>,
     pub(crate) started: Instant,
@@ -254,7 +254,7 @@ pub async fn create_broker_peer_connections(
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
         if peer_config.enabled {
             let peer_id = next_peer_id();
-            spawn_and_log_error(peer::client_peer_loop_with_reconnect(
+            spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(
                 peer_id,
                 peer_config.clone(),
                 broker_sender.clone(),
@@ -1217,8 +1217,8 @@ impl BrokerImpl {
             let state = self.state.read().map_err(|e| e.to_string())?;
             let peer = state
                 .peers
-                .get(&pending_call.client_id)
-                .ok_or(format!("Invalid client ID: {}", pending_call.client_id))?;
+                .get(&pending_call.peer_id)
+                .ok_or(format!("Invalid client ID: {}", pending_call.peer_id))?;
             // let rqid = data.request.request_id().ok_or("Missing request ID")?;
             self.pending_rpc_calls.push(pending_call);
             peer.sender.clone()
@@ -1241,7 +1241,7 @@ impl BrokerImpl {
         let mut pending_call_ix = None;
         for (ix, pc) in self.pending_rpc_calls.iter().enumerate() {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
-            if request_id == rqid && pc.client_id == client_id {
+            if request_id == rqid && pc.peer_id == client_id {
                 pending_call_ix = Some(ix);
                 break;
             }
@@ -1277,10 +1277,7 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn process_broker_command(
-        &mut self,
-        broker_command: BrokerCommand,
-    ) -> shvrpc::Result<()> {
+    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id: client_id,
@@ -1315,6 +1312,7 @@ impl BrokerImpl {
                 debug!("Peer gone, id: {peer_id}.");
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
+                    debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
                     let (shv_path, dir) = split_mount_point(&mount_point)?;
                     let msg = RpcMessage::new_signal_with_source(
                         shv_path,
@@ -1325,7 +1323,7 @@ impl BrokerImpl {
                     self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?)
                         .await?;
                 }
-                self.pending_rpc_calls.retain(|c| c.client_id != peer_id);
+                self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
             BrokerCommand::GetPassword { sender, user } => {
                 let shapwd = state_reader(&self.state).sha_password(&user);
@@ -1369,7 +1367,7 @@ impl BrokerImpl {
                 self.start_broker_rpc_call(
                     rq2,
                     PendingRpcCall {
-                        client_id,
+                        peer_id: client_id,
                         request_meta,
                         response_sender,
                         started: Instant::now(),
