@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.4.1"
+version = "3.5.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,7 +16,7 @@ shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master" }
+shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
@@ -38,6 +38,7 @@ crc = "3.2.1"
 rusqlite = { version = "0.34.0", features = ["bundled"] }
 graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls", ] }
 serialport = "4.7.1"
+async-tungstenite = "0.29.1"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

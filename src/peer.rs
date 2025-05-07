@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicI64, Ordering};
+use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
 use futures::io::BufWriter;
@@ -17,6 +18,7 @@ use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
+use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
 use smol::{channel};
 use smol::channel::Sender;
 use smol::io::BufReader;
@@ -52,6 +54,29 @@ async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
 
     let mut frame_reader = StreamFrameReader::new(brd);
     let mut frame_writer = StreamFrameWriter::new(bwr);
+    frame_reader.set_peer_id(peer_id);
+    frame_writer.set_peer_id(peer_id);
+
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+}
+
+pub(crate) async fn try_server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
+        Ok(_) => {
+            debug!("Client loop exit OK, peer id: {peer_id}");
+        }
+        Err(e) => {
+            debug!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+        }
+    }
+    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+    Ok(())
+}
+async fn server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    use futures::StreamExt;
+    let (socket_sink, socket_stream) = stream.split();
+    let mut frame_reader = WebSocketFrameReader::new(socket_stream);
+    let mut frame_writer = WebSocketFrameWriter::new(socket_sink);
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
 
