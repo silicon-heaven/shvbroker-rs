@@ -67,6 +67,8 @@ pub struct Listen {
     #[serde(default)]
     pub tcp: Option<String>,
     #[serde(default)]
+    pub ws: Option<String>,
+    #[serde(default)]
     pub ssl: Option<String>,
     #[serde(default)]
     pub serial: Option<String>,
@@ -214,7 +216,7 @@ impl Default for BrokerConfig {
             },
         };
         Self {
-            listen: Listen { tcp: Some("localhost:3755".to_string()), ssl: None, serial: None },
+            listen: Listen { tcp: Some("localhost:3755".to_string()), ws: None, ssl: None, serial: None },
             use_access_db: false,
             shv2_compatibility: false,
             data_directory: None,
