@@ -43,6 +43,8 @@ jobs:
     name: Code coverage
     runs-on: ubuntu-latest
     steps:
+      - name: Install system dependencies
+        run: sudo apt-get install -y libudev-dev pkg-config
       - name: Generate coverage
         uses: syyyr/rust-pycobertura-action@v2.0.0
         with:
