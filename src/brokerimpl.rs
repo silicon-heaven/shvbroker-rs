@@ -1204,8 +1204,8 @@ impl BrokerImpl {
             state
                 .peers
                 .iter()
-                .filter(|(&tested_peer_id, peer)| {
-                    peer_id != tested_peer_id && peer.is_signal_subscribed(&ri)
+                .filter(|(tested_peer_id, peer)| {
+                    peer_id != **tested_peer_id && peer.is_signal_subscribed(&ri)
                 })
                 .map(|(_, peer)| {
                     let mut frame = signal_frame.clone();
