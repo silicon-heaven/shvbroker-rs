@@ -47,7 +47,7 @@ async fn serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>,
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
 }
 
-pub(crate) fn create_serial_frame_reader_writer(port_name: &str) -> shvrpc::Result<(impl FrameReader, impl FrameWriter)> {
+pub(crate) fn create_serial_frame_reader_writer(port_name: &str) -> shvrpc::Result<(impl FrameReader + use<>, impl FrameWriter + use<>)> {
     let (rd, wr) = open_serial(port_name)?;
     let serial_reader = Unblock::new(rd);
     let serial_writer = Unblock::new(wr);

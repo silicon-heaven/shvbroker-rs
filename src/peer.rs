@@ -427,16 +427,16 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let bwr = BufWriter::new(writer);
         let frame_reader = StreamFrameReader::new(brd);
         let frame_writer = StreamFrameWriter::new(bwr);
-        return broker_as_client_peer_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(peer_id, config, false, broker_writer, frame_reader, frame_writer).await
     } else if scheme == "serial" {
         let port_name = url.path();
         info!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
-        return broker_as_client_peer_loop(peer_id, config, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(peer_id, config, true, broker_writer, frame_reader, frame_writer).await
     }
     Err(format!("Scheme {scheme} is not supported yet.").into())
 }
-async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
+async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, reset_session: bool, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
     frame_reader.set_peer_id(peer_id);
     frame_writer.set_peer_id(peer_id);
 
@@ -454,7 +454,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
     };
 
     info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
-    client::login(&mut frame_reader, &mut frame_writer, &login_params).await?;
+    client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).await?;
 
     match &config.connection_kind {
         ConnectionKind::ToParentBroker { .. } => {
