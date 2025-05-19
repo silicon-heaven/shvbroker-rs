@@ -1,9 +1,12 @@
 [package]
 name = "shvbroker"
-version = "3.5.1"
+version = "3.6.0"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+entra-id = ["dep:graph-rs-sdk"]
 
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
@@ -22,21 +25,15 @@ smol-timeout = "0.6"
 futures = "0.3.30"
 log = "0.4.21"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
-bytes = "1.6.0"
-sha1 = "0.10.6"
-chrono = "0.4.31"
 duration-str = "0.17"
-hex = "0.4.3"
 rand = "0.9.0"
-url = "2.4.1"
-glob = "0.3.1"
+url = "2.5"
 serde = "1.0.203"
 serde_yaml = "0.9"
 serde_json = "1.0"
 clap = { version = "4.4.12", features = ["derive"] }
-crc = "3.2.1"
 rusqlite = { version = "0.34.0", features = ["bundled"] }
-graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls", ] }
+graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls", ], optional = true }
 serialport = "4.7.1"
 async-tungstenite = "0.29.1"
 

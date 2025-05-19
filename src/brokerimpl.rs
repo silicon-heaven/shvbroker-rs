@@ -65,6 +65,7 @@ pub(crate) enum BrokerCommand {
         sender: Sender<BrokerToPeerMessage>,
         user: String,
     },
+    #[cfg(feature = "entra-id")]
     SetAzureGroups {
         peer_id: PeerId,
         groups: Vec<String>,
@@ -1344,6 +1345,7 @@ impl BrokerImpl {
                     .send(BrokerToPeerMessage::PasswordSha1(shapwd))
                     .await?;
             }
+            #[cfg(feature = "entra-id")]
             BrokerCommand::SetAzureGroups { peer_id, groups } => {
                 state_writer(&self.state)
                     .azure_user_groups

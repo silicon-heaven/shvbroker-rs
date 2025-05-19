@@ -3,7 +3,6 @@ use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
 use futures::io::BufWriter;
-use graph_rs_sdk::GraphClient;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::{make_list, make_map, RpcValue};
@@ -26,6 +25,9 @@ use smol::net::TcpStream;
 use crate::config::{AzureConfig, BrokerConnectionConfig, ConnectionKind};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
+
+#[cfg(feature = "entra-id")]
+use graph_rs_sdk::GraphClient;
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
 pub(crate)  fn next_peer_id() -> i64 {
@@ -135,87 +137,95 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
                     if login_type == "TOKEN" || login_type == "AZURE" {
-                        const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
-                        let access_token = if login_type == "AZURE" {
-                            password
-                        } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
-                            access_token
-                        } else {
-                            frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
-                            continue 'login_loop;
-                        };
-
-                        let Some(azure_config) = &azure_config else {
-                            frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
-                            continue 'login_loop;
-                        };
-
-                        let client = GraphClient::new(access_token);
-
-                        #[derive(serde::Deserialize)]
-                        struct MeResponse {
-                            mail: String
-                        }
-                        let me_response = client
-                            .me()
-                            .get_user()
-                            .send()
-                            .await?
-                            .json::<MeResponse>()
-                            .await?;
-                        user = me_response.mail;
-
-                        #[derive(serde::Deserialize)]
-                        struct TransitiveMemberOfValue {
-                            #[serde(rename = "@odata.type")]
-                            value_type: String,
-                            id: String
-                        }
-
-                        #[derive(serde::Deserialize)]
-                        struct TransitiveMemberOfResponse {
-                            value: Vec<TransitiveMemberOfValue>
-                        }
-
-                        let groups_response = client
-                            .me()
-                            .transitive_member_of()
-                            .list_transitive_member_of()
-                            .send()
-                            .await?
-                            .json::<TransitiveMemberOfResponse>()
-                            .await?;
-
-                        let groups_from_azure = groups_response.value
-                            .into_iter()
-                            .filter(|group| group.value_type == "#microsoft.graph.group")
-                            .map(|group| group.id);
-
-                        let mut mapped_groups = groups_from_azure
-                            .flat_map(|azure_group| azure_config.group_mapping
-                                .get(&azure_group)
-                                .cloned()
-                                .unwrap_or_default())
-                            .collect::<Vec<_>>();
-
-                        if mapped_groups.is_empty() {
-                            debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
-                            frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
+                        #[cfg(not(feature = "entra-id"))]
+                        {
+                            frame_writer.send_error(resp_meta, "Entra ID login is not supported on this broker.").await?;
                             continue 'login_loop;
                         }
+                        #[cfg(feature = "entra-id")]
+                        {
+                            const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
+                            let access_token = if login_type == "AZURE" {
+                                password
+                            } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
+                                access_token
+                            } else {
+                                frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
+                                continue 'login_loop;
+                            };
 
-                        debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
-                        let mut result = shvproto::Map::new();
-                        result.insert("clientId".into(), RpcValue::from(peer_id));
-                        frame_writer.send_result(resp_meta.clone(), result.into()).await?;
-                        if let Some(options) = params.get("options") {
-                            if let Some(device) = options.as_map().get("device") {
-                                device_options = device.clone();
+                            let Some(azure_config) = &azure_config else {
+                                frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
+                                continue 'login_loop;
+                            };
+
+                            let client = GraphClient::new(access_token);
+
+                            #[derive(serde::Deserialize)]
+                            struct MeResponse {
+                                mail: String
                             }
+                            let me_response = client
+                                .me()
+                                .get_user()
+                                .send()
+                                .await?
+                                .json::<MeResponse>()
+                                .await?;
+                            user = me_response.mail;
+
+                            #[derive(serde::Deserialize)]
+                            struct TransitiveMemberOfValue {
+                                #[serde(rename = "@odata.type")]
+                                value_type: String,
+                                id: String
+                            }
+
+                            #[derive(serde::Deserialize)]
+                            struct TransitiveMemberOfResponse {
+                                value: Vec<TransitiveMemberOfValue>
+                            }
+
+                            let groups_response = client
+                                .me()
+                                .transitive_member_of()
+                                .list_transitive_member_of()
+                                .send()
+                                .await?
+                                .json::<TransitiveMemberOfResponse>()
+                                .await?;
+
+                            let groups_from_azure = groups_response.value
+                                .into_iter()
+                                .filter(|group| group.value_type == "#microsoft.graph.group")
+                                .map(|group| group.id);
+
+                            let mut mapped_groups = groups_from_azure
+                                .flat_map(|azure_group| azure_config.group_mapping
+                                    .get(&azure_group)
+                                    .cloned()
+                                    .unwrap_or_default())
+                                .collect::<Vec<_>>();
+
+                            if mapped_groups.is_empty() {
+                                debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
+                                frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
+                                continue 'login_loop;
+                            }
+
+                            debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
+                            let mut result = shvproto::Map::new();
+                            result.insert("clientId".into(), RpcValue::from(peer_id));
+                            frame_writer.send_result(resp_meta.clone(), result.into()).await?;
+                            if let Some(options) = params.get("options") {
+                                if let Some(device) = options.as_map().get("device") {
+                                    device_options = device.clone();
+                                }
+                            }
+                            mapped_groups.insert(0, user.clone());
+                            broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
+                            break 'login_loop;
                         }
-                        mapped_groups.insert(0, user.clone());
-                        broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
-                        break 'login_loop;
                     }
 
                     broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
