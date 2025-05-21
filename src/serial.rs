@@ -1,6 +1,6 @@
 use std::time::Duration;
 use futures::io::BufWriter;
-use log::{debug, info};
+use log::{error, info};
 use serialport::SerialPort;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcmessage::PeerId;
@@ -30,19 +30,19 @@ fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn 
 }
 
 pub(crate) async fn try_serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, port_name: String, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    info!("Entering serial peer loop client ID: {peer_id}, port: {port_name}.");
     match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, azure_config).await {
         Ok(_) => {
-            debug!("Serial peer loop exit OK, peer id: {peer_id}");
+            info!("Serial peer loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
-            debug!("Serial peer loop exit ERROR, peer id: {peer_id}, error: {e}");
+            error!("Serial peer loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
 async fn serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, port_name: &str, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
-    debug!("Entering serial peer loop client ID: {peer_id}.");
     let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
 }
