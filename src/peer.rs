@@ -36,12 +36,13 @@ pub(crate)  fn next_peer_id() -> i64 {
 }
 
 pub(crate) async fn try_server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    info!("Entering TCP peer loop client ID: {peer_id}.");
     match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
-            debug!("Client loop exit OK, peer id: {peer_id}");
+            info!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
-            debug!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            error!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
@@ -63,12 +64,13 @@ async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
 }
 
 pub(crate) async fn try_server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+    info!("Entering WS peer loop client ID: {peer_id}.");
     match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
-            debug!("Client loop exit OK, peer id: {peer_id}");
+            info!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
-            debug!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            error!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
@@ -365,16 +367,17 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(peer_id: PeerId, c
     });
     info!("Reconnect interval set to: {:?}", reconnect_interval);
     loop {
+        info!("Connecting to broker peer id: {peer_id} with url: {}", config.client.url);
         match broker_as_client_peer_loop_from_url(peer_id, config.clone(), broker_writer.clone()).await {
             Ok(_) => {
-                info!("Parent broker peer loop finished without error");
+                info!("Peer broker loop finished without error");
             }
             Err(err) => {
-                error!("Parent broker peer loop finished with error: {err}");
+                error!("Peer broker loop finished with error: {err}");
             }
         }
         broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-        info!("Reconnecting to parent broker after: {:?}", reconnect_interval);
+        info!("Reconnecting to peer broker after: {:?}", reconnect_interval);
         smol::Timer::after(reconnect_interval).await;
     }
 }
@@ -429,7 +432,7 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
         let address = format!("{host}:{port}");
         // Establish a connection
-        info!("Connecting to broker TCP peer: {address}");
+        debug!("Connecting to broker TCP peer: {address}");
         let reader = TcpStream::connect(&address).await?;
         let writer = reader.clone();
 
@@ -440,7 +443,7 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         return broker_as_client_peer_loop(peer_id, config, false, broker_writer, frame_reader, frame_writer).await
     } else if scheme == "serial" {
         let port_name = url.path();
-        info!("Connecting to broker serial peer: {port_name}");
+        debug!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
         return broker_as_client_peer_loop(peer_id, config, true, broker_writer, frame_reader, frame_writer).await
     }

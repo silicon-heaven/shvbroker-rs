@@ -9,6 +9,9 @@ use shvbroker::config::{AccessConfig, BrokerConfig};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
+    /// Print application version and exit
+    #[arg(long)]
+    version: bool,
     /// Config file path
     #[arg(short, long)]
     config: Option<String>,
@@ -48,6 +51,11 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli_tunelling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
     let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
+    
+    if cli_opts.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());   
+    }
 
     let mut logger = SimpleLogger::new();
     logger = logger.with_level(LevelFilter::Info);
