@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 use std::thread;
 use shvproto::{RpcValue};
 use shvrpc::{RpcMessage};
+use shvrpc::rpcmessage::Response;
 
 pub struct KillProcessGuard {
     pub child: Child,
@@ -61,10 +62,12 @@ pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
 }
 pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     let msg = rpcmsg_from_output(output)?;
-    let result = msg.result()?;
+    if let Ok(Response::Success(val)) = msg.response() {
+        return Ok(val.clone());
+    }
     //println!("cpon: {}, expected: {}", result, expected_value.to_cpon());
     //assert_eq!(result, expected_value);
-    Ok(result.clone())
+    Err(format!("Result expected {}", msg).into())
 }
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
