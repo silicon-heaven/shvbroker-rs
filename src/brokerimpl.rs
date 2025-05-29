@@ -22,7 +22,7 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
-use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId, Tag};
+use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId, Tag};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol::channel;
@@ -437,7 +437,7 @@ impl BrokerState {
             // after parent broker reset
             panic!("Peer ID: {peer_id} exists already!");
         }
-        let client_path = join_path(DIR_BROKER, &format!("client/{}", peer_id));
+        let client_path = join_path(DIR_BROKER, format!("client/{}", peer_id));
         let effective_mount_point = match &peer_kind {
             PeerKind::Client { .. } => None,
             PeerKind::Broker(connection_kind) => match connection_kind {
@@ -1446,7 +1446,7 @@ impl BrokerImpl {
                 };
                 broker_command_sender.send(cmd).await?;
                 let resp = response_receiver.recv().await?.to_rpcmesage()?;
-                if let Ok(val) = resp.result() {
+                if let Ok(Response::Success(val)) = resp.response() {
                     if !val.is_null() {
                         return Ok(Some(path.to_string()));
                     }
