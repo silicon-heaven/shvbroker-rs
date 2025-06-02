@@ -5,7 +5,7 @@ use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
-use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
+use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
 use smol::channel;
 use smol::channel::{Receiver, Sender};
@@ -32,13 +32,26 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &Call
                 panic!("unexpected message: {:?}", msg);
             }
         };
-        if msg.is_response() && msg.request_id() == rqid {
-            println!("response: {msg}");
-            break msg.result().cloned()
+        if msg.request_id() == rqid {
+            match msg.response() {
+                Ok(response) => {
+                    match response {
+                        Response::Success(v) => {
+                            break Ok(v.clone());
+                        }
+                        Response::Delay(_) => {
+                            println!("ignoring delay response: {msg}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("error response: {msg}");
+                    break Err(e);
+                }
+            }
         } else {
             // ignore RPC requests which might be issued after subscribe call
-            println!("ignoring message: {msg}");
-            continue;
+            println!("ignoring message with different request id: {msg}");
         }
     };
     retval.map(|v| (rqid.unwrap_or_default(), v))
