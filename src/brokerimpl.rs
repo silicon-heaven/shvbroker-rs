@@ -805,13 +805,12 @@ impl BrokerState {
         }
     }
     pub(crate) fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        let keys = self
+        self
             .active_tunnels
             .iter()
             .filter(|(_id, tun)| tun.last_activity.is_some())
             .map(|(id, _tun)| *id)
-            .collect();
-        keys
+            .collect()
     }
     pub(crate) fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
         // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
