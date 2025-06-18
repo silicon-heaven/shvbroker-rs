@@ -18,9 +18,8 @@ tempfile = "3"
 shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.6" }
 
 [profile.release]
-# abort whole app on thread panic until
-# https://github.com/silicon-heaven/shvbroker-rs/issues/44
-# will not be solved
+panic = "abort"
+[profile.dev]
 panic = "abort"
 
 [dependencies]
