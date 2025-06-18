@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.6.2"
+version = "3.6.3"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,6 +16,12 @@ tempfile = "3"
 
 [package.metadata.bin]
 shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.6" }
+
+[profile.release]
+# abort whole app on thread panic until
+# https://github.com/silicon-heaven/shvbroker-rs/issues/44
+# will not be solved
+panic = "abort"
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
