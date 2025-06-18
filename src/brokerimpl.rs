@@ -805,13 +805,12 @@ impl BrokerState {
         }
     }
     pub(crate) fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        let keys = self
+        self
             .active_tunnels
             .iter()
             .filter(|(_id, tun)| tun.last_activity.is_some())
             .map(|(id, _tun)| *id)
-            .collect();
-        keys
+            .collect()
     }
     pub(crate) fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
         // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
@@ -1330,19 +1329,15 @@ impl BrokerImpl {
                 meta,
                 result,
             } => {
-                let mut msg = RpcMessage::from_meta(meta);
-                msg.set_result_or_error(result);
                 let peer_sender = state_reader(&self.state)
                     .peers
                     .get(&peer_id)
                     .ok_or("Invalid peer ID")?
                     .sender
                     .clone();
-                peer_sender
-                    .send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(
-                        &msg,
-                    )?))
-                    .await?;
+                let mut msg = RpcMessage::from_meta(meta);
+                msg.set_result_or_error(result);
+                peer_sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
             }
             BrokerCommand::RpcCall {
                 peer_id: client_id,

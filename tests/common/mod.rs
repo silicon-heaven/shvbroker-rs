@@ -67,7 +67,7 @@ pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     }
     //println!("cpon: {}, expected: {}", result, expected_value.to_cpon());
     //assert_eq!(result, expected_value);
-    Err(format!("Result expected {}", msg).into())
+    Err(format!("Success response result expected, got: {}", msg).into())
 }
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {

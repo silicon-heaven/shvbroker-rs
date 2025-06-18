@@ -55,10 +55,8 @@ async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
     let brd = BufReader::new(socket_reader);
     let bwr = BufWriter::new(socket_writer);
 
-    let mut frame_reader = StreamFrameReader::new(brd);
-    let mut frame_writer = StreamFrameWriter::new(bwr);
-    frame_reader.set_peer_id(peer_id);
-    frame_writer.set_peer_id(peer_id);
+    let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
+    let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
 
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
 }
@@ -79,17 +77,13 @@ pub(crate) async fn try_server_ws_peer_loop(peer_id: PeerId, broker_writer: Send
 async fn server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     use futures::StreamExt;
     let (socket_sink, socket_stream) = stream.split();
-    let mut frame_reader = WebSocketFrameReader::new(socket_stream);
-    let mut frame_writer = WebSocketFrameWriter::new(socket_sink);
-    frame_reader.set_peer_id(peer_id);
-    frame_writer.set_peer_id(peer_id);
+    let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
+    let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
 
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader, mut frame_writer: impl FrameWriter + Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + std::marker::Send, mut frame_writer: impl FrameWriter + Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
-    frame_reader.set_peer_id(peer_id);
-    frame_writer.set_peer_id(peer_id);
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
@@ -438,21 +432,18 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
 
         let brd = BufReader::new(reader);
         let bwr = BufWriter::new(writer);
-        let frame_reader = StreamFrameReader::new(brd);
-        let frame_writer = StreamFrameWriter::new(bwr);
+        let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
+        let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
         return broker_as_client_peer_loop(peer_id, config, false, broker_writer, frame_reader, frame_writer).await
     } else if scheme == "serial" {
         let port_name = url.path();
         debug!("Connecting to broker serial peer: {port_name}");
-        let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name)?;
+        let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
         return broker_as_client_peer_loop(peer_id, config, true, broker_writer, frame_reader, frame_writer).await
     }
     Err(format!("Scheme {scheme} is not supported yet.").into())
 }
 async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, reset_session: bool, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
-    frame_reader.set_peer_id(peer_id);
-    frame_writer.set_peer_id(peer_id);
-
     // login
     let url = &config.client.url;
     let (user, password) = login_from_url(url);
