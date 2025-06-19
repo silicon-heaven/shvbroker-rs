@@ -36,13 +36,13 @@ pub(crate)  fn next_peer_id() -> i64 {
 }
 
 pub(crate) async fn try_server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
-    info!("Entering TCP peer loop client ID: {peer_id}.");
+    info!("Entering TCP peer loop, peer: {peer_id}.");
     match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
-            error!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            warn!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
@@ -204,7 +204,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                                 .collect::<Vec<_>>();
 
                             if mapped_groups.is_empty() {
-                                debug!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
+                                warn!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
                                 frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
                                 continue 'login_loop;
                             }
@@ -270,7 +270,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                                 }
                                 break 'login_loop;
                             } else {
-                                debug!("Client ID: {peer_id}, invalid login credentials.");
+                                warn!("Peer: {peer_id}, invalid login credentials.");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
                                 continue 'login_loop;
                             }

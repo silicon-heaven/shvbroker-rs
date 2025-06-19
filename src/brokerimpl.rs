@@ -214,7 +214,7 @@ async fn tcp_server_accept_loop(
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
         let peer_id = next_peer_id();
-        debug!("Accepting from: {}", stream.peer_addr()?);
+        info!("Accepting TCP connection from: {}, peer: {peer_id}", stream.peer_addr()?);
         spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, azure_config.clone()));
     }
     Ok(())

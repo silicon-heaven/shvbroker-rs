@@ -71,7 +71,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     logger.init().unwrap();
 
     info!("=====================================================");
-    info!("{}", module_path!());
+    info!("{} ver. {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     info!("=====================================================");
     //trace!("trace message");
     //debug!("debug message");

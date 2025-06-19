@@ -2218,9 +2218,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.12"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee4e529991f949c5e25755532370b8af5d114acae52326361d68d47af64aa842"
+checksum = "fcebb1209ee276352ef14ff8732e24cc2b02bbac986cd74a4c81bcb2f9881970"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2655,7 +2655,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.6.3"
+version = "3.6.4"
 dependencies = [
  "assert_cmd",
  "async-tungstenite",
@@ -2712,8 +2712,8 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "3.8.0"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#e6acbfaff6ddb13cbb6603dff84a3bd98fbcb62f"
+version = "3.8.1"
+source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#9ae997a442638e3ee83c62535c780773e987856e"
 dependencies = [
  "anyhow",
  "async-trait",
