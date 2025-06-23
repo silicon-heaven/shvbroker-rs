@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicI64, Ordering};
+
 use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
@@ -28,6 +29,8 @@ use crate::serial::create_serial_frame_reader_writer;
 
 #[cfg(feature = "entra-id")]
 use graph_rs_sdk::GraphClient;
+#[cfg(feature = "entra-id")]
+use async_compat::CompatExt;
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
 pub(crate)  fn next_peer_id() -> i64 {
@@ -165,9 +168,11 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                                 .me()
                                 .get_user()
                                 .send()
+                                .compat()
                                 .await?
                                 .json::<MeResponse>()
                                 .await?;
+
                             user = me_response.mail;
 
                             #[derive(serde::Deserialize)]
@@ -181,12 +186,12 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                             struct TransitiveMemberOfResponse {
                                 value: Vec<TransitiveMemberOfValue>
                             }
-
                             let groups_response = client
                                 .me()
                                 .transitive_member_of()
                                 .list_transitive_member_of()
                                 .send()
+                                .compat()
                                 .await?
                                 .json::<TransitiveMemberOfResponse>()
                                 .await?;

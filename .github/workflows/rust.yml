@@ -50,6 +50,6 @@ jobs:
           sudo apt update
           sudo apt-get install -y libudev-dev pkg-config
       - name: Generate coverage
-        uses: syyyr/rust-pycobertura-action@v2.0.0
+        uses: syyyr/rust-pycobertura-action@v3.0.0
         with:
           project_name: shvbroker

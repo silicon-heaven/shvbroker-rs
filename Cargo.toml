@@ -1,12 +1,12 @@
 [package]
 name = "shvbroker"
-version = "3.6.4"
+version = "3.6.5"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-entra-id = ["dep:graph-rs-sdk"]
+entra-id = ["dep:graph-rs-sdk", "dep:async-compat"]
 
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
@@ -41,6 +41,7 @@ rusqlite = { version = "0.34.0", features = ["bundled"] }
 graph-rs-sdk = { version = "2.0.3", default-features = false, features = ["rustls-tls", ], optional = true }
 serialport = "4.7.1"
 async-tungstenite = "0.29.1"
+async-compat = { version = "0.2.4", optional = true }
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
