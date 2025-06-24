@@ -29,7 +29,7 @@ pub struct AzureConfig {
     pub client_id: String,
     pub authorize_url: String,
     pub token_url: String,
-    pub scopes: String,
+    pub scopes: Vec<String>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
