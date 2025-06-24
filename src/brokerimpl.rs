@@ -243,7 +243,7 @@ async fn ws_server_accept_loop(
     Ok(())
 }
 
-pub async fn create_broker_peer_connections(config: &BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
+pub async fn create_broker_instance(config: &BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
     let broker_impl = BrokerImpl::new(config, access, sql_connection);
     let broker_sender = broker_impl.command_sender.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
@@ -415,6 +415,9 @@ impl BrokerState {
     }
     fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         let mount_point = self.mount_point(peer_id);
+        if let Some(mount_point) = mount_point.as_ref() {
+            info!("Unmounting peer: {peer_id} at: {mount_point}");
+        }
         self.peers.remove(&peer_id);
         self.mounts.retain(|_k, v| {
             if let Mount::Peer(id) = v {
@@ -493,6 +496,7 @@ impl BrokerState {
         self.peers.insert(peer_id, peer);
         self.mounts.insert(client_path, Mount::Peer(peer_id));
         if let Some(mount_point) = effective_mount_point {
+            info!("Mounting peer: {peer_id} at: {mount_point}");
             self.mounts.insert(mount_point, Mount::Peer(peer_id));
         }
         Ok(())
@@ -1062,11 +1066,7 @@ impl BrokerImpl {
                         sender.send(msg).await?;
                         return Ok(());
                     }
-                    Action::NodeRequest {
-                        node_id,
-                        frame,
-                        ctx,
-                    } => {
+                    Action::NodeRequest { node_id, frame, ctx, } => {
                         let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame, &ctx) {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx) {

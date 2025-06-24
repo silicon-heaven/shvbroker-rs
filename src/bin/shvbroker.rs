@@ -48,7 +48,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli = CliOpts::augment_args(cli);
     let cli_matches = cli.get_matches();
     let cli_use_access_db_set = cli_matches.try_get_one::<bool>("use_access_db").is_ok();
-    let cli_tunelling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
+    let cli_tunneling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
     let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
     
@@ -93,7 +93,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Using default config");
         BrokerConfig::default()
     };
-    if cli_tunelling_set {
+    if cli_tunneling_set {
         config.tunnelling.enabled = cli_opts.tunneling;
     }
     if config.tunnelling.enabled {
@@ -131,7 +131,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    smol::block_on(shvbroker::brokerimpl::create_broker_peer_connections(&config, access, sql_connection))
+    smol::block_on(shvbroker::brokerimpl::create_broker_instance(&config, access, sql_connection))
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
