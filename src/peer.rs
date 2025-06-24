@@ -28,8 +28,6 @@ use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
 #[cfg(feature = "entra-id")]
-use graph_rs_sdk::GraphClient;
-#[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
@@ -159,15 +157,16 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                                 continue 'login_loop;
                             };
 
-                            let client = GraphClient::new(access_token);
+                            let client = reqwest::Client::new();
 
                             #[derive(serde::Deserialize)]
                             struct MeResponse {
                                 mail: String
                             }
+                            const GRAPH_ME_URL: &str = "https://graph.microsoft.com/v1.0/me";
                             let me_response = client
-                                .me()
-                                .get_user()
+                                .get(GRAPH_ME_URL)
+                                .header("Authorization", format!("Bearer {access_token}"))
                                 .send()
                                 .compat()
                                 .await?
@@ -187,10 +186,10 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                             struct TransitiveMemberOfResponse {
                                 value: Vec<TransitiveMemberOfValue>
                             }
+                            const GRAPH_TRANSITIVE_MEMBER_OF_URL: &str = "https://graph.microsoft.com/v1.0/me/transitiveMemberOf";
                             let groups_response = client
-                                .me()
-                                .transitive_member_of()
-                                .list_transitive_member_of()
+                                .get(GRAPH_TRANSITIVE_MEMBER_OF_URL)
+                                .header("Authorization", format!("Bearer {access_token}"))
                                 .send()
                                 .compat()
                                 .await?
