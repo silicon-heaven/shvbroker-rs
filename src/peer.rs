@@ -297,12 +297,12 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
         info!("Client ID: {peer_id} login success.");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
-                user,
+                user: user.clone(),
                 device_id,
                 mount_point,
             }
         } else {
-            PeerKind::Client { user }
+            PeerKind::Client { user: user.clone() }
         };
         broker_writer.send(
             BrokerCommand::NewPeer {
@@ -321,6 +321,10 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                             // delete peer state
                             broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
                             continue 'session_loop;
+                        }
+                        let mut frame = frame;
+                        if frame.is_request() {
+                            frame.set_tag(Tag::UserId as i32, Some(user.as_str().into()));
                         }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);
