@@ -980,11 +980,7 @@ impl BrokerImpl {
         }
         broker
     }
-    pub(crate) async fn process_rpc_frame(
-        &mut self,
-        peer_id: PeerId,
-        frame: RpcFrame,
-    ) -> shvrpc::Result<()> {
+    pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
             let method = frame.method().unwrap_or_default().to_string();
@@ -1033,10 +1029,7 @@ impl BrokerImpl {
                     let mut frame = frame;
                     frame.push_caller_id(peer_id);
                     frame.set_shvpath(node_path);
-                    frame.set_tag(
-                        Tag::AccessLevel as i32,
-                        grant_access_level.map(RpcValue::from),
-                    );
+                    frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                     let state = state_reader(&self.state);
                     match state.mounts.get(mount_point).expect("Should be mounted") {
