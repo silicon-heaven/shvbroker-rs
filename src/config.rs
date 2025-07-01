@@ -1,12 +1,16 @@
 use std::collections::{BTreeMap};
 use std::fs;
+use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
 use url::Url;
 
+pub type SharedBrokerConfig = Arc<BrokerConfig>;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BrokerConfig {
+    #[serde(default)]
+    pub name: Option<String>,
     pub listen: Listen,
     #[serde(default)]
     pub use_access_db: bool,
@@ -216,6 +220,7 @@ impl Default for BrokerConfig {
             },
         };
         Self {
+            name: None,
             listen: Listen { tcp: Some("localhost:3755".to_string()), ws: None, ssl: None, serial: None },
             use_access_db: false,
             shv2_compatibility: false,

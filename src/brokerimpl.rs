@@ -1,5 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, AzureConfig, BrokerConfig, ConnectionKind, Password};
+use crate::config::{AccessConfig, ConnectionKind, Password, SharedBrokerConfig};
 use crate::peer::next_peer_id;
 use crate::shvnode::{
     find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode,
@@ -206,7 +206,7 @@ pub(crate) async fn broker_loop(broker: BrokerImpl) {
 async fn tcp_server_accept_loop(
     address: String,
     broker_sender: Sender<BrokerCommand>,
-    azure_config: Option<AzureConfig>,
+    broker_config: SharedBrokerConfig,
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
     info!("Listening on TCP: {}", address);
@@ -215,7 +215,7 @@ async fn tcp_server_accept_loop(
         let stream = stream?;
         let peer_id = next_peer_id();
         info!("Accepting TCP connection from: {}, peer: {peer_id}", stream.peer_addr()?);
-        spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, azure_config.clone()));
+        spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, broker_config.clone()));
     }
     Ok(())
 }
@@ -223,7 +223,7 @@ async fn tcp_server_accept_loop(
 async fn ws_server_accept_loop(
     address: String,
     broker_sender: Sender<BrokerCommand>,
-    azure_config: Option<AzureConfig>,
+    broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
     info!("Listening on WebSocket: {}", address);
@@ -237,25 +237,25 @@ async fn ws_server_accept_loop(
             peer_id,
             broker_sender.clone(),
             stream,
-            azure_config.clone(),
+            broker_config.clone(),
         ));
     }
     Ok(())
 }
 
-pub async fn create_broker_instance(config: &BrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
-    let broker_impl = BrokerImpl::new(config, access, sql_connection);
+pub async fn create_broker_instance(config: SharedBrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
+    let broker_impl = BrokerImpl::new(config.clone(), access, sql_connection);
     let broker_sender = broker_impl.command_sender.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
     if let Some(address) = &config.listen.tcp {
-        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), config.azure.clone()));
+        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
     }
     if let Some(address) = &config.listen.ws {
-        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), config.azure.clone()));
+        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
     }
     if let Some(port) = &config.listen.serial {
         let peer_id = next_peer_id();
-        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), config.azure.clone()));
+        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), config.clone()));
     }
 
     let broker_peers = &config.connections;
@@ -898,7 +898,7 @@ fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
 }
 impl BrokerImpl {
     pub(crate) fn new(
-        config: &BrokerConfig,
+        config: SharedBrokerConfig,
         access: AccessConfig,
         sql_connection: Option<rusqlite::Connection>,
     ) -> Self {
@@ -1549,13 +1549,13 @@ pub(crate) struct NodeRequestContext {
 mod test {
     use crate::brokerimpl::state_reader;
     use crate::brokerimpl::BrokerImpl;
-    use crate::config::BrokerConfig;
+    use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     #[test]
     fn test_broker() {
         let config = BrokerConfig::default();
         let access = config.access.clone();
-        let broker = BrokerImpl::new(&config, access, None);
+        let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access, None);
         let roles = state_reader(&broker.state)
             .flatten_roles("child-broker")
             .unwrap();

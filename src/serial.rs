@@ -9,7 +9,7 @@ use smol::{Unblock};
 use smol::channel::Sender;
 use smol::io::BufReader;
 use crate::brokerimpl::{BrokerCommand};
-use crate::config::AzureConfig;
+use crate::config::{SharedBrokerConfig};
 use crate::peer::server_peer_loop;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
@@ -29,9 +29,14 @@ fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn 
     Ok((port, port_clone))
 }
 
-pub(crate) async fn try_serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, port_name: String, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn try_serial_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    port_name: String,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     info!("Entering serial peer loop client ID: {peer_id}, port: {port_name}.");
-    match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, azure_config).await {
+    match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config).await {
         Ok(_) => {
             info!("Serial peer loop exit OK, peer id: {peer_id}");
         }
@@ -42,9 +47,14 @@ pub(crate) async fn try_serial_peer_loop(peer_id: PeerId, broker_writer: Sender<
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-async fn serial_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, port_name: &str, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+async fn serial_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    port_name: &str,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 pub(crate) fn create_serial_frame_reader_writer(port_name: &str, peer_id: PeerId) -> shvrpc::Result<(impl FrameReader + use<>, impl FrameWriter + use<>)> {

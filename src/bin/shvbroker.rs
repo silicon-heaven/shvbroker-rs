@@ -5,7 +5,7 @@ use simple_logger::SimpleLogger;
 use shvrpc::util::{join_path, parse_log_verbosity};
 use clap::{Args, Command, FromArgMatches, Parser};
 use rusqlite::Connection;
-use shvbroker::config::{AccessConfig, BrokerConfig};
+use shvbroker::config::{AccessConfig, BrokerConfig, SharedBrokerConfig};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -131,7 +131,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    smol::block_on(shvbroker::brokerimpl::create_broker_instance(&config, access, sql_connection))
+    smol::block_on(shvbroker::brokerimpl::create_broker_instance(SharedBrokerConfig::new(config), access, sql_connection))
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {

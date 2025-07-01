@@ -10,7 +10,7 @@ use shvrpc::util::join_path;
 use smol::channel;
 use smol::channel::{Receiver, Sender};
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, User};
+use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
 use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx<'a> {
@@ -67,10 +67,10 @@ fn test_broker_loop() {
     smol::block_on(test_broker_loop_async())
 }
 async fn test_broker_loop_async() {
-    let config = BrokerConfig::default();
+    let config = SharedBrokerConfig::new(BrokerConfig::default());
     let access = config.access.clone();
     let sql = Connection::open_in_memory().unwrap();
-    let broker = BrokerImpl::new(&config, access, Some(sql));
+    let broker = BrokerImpl::new(config, access, Some(sql));
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -409,8 +409,9 @@ fn test_tunnel_loop() {
 async fn test_tunnel_loop_async() {
     let mut config = BrokerConfig::default();
     config.tunnelling.enabled = true;
+    let config = SharedBrokerConfig::new(config);
     let access = config.access.clone();
-    let broker = BrokerImpl::new(&config, access, None);
+    let broker = BrokerImpl::new(config, access, None);
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
