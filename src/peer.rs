@@ -141,14 +141,17 @@ pub(crate) async fn server_peer_loop(
                         "SHA1",
                     };
 
-                    if let Some(azure_config) = &broker_config.azure {
-                        workflows.push(make_map!{
-                            "type" => "oauth2-azure",
-                            "clientId" => azure_config.client_id.clone(),
-                            "authorizeUrl" => azure_config.authorize_url.clone(),
-                            "tokenUrl" => azure_config.token_url.clone(),
-                            "scopes" => azure_config.scopes.clone(),
-                        }.into());
+                    #[cfg(feature = "entra-id")]
+                    {
+                        if let Some(azure_config) = &broker_config.azure {
+                            workflows.push(make_map!{
+                                "type" => "oauth2-azure",
+                                "clientId" => azure_config.client_id.clone(),
+                                "authorizeUrl" => azure_config.authorize_url.clone(),
+                                "tokenUrl" => azure_config.token_url.clone(),
+                                "scopes" => azure_config.scopes.clone(),
+                            }.into());
+                        }
                     }
 
                     frame_writer.send_result(resp_meta, workflows.into()).await?;
