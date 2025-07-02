@@ -23,7 +23,7 @@ use smol::{channel};
 use smol::channel::Sender;
 use smol::io::BufReader;
 use smol::net::TcpStream;
-use crate::config::{AzureConfig, BrokerConnectionConfig, ConnectionKind};
+use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
@@ -36,9 +36,14 @@ pub(crate)  fn next_peer_id() -> i64 {
     old_id + 1
 }
 
-pub(crate) async fn try_server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn try_server_tcp_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    stream: TcpStream,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     info!("Entering TCP peer loop, peer: {peer_id}.");
-    match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
+    match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -49,7 +54,12 @@ pub(crate) async fn try_server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sen
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: TcpStream, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+async fn server_tcp_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    stream: TcpStream,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
 
     let (socket_reader, socket_writer) = (stream.clone(), stream);
 
@@ -59,12 +69,17 @@ async fn server_tcp_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerComma
     let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
     let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
-pub(crate) async fn try_server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn try_server_ws_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    stream: WebSocketStream<TcpStream>,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     info!("Entering WS peer loop client ID: {peer_id}.");
-    match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, azure_config).await {
+    match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -75,15 +90,26 @@ pub(crate) async fn try_server_ws_peer_loop(peer_id: PeerId, broker_writer: Send
     broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
     Ok(())
 }
-async fn server_ws_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, stream: WebSocketStream<TcpStream>, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+async fn server_ws_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    stream: WebSocketStream<TcpStream>,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     use futures::StreamExt;
     let (socket_sink, socket_stream) = stream.split();
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
     let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, azure_config).await
+    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
-pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + std::marker::Send, mut frame_writer: impl FrameWriter + Send, azure_config: Option<AzureConfig>) -> shvrpc::Result<()> {
+pub(crate) async fn server_peer_loop(
+    peer_id: PeerId,
+    broker_writer: Sender<BrokerCommand>,
+    mut frame_reader: impl FrameReader + std::marker::Send,
+    mut frame_writer: impl FrameWriter + Send,
+    broker_config: SharedBrokerConfig
+) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -115,7 +141,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                         "SHA1",
                     };
 
-                    if let Some(azure_config) = &azure_config {
+                    if let Some(azure_config) = &broker_config.azure {
                         workflows.push(make_map!{
                             "type" => "oauth2-azure",
                             "clientId" => azure_config.client_id.clone(),
@@ -152,7 +178,7 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                                 continue 'login_loop;
                             };
 
-                            let Some(azure_config) = &azure_config else {
+                            let Some(azure_config) = &broker_config.azure else {
                                 frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
                                 continue 'login_loop;
                             };
@@ -324,7 +350,15 @@ pub(crate) async fn server_peer_loop(peer_id: PeerId, broker_writer: Sender<Brok
                         }
                         let mut frame = frame;
                         if frame.is_request() {
-                            frame.set_tag(Tag::UserId as i32, Some(user.as_str().into()));
+                            let broker_id = broker_config.name.as_ref()
+                                    .map(|name| format!("@{name}"))
+                                    .unwrap_or_default();
+                            let user_id = format!("{}{broker_id}", user.as_str());
+                            let user_id_chain = frame.tag(Tag::UserId as i32)
+                                .and_then(|id| if id.as_str().is_empty() { None } else { Some(id.as_str()) } )
+                                .map(|id| format!("{id},{user_id}"))
+                                .unwrap_or(user_id);
+                            frame.set_tag(Tag::UserId as i32, Some(user_id_chain.into()));
                         }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);
