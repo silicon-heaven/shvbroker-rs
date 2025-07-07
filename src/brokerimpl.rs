@@ -212,7 +212,15 @@ async fn tcp_server_accept_loop(
     info!("Listening on TCP: {}", address);
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
-        let stream = stream?;
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(err) => {
+                error!("Failed to accept a TCP connection at {address}: {err}, waiting one second before accepting another connection");
+                smol::Timer::after(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
         let peer_id = next_peer_id();
         info!("Accepting TCP connection from: {}, peer: {peer_id}", stream.peer_addr()?);
         spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, broker_config.clone()));
@@ -229,7 +237,15 @@ async fn ws_server_accept_loop(
     info!("Listening on WebSocket: {}", address);
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
-        let stream = stream?;
+        let stream = match stream {
+            Ok(stream) => stream,
+            Err(err) => {
+                error!("Failed to accept a TCP connection at {address}: {err}, waiting one second before accepting another connection");
+                smol::Timer::after(Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+
         let stream = async_tungstenite::accept_async(stream).await?;
         let peer_id = next_peer_id();
         debug!("Accepting from: {}", stream.get_ref().peer_addr()?);
