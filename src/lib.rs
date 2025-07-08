@@ -18,7 +18,7 @@ mod spawn {
     {
         smol::spawn(async move {
             if let Err(e) = fut.await {
-                error!("{}", e)
+                error!("{e}")
             }
         }).detach();
     }

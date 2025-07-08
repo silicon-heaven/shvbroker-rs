@@ -13,7 +13,7 @@ use crate::config::{SharedBrokerConfig};
 use crate::peer::server_peer_loop;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
-    info!("Opening serial port: {}", port_name);
+    info!("Opening serial port: {port_name}");
     let port = serialport::new(port_name, 115200)
         .data_bits(serialport::DataBits::Eight)
         .stop_bits(serialport::StopBits::One)

@@ -175,7 +175,7 @@ impl ShvNode for TunnelNode {
                     let command_sender = state_reader(&state).command_sender.clone();
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
-                            error!("{}", e)
+                            error!("{e}")
                         }
                         command_sender
                             .send(BrokerCommand::TunnelClosed(tunid))

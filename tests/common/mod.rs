@@ -67,7 +67,7 @@ pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
     }
     //println!("cpon: {}, expected: {}", result, expected_value.to_cpon());
     //assert_eq!(result, expected_value);
-    Err(format!("Success response result expected, got: {}", msg).into())
+    Err(format!("Success response result expected, got: {msg}").into())
 }
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
@@ -82,7 +82,7 @@ static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
 
 pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcValue> {
     let port = port.unwrap_or(3755);
-    println!("shvcall port: {port} {path}:{method} param: {}", param);
+    println!("shvcall port: {port} {path}:{method} param: {param}");
     let shvcall_binary = &*SHVCALL_BINARY;
     let output = match Command::new(shvcall_binary)
         .arg("-v").arg(".:T")

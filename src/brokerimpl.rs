@@ -192,11 +192,11 @@ pub(crate) async fn broker_loop(broker: BrokerImpl) {
             command = broker.command_receiver.recv().fuse() => match command {
                 Ok(command) => {
                     if let Err(err) = broker.process_broker_command(command).await {
-                        warn!("Process broker command error: {}", err);
+                        warn!("Process broker command error: {err}");
                     }
                 }
                 Err(err) => {
-                    warn!("Receive broker command error: {}", err);
+                    warn!("Receive broker command error: {err}");
                 }
             },
         }
@@ -209,7 +209,7 @@ async fn tcp_server_accept_loop(
     broker_config: SharedBrokerConfig,
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
-    info!("Listening on TCP: {}", address);
+    info!("Listening on TCP: {address}");
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = match stream {
@@ -234,7 +234,7 @@ async fn ws_server_accept_loop(
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
-    info!("Listening on WebSocket: {}", address);
+    info!("Listening on WebSocket: {address}");
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = match stream {
@@ -331,12 +331,13 @@ impl BrokerState {
             Ok(ri) => ri,
             Err(e) => return Err(RpcError::new(RpcErrorCode::InvalidRequest, e)),
         };
+        log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
         let grant_from_flatten_roles = |flatten_roles| {
             let found_grant = (|| {
                 for role_name in flatten_roles {
                     if let Some(rules) = self.role_access.get(&role_name) {
-                        log!(target: "Access", Level::Debug, "----------- access for role: {}", role_name);
+                        log!(target: "Access", Level::Debug, "----------- access for role: {role_name}");
                         for rule in rules {
                             log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
                             if rule.glob.match_shv_ri(&ri) {
@@ -363,18 +364,18 @@ impl BrokerState {
             log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &client_id, flatten_roles);
             grant_from_flatten_roles(flatten_roles)
         } else if let Some(user) = peer.user() {
-            log!(target: "Access", Level::Debug, "Peer: {}", client_id);
+            log!(target: "Access", Level::Debug, "Peer: {client_id}");
             grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
         } else {
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {
                     match connection_kind {
                         ConnectionKind::ToParentBroker { .. } => {
-                            log!(target: "Access", Level::Debug, "ParentBroker: {}", client_id);
+                            log!(target: "Access", Level::Debug, "ParentBroker: {client_id}");
                             let access = frame.tag(Tag::Access as i32);
                             let access_level = frame.tag(Tag::AccessLevel as i32);
                             if access_level.is_some() || access.is_some() {
-                                log!(target: "Access", Level::Debug, "\tGranted access: {:?}, access level: {:?}", access, access_level);
+                                log!(target: "Access", Level::Debug, "\tGranted access: {access:?}, access level: {access_level:?}");
                                 Ok((
                                     access_level.map(RpcValue::as_i32),
                                     access.map(RpcValue::as_str).map(|s| s.to_string()),
@@ -456,7 +457,7 @@ impl BrokerState {
             // after parent broker reset
             panic!("Peer ID: {peer_id} exists already!");
         }
-        let client_path = join_path(DIR_BROKER, format!("client/{}", peer_id));
+        let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
         let effective_mount_point = match &peer_kind {
             PeerKind::Client { .. } => None,
             PeerKind::Broker(connection_kind) => match connection_kind {
@@ -595,17 +596,17 @@ impl BrokerState {
             .iter_mut()
             .find(|sub| sub.param.ri == subpar.ri)
         {
-            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {} - {:?}", peer_id, subpar);
+            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {peer_id} - {subpar:?}");
             sub.param.ttl = subpar.ttl;
             Ok(false)
         } else {
-            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {} - {:?}", peer_id, subpar);
+            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {peer_id} - {subpar:?}");
             peer.subscriptions.push(Subscription::new(subpar)?);
             Ok(true)
         }
     }
     pub(crate) fn unsubscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {} - {:?}", peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {peer_id} - {subpar:?}");
         let peer = self
             .peers
             .get_mut(&peer_id)
@@ -775,16 +776,13 @@ impl BrokerState {
     fn uddate_sql(&self, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
             UpdateSqlOperation::Insert { id, json } => {
-                format!(
-                    "INSERT INTO {} (id, def) VALUES ('{}', '{}');",
-                    table, id, json
-                )
+                format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
             }
             UpdateSqlOperation::Update { id, json } => {
-                format!("UPDATE {} SET def = '{}' WHERE id = '{}';", table, json, id)
+                format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';")
             }
             UpdateSqlOperation::Delete { id } => {
-                format!("DELETE FROM {} WHERE id = '{}';", table, id)
+                format!("DELETE FROM {table} WHERE id = '{id}';")
             }
         };
         let sender = self.command_sender.clone();
@@ -1123,7 +1121,7 @@ impl BrokerImpl {
             } else {
                 let err = RpcError::new(
                     RpcErrorCode::MethodNotFound,
-                    format!("Invalid shv path {}:{}()", shv_path, method),
+                    format!("Invalid shv path {shv_path}:{method}()"),
                 );
                 self.command_sender
                     .send(BrokerCommand::SendResponse {
@@ -1395,7 +1393,7 @@ impl BrokerImpl {
                         let last_activity = state_reader(&state).last_tunnel_activity(tunnel_id);
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
-                                debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {:#?}", TIMEOUT);
+                                debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
                                 let _ = command_sender.send(BrokerCommand::TunnelClosed(tunnel_id)).await;
                                 break;
                             }
