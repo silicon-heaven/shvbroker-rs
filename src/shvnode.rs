@@ -115,7 +115,7 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
     let mount_pair = find_longest_prefix(mounts, shv_path);
     if mount_pair.is_none() && children.is_none() {
         // path doesn't exist
-        return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {}", shv_path))))
+        return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {shv_path}"))))
     }
     let is_mount_point = mount_pair.is_some() && mount_pair.unwrap().1.is_empty();
     let is_remote_dir = mount_pair.is_some() && children.is_none();
@@ -254,7 +254,7 @@ impl dyn ShvNode {
                         }
 
                     } else {
-                        Err(format!("Invalid path: {}.", shv_path).into())
+                        Err(format!("Invalid path: {shv_path}.").into())
                     }
                 }
                 _ => { Ok(ProcessRequestRetval::MethodNotFound) }
@@ -526,7 +526,7 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
 ];
 impl BrokerCurrentClientNode {
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {peer_id} - {subpar:?}");
         if state_writer(state).subscribe(peer_id, subpar)? {
             state_writer(state).gc_subscriptions();
             state_writer(state).update_forwarded_subscriptions()?;
@@ -537,7 +537,7 @@ impl BrokerCurrentClientNode {
         }
     }
     fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {} - {:?}", peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {peer_id} - {subpar:?}");
         if state_writer(state).unsubscribe(peer_id, subpar)? {
             state_writer(state).gc_subscriptions();
             state_writer(state).update_forwarded_subscriptions()?;

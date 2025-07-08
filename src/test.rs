@@ -29,7 +29,7 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &Call
         let msg = match msg {
             BrokerToPeerMessage::SendFrame(frame) => { frame.to_rpcmesage().unwrap() }
             _ => {
-                panic!("unexpected message: {:?}", msg);
+                panic!("unexpected message: {msg:?}");
             }
         };
         if msg.request_id() == rqid {
@@ -233,175 +233,6 @@ async fn test_broker_loop_async() {
     broker_task.cancel().await;
 }
 
-// #[async_std::test]
-// async fn test_to_child_broker_connection() {
-//     let mut config = BrokerConfig::default();
-//     config.connections = vec![
-//         BrokerConnectionConfig {
-//             enabled: true,
-//             client: ClientConfig{
-//                 url: "localhost".to_string(),
-//                 device_id: None,
-//                 mount: None,
-//                 heartbeat_interval: "1m".to_string(),
-//                 reconnect_interval: None,
-//             },
-//             tree_direction: TreeDirection::ToChildBroker {
-//                 shv_root: ".broker".to_string(),
-//                 mount_point: "test/child-broker".to_string(),
-//             },
-//         }
-//     ];
-//     let access = config.access.clone();
-//     let sql = Connection::open_in_memory().unwrap();
-//     let broker = BrokerImpl::new(&config, access, Some(sql));
-//     let broker_sender = broker.command_sender.clone();
-//     let broker_task = task::spawn(crate::brokerimpl::broker_loop(broker));
-//
-//     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
-//     let client_id = 2;
-//
-//     let call_ctx = CallCtx {
-//         writer: &broker_sender,
-//         reader: &peer_reader,
-//         client_id,
-//     };
-//
-//     // login
-//     let user = "test";
-//     //let password = "admin";
-//     broker_sender.send(BrokerCommand::NewPeer {
-//         peer_id: client_id,
-//         peer_kind: PeerKind::Client,
-//         user: user.to_string(),
-//         mount_point: Some("test/device".into()),
-//         device_id: None,
-//         sender: peer_writer.clone() }).await.unwrap();
-//
-//     let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
-//     assert_eq!(resp, RpcValue::from(true));
-//     let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();
-//     assert!(resp.is_list());
-//     assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
-//     let resp = call(".broker/acce", "ls", None, &call_ctx).await;
-//     assert!(resp.is_err());
-//
-//     // device should be mounted as 'shv/dev/test'
-//     let resp = call("test", "ls", Some("device".into()), &call_ctx).await.unwrap();
-//     assert_eq!(resp, RpcValue::from(true));
-//
-//     // test current client info
-//     let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
-//     let m = resp.as_map();
-//     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
-//     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
-//     assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
-//     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
-//
-//     // subscriptions
-//     let subs_ri = "shv/**:*";
-//     let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
-//     {
-//         // subscribe
-//         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-//         assert!(result.as_bool());
-//         // cannot subscribe the same twice
-//         let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-//         assert!(!result.as_bool());
-//         let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await.unwrap();
-//         let subs_map = resp.as_map();
-//         // let s = format!("{:?}", subs_map);
-//         assert_eq!(subs_map.len(), 1);
-//         assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
-//     }
-//     {
-//         call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-//         let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
-//         let subs = resp.as_map().get("subscriptions").unwrap();
-//         let subs_map = subs.as_map();
-//         assert_eq!(subs_map.len(), 0);
-//     }
-//
-//     let config = BrokerConfig::default();
-//     let users: Vec<_> = config.access.users.keys().map(|k| k.to_string()).collect();
-//     let roles: Vec<_> = config.access.roles.keys().map(|k| k.to_string()).collect();
-//     // access/mounts
-//     {
-//         let path = ".broker/access/mounts";
-//         {
-//             let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//             let list = resp.as_list();
-//             assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
-//             let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await.unwrap();
-//             let mount1 = Mount::try_from(&resp).unwrap();
-//             let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
-//             assert_eq!(mount1, mount2);
-//         }
-//         {
-//             let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
-//             call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-//             let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//             let list = resp.as_list();
-//             assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
-//             let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
-//             assert_eq!(mount, Mount::try_from(&resp).unwrap());
-//         }
-//
-//         // access/users
-//         {
-//             let path = ".broker/access/users";
-//             {
-//                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//                 let list = resp.as_list();
-//                 assert_eq!(list, RpcValue::from(users.clone()).as_list());
-//                 let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await.unwrap();
-//                 let user1 = User::try_from(&resp).unwrap();
-//                 let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()] };
-//                 assert_eq!(user1, user2);
-//             }
-//             {
-//                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()] };
-//                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-//                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//                 let list = resp.as_list();
-//                 let mut users = users;
-//                 users.push("baz".to_string());
-//                 users.sort();
-//                 assert_eq!(list, RpcValue::from(users).as_list());
-//                 let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
-//                 assert_eq!(user, User::try_from(&resp).unwrap());
-//             }
-//         }
-//
-//         // access/roles
-//         {
-//             let path = ".broker/access/roles";
-//             {
-//                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//                 let list = resp.as_list();
-//                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
-//                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
-//                 let role1 = Role::try_from(&resp).unwrap();
-//                 let role2 = config.access.roles.get("tester").unwrap();
-//                 assert_eq!(&role1, role2);
-//             }
-//             {
-//                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }] };
-//                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-//                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
-//                 let list = resp.as_list();
-//                 let mut roles = roles;
-//                 roles.push("baz".to_string());
-//                 roles.sort();
-//                 assert_eq!(list, RpcValue::from(roles).as_list());
-//                 let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
-//                 assert_eq!(role, Role::try_from(&resp).unwrap());
-//             }
-//         }
-//     }
-//     broker_task.cancel().await;
-// }
-
 #[test]
 fn test_tunnel_loop() {
     smol::block_on(test_tunnel_loop_async())
@@ -451,7 +282,7 @@ async fn test_tunnel_loop_async() {
             match stream {
                 Ok(mut socket) => {
                     let addr = socket.peer_addr().unwrap();
-                    println!("New connection from: {}", addr);
+                    println!("New connection from: {addr}");
 
                     smol::spawn(async move {
                         let mut buffer = vec![0; 1024];
@@ -459,24 +290,24 @@ async fn test_tunnel_loop_async() {
                         loop {
                             match socket.read(&mut buffer).await {
                                 Ok(0) => {
-                                    println!("Connection closed by client: {}", addr);
+                                    println!("Connection closed by client: {addr}");
                                     return;
                                 }
                                 Ok(n) => {
                                     if socket.write_all(&buffer[..n]).await.is_err() {
-                                        println!("Failed to send data to: {}", addr);
+                                        println!("Failed to send data to: {addr}");
                                         return;
                                     }
                                 }
                                 Err(e) => {
-                                    println!("Error reading from {}: {}", addr, e);
+                                    println!("Error reading from {addr}: {e}");
                                     return;
                                 }
                             }
                         }
                     }).detach();
                 }
-                Err(e) => println!("Connection failed: {}", e),
+                Err(e) => println!("Connection failed: {e}"),
             }
         }
     }).detach();

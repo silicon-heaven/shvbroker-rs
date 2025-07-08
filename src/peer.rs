@@ -243,7 +243,7 @@ pub(crate) async fn server_peer_loop(
                                 continue 'login_loop;
                             }
 
-                            debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {:?}", mapped_groups);
+                            debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {mapped_groups:?}");
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
                             frame_writer.send_result(resp_meta.clone(), result.into()).await?;
@@ -407,7 +407,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(peer_id: PeerId, c
         info!("Parent broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC} will be used.");
         std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
     });
-    info!("Reconnect interval set to: {:?}", reconnect_interval);
+    info!("Reconnect interval set to: {reconnect_interval:?}");
     loop {
         info!("Connecting to broker peer id: {peer_id} with url: {}", config.client.url);
         match broker_as_client_peer_loop_from_url(peer_id, config.clone(), broker_writer.clone()).await {
@@ -419,7 +419,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(peer_id: PeerId, c
             }
         }
         broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-        info!("Reconnecting to peer broker after: {:?}", reconnect_interval);
+        info!("Reconnecting to peer broker after: {reconnect_interval:?}");
         smol::Timer::after(reconnect_interval).await;
     }
 }

@@ -228,10 +228,10 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
         format!(r#"{property_path}:set 123"#),
     ];
     println!("shv_call_many property: {property_path}, port: {port}");
-    for c in calls.iter() { println!("\t{}", c); }
+    for c in calls.iter() { println!("\t{c}"); }
     let values = shv_call_many(calls, Some(port))?;
     println!("shv_call_many result:");
-    for v in values.iter() { println!("\t{}", v); }
+    for v in values.iter() { println!("\t{v}"); }
     let expected: Vec<String> = vec![
         "RES true".into(), // response to subscribe
         format!("SIG {property_path}:chng 42"), // SIG chng
