@@ -1,23 +1,23 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, ConnectionKind, Password, SharedBrokerConfig};
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Password, Role, SharedBrokerConfig};
 use crate::peer::next_peer_id;
 use crate::shvnode::{
-    find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode,
-    BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode,
-    ProcessRequestRetval, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
+    AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
+    BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
     DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
     DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS,
-    METH_SUBSCRIBE, SIG_LSMOD,
+    METH_SUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, ShvNode, find_longest_prefix,
+    process_local_dir_ls,
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
-use futures::select;
 use futures::FutureExt;
 use futures::StreamExt;
+use futures::select;
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{rpcvalue, Map, MetaMap, RpcValue};
+use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -26,7 +26,7 @@ use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId, Tag};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol::channel;
-use smol::channel::{unbounded, Receiver, Sender};
+use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
@@ -143,7 +143,7 @@ impl Peer {
         }
         false
     }
-    pub(crate) fn user(&self) -> Option<&str> {
+    fn user(&self) -> Option<&str> {
         match &self.peer_kind {
             PeerKind::Client { user, .. } => Some(user),
             PeerKind::Broker(_) => None,
@@ -164,7 +164,14 @@ pub(crate) struct ParsedAccessRule {
     pub(crate) access: String,
     pub(crate) access_level: AccessLevel,
 }
+impl TryFrom<&AccessRule> for ParsedAccessRule {
+    type Error = shvrpc::Error;
 
+    fn try_from(rule: &AccessRule) -> Result<Self, Self::Error> {
+        let ri = ShvRI::try_from(&*rule.shv_ri).map_err(|err| { format!("Parse RI: {} error: {err}", rule.shv_ri) })?;
+        ParsedAccessRule::new(&ri, &rule.grant)
+    }
+}
 impl ParsedAccessRule {
     pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
         Ok(Self {
@@ -222,17 +229,18 @@ async fn tcp_server_accept_loop(
         };
 
         let peer_id = next_peer_id();
-        info!("Accepting TCP connection from: {}, peer: {peer_id}", stream.peer_addr()?);
-        spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, broker_config.clone()));
+        info!("Accepting TCP connection from: {}, peer: {peer_id}",stream.peer_addr()?);
+        spawn_and_log_error(peer::try_server_tcp_peer_loop(
+            peer_id,
+            broker_sender.clone(),
+            stream,
+            broker_config.clone(),
+        ));
     }
     Ok(())
 }
 
-async fn ws_server_accept_loop(
-    address: String,
-    broker_sender: Sender<BrokerCommand>,
-    broker_config: SharedBrokerConfig
-) -> shvrpc::Result<()> {
+async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
     info!("Listening on WebSocket: {address}");
     let mut incoming = listener.incoming();
@@ -259,19 +267,36 @@ async fn ws_server_accept_loop(
     Ok(())
 }
 
-pub async fn create_broker_instance(config: SharedBrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
+pub async fn create_broker_instance(
+    config: SharedBrokerConfig,
+    access: AccessConfig,
+    sql_connection: Option<rusqlite::Connection>,
+) -> shvrpc::Result<()> {
     let broker_impl = BrokerImpl::new(config.clone(), access, sql_connection);
     let broker_sender = broker_impl.command_sender.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
     if let Some(address) = &config.listen.tcp {
-        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
+        spawn_and_log_error(tcp_server_accept_loop(
+            address.clone(),
+            broker_sender.clone(),
+            config.clone(),
+        ));
     }
     if let Some(address) = &config.listen.ws {
-        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
+        spawn_and_log_error(ws_server_accept_loop(
+            address.clone(),
+            broker_sender.clone(),
+            config.clone(),
+        ));
     }
     if let Some(port) = &config.listen.serial {
         let peer_id = next_peer_id();
-        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), config.clone()));
+        spawn_and_log_error(serial::try_serial_peer_loop(
+            peer_id,
+            broker_sender.clone(),
+            port.clone(),
+            config.clone(),
+        ));
     }
 
     let broker_peers = &config.connections;
@@ -279,7 +304,11 @@ pub async fn create_broker_instance(config: SharedBrokerConfig, access: AccessCo
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
         if peer_config.enabled {
             let peer_id = next_peer_id();
-            spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
+            spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(
+                peer_id,
+                peer_config.clone(),
+                broker_sender.clone(),
+            ));
         }
     }
     drop(broker_sender);
@@ -292,7 +321,7 @@ pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
     pub(crate) access: AccessConfig,
-    role_access: HashMap<String, Vec<ParsedAccessRule>>,
+    role_access_rules: HashMap<String, Vec<ParsedAccessRule>>,
 
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
@@ -303,20 +332,28 @@ pub struct BrokerState {
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
+    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>) -> Self {
+        let role_access = parse_config_roles(&access.roles);
+        Self {
+            peers: Default::default(),
+            mounts: Default::default(),
+            access,
+            role_access_rules: role_access,
+            azure_user_groups: Default::default(),
+            command_sender,
+            active_tunnels: Default::default(),
+            next_tunnel_number: 1,
+        }
+    }
     fn mount_point(&self, peer_id: PeerId) -> Option<String> {
         self.peers
             .get(&peer_id)
             .and_then(|peer| peer.mount_point.clone())
     }
-    fn grant_for_request(
-        &self,
-        client_id: PeerId,
-        frame: &RpcFrame,
-    ) -> Result<(Option<i32>, Option<String>), RpcError> {
+    fn access_level_for_request(&self, peer_id: PeerId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
         log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
         let shv_path = frame.shv_path().unwrap_or_default();
         let method = frame.method().unwrap_or_default();
-        //let source = frame.source().unwrap_or_default();
         if method.is_empty() {
             return Err(RpcError::new(
                 RpcErrorCode::PermissionDenied,
@@ -325,7 +362,7 @@ impl BrokerState {
         }
         let peer = self
             .peers
-            .get(&client_id)
+            .get(&peer_id)
             .ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
         let ri = match ShvRI::from_path_method_signal(shv_path, method, None) {
             Ok(ri) => ri,
@@ -336,7 +373,7 @@ impl BrokerState {
         let grant_from_flatten_roles = |flatten_roles| {
             let found_grant = (|| {
                 for role_name in flatten_roles {
-                    if let Some(rules) = self.role_access.get(&role_name) {
+                    if let Some(rules) = self.role_access_rules.get(&role_name) {
                         log!(target: "Access", Level::Debug, "----------- access for role: {role_name}");
                         for rule in rules {
                             log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
@@ -354,28 +391,44 @@ impl BrokerState {
                 Some((access_level, access)) => Ok((Some(access_level), Some(access))),
                 None => Err(RpcError::new(
                     RpcErrorCode::PermissionDenied,
-                    format!("Access denied for user: {}", &client_id),
+                    format!("Access denied for user: {}", &peer_id),
                 )),
             }
         };
 
-        if let Some(roles) = self.azure_user_groups.get(&client_id) {
+        if let Some(roles) = self.azure_user_groups.get(&peer_id) {
             let flatten_roles = self.impl_flatten_roles(roles);
-            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &client_id, flatten_roles);
+            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
             grant_from_flatten_roles(flatten_roles)
         } else if let Some(user) = peer.user() {
-            log!(target: "Access", Level::Debug, "Peer: {client_id}");
+            // connection to the parent broker has no user logged in, since it is outgoing
+            log!(target: "Access", Level::Debug, "Peer: {peer_id}");
+            let flatten_roles = self.flatten_roles(user).unwrap_or_default();
+            if flatten_roles.iter().any(|s| s == "preserve_access") {
+                // upper broker can be connected as a client, if this broker should preserve access resolved
+                // by master, then upper login should have the role 'preserve_access'
+                let access = frame.tag(Tag::Access as i32);
+                let access_level = frame.tag(Tag::AccessLevel as i32);
+                if access_level.is_some() || access.is_some() {
+                    log!(target: "Access", Level::Debug, "\tAccess granted by user role, access: {access:?}, access_level: {access_level:?}");
+                    return Ok((
+                        access_level.map(RpcValue::as_i32),
+                        access.map(RpcValue::as_str).map(|s| s.to_string()),
+                    ))
+                }
+            }
             grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
+
         } else {
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {
                     match connection_kind {
                         ConnectionKind::ToParentBroker { .. } => {
-                            log!(target: "Access", Level::Debug, "ParentBroker: {client_id}");
+                            log!(target: "Access", Level::Debug, "ParentBroker: {peer_id}");
                             let access = frame.tag(Tag::Access as i32);
                             let access_level = frame.tag(Tag::AccessLevel as i32);
                             if access_level.is_some() || access.is_some() {
-                                log!(target: "Access", Level::Debug, "\tGranted access: {access:?}, access level: {access_level:?}");
+                                log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
                                 Ok((
                                     access_level.map(RpcValue::as_i32),
                                     access.map(RpcValue::as_str).map(|s| s.to_string()),
@@ -446,12 +499,21 @@ impl BrokerState {
         });
         Ok(mount_point)
     }
-    fn set_subscribe_path(&mut self, peer_id: PeerId, subscribe_path: SubscribePath) -> shvrpc::Result<()> {
+    fn set_subscribe_path(
+        &mut self,
+        peer_id: PeerId,
+        subscribe_path: SubscribePath,
+    ) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&peer_id).ok_or("Peer not found")?;
         peer.subscribe_path = Some(subscribe_path);
         Ok(())
     }
-    fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> shvrpc::Result<()> {
+    fn add_peer(
+        &mut self,
+        peer_id: PeerId,
+        peer_kind: PeerKind,
+        sender: Sender<BrokerToPeerMessage>,
+    ) -> shvrpc::Result<()> {
         if self.peers.contains_key(&peer_id) {
             // this might happen when connection to parent broker is restored
             // after parent broker reset
@@ -586,7 +648,11 @@ impl BrokerState {
             .ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
         Ok(Self::subscriptions_to_map(&peer.subscriptions))
     }
-    pub(crate) fn subscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+    pub(crate) fn subscribe(
+        &mut self,
+        peer_id: PeerId,
+        subpar: &SubscriptionParam,
+    ) -> shvrpc::Result<bool> {
         let peer = self
             .peers
             .get_mut(&peer_id)
@@ -605,7 +671,11 @@ impl BrokerState {
             Ok(true)
         }
     }
-    pub(crate) fn unsubscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+    pub(crate) fn unsubscribe(
+        &mut self,
+        peer_id: PeerId,
+        subpar: &SubscriptionParam,
+    ) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {peer_id} - {subpar:?}");
         let peer = self
             .peers
@@ -754,24 +824,25 @@ impl BrokerState {
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
     }
-    pub(crate) fn set_access_role(&mut self, id: &str, role: Option<crate::config::Role>) {
+    pub(crate) fn set_access_role(&mut self, role_name: &str, role: Option<Role>) -> shvrpc::Result<()> {
         let sqlop = if let Some(role) = role {
-            let json = serde_json::to_string(&role).unwrap_or_else(|e| {
-                error!("Generate SQL statement error: {e}");
-                "".to_string()
-            });
-            let sql = if self.access.roles.contains_key(id) {
-                UpdateSqlOperation::Update { id, json }
+            let parsed_access_rules = parse_role_access_rules(&role)?;
+            let json = serde_json::to_string(&role).expect("JSON should be generated");
+            let sql = if self.access.roles.contains_key(role_name) {
+                UpdateSqlOperation::Update { id: role_name, json }
             } else {
-                UpdateSqlOperation::Insert { id, json }
+                UpdateSqlOperation::Insert { id: role_name, json }
             };
-            self.access.roles.insert(id.to_string(), role);
+            self.access.roles.insert(role_name.to_string(), role);
+            self.role_access_rules.insert(role_name.to_string(), parsed_access_rules);
             sql
         } else {
-            self.access.roles.remove(id);
-            UpdateSqlOperation::Delete { id }
+            self.access.roles.remove(role_name);
+            self.role_access_rules.remove(role_name);
+            UpdateSqlOperation::Delete { id: role_name }
         };
         self.uddate_sql("roles", sqlop);
+        Ok(())
     }
     fn uddate_sql(&self, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
@@ -823,8 +894,7 @@ impl BrokerState {
         }
     }
     pub(crate) fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        self
-            .active_tunnels
+        self.active_tunnels
             .iter()
             .filter(|(_id, tun)| tun.last_activity.is_some())
             .map(|(id, _tun)| *id)
@@ -880,6 +950,30 @@ impl BrokerState {
         }
     }
 }
+
+fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
+    let mut role_access = HashMap::new();
+    for (name, role) in roles {
+        match parse_role_access_rules(role) {
+            Ok(parsed_access_rules) => {
+                role_access.insert(name.clone(), parsed_access_rules);
+            }
+            Err(err) => {
+                panic!("Parse access rule error: {err}");
+            }
+        }
+    }
+    role_access
+}
+fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
+    let mut list = vec![];
+    for rule in &role.access {
+        let parsed_rule = ParsedAccessRule::try_from(rule)?;
+        list.push(parsed_rule);
+    }
+    Ok(list)
+}
+
 enum UpdateSqlOperation<'a> {
     Insert { id: &'a str, json: String },
     Update { id: &'a str, json: String },
@@ -917,36 +1011,7 @@ impl BrokerImpl {
         sql_connection: Option<rusqlite::Connection>,
     ) -> Self {
         let (command_sender, command_receiver) = unbounded();
-        let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
-        for (name, role) in &access.roles {
-            let mut list = vec![];
-            for rule in &role.access {
-                match ParsedAccessRule::new(
-                    &ShvRI::try_from(&*rule.shv_ri).expect("Valid SHV RI"),
-                    &rule.grant,
-                ) {
-                    Ok(rule) => {
-                        list.push(rule);
-                    }
-                    Err(err) => {
-                        panic!("Parse access rule: {} error: {}", rule.shv_ri, err);
-                    }
-                }
-            }
-            if !list.is_empty() {
-                role_access.insert(name.clone(), list);
-            }
-        }
-        let state = BrokerState {
-            peers: Default::default(),
-            mounts: Default::default(),
-            access,
-            role_access,
-            azure_user_groups: Default::default(),
-            command_sender: command_sender.clone(),
-            active_tunnels: Default::default(),
-            next_tunnel_number: 1,
-        };
+        let state = BrokerState::new(access, command_sender.clone());
         let mut broker = Self {
             state: Arc::new(RwLock::new(state)),
             nodes: Default::default(),
@@ -994,13 +1059,17 @@ impl BrokerImpl {
         }
         broker
     }
-    pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
+    pub(crate) async fn process_rpc_frame(
+        &mut self,
+        peer_id: PeerId,
+        frame: RpcFrame,
+    ) -> shvrpc::Result<()> {
         if frame.is_request() {
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
             let method = frame.method().unwrap_or_default().to_string();
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
             // println!("response meta: {:?}", response_meta);
-            let access = state_reader(&self.state).grant_for_request(peer_id, &frame);
+            let access = state_reader(&self.state).access_level_for_request(peer_id, &frame);
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
@@ -1043,7 +1112,10 @@ impl BrokerImpl {
                     let mut frame = frame;
                     frame.push_caller_id(peer_id);
                     frame.set_shvpath(node_path);
-                    frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
+                    frame.set_tag(
+                        Tag::AccessLevel as i32,
+                        grant_access_level.map(RpcValue::from),
+                    );
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                     let state = state_reader(&self.state);
                     match state.mounts.get(mount_point).expect("Should be mounted") {
@@ -1073,7 +1145,11 @@ impl BrokerImpl {
                         sender.send(msg).await?;
                         return Ok(());
                     }
-                    Action::NodeRequest { node_id, frame, ctx, } => {
+                    Action::NodeRequest {
+                        node_id,
+                        frame,
+                        ctx,
+                    } => {
                         let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame, &ctx) {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx) {
@@ -1271,7 +1347,10 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(
+        &mut self,
+        broker_command: BrokerCommand,
+    ) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id: client_id,
@@ -1344,7 +1423,11 @@ impl BrokerImpl {
                     .clone();
                 let mut msg = RpcMessage::from_meta(meta);
                 msg.set_result_or_error(result);
-                peer_sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
+                peer_sender
+                    .send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(
+                        &msg,
+                    )?))
+                    .await?;
             }
             BrokerCommand::RpcCall {
                 peer_id: client_id,
@@ -1423,21 +1506,34 @@ impl BrokerImpl {
         let mount_point = state_reader(&state).mount_point(peer_id);
         if mount_point.is_some() {
             state_writer(&state).gc_subscriptions();
-            if let SubscribePath::CanSubscribe(_) = BrokerImpl::check_subscribe_path(state.clone(), peer_id).await? {
+            if let SubscribePath::CanSubscribe(_) =
+                BrokerImpl::check_subscribe_path(state.clone(), peer_id).await?
+            {
                 let _ = state_writer(&state).update_forwarded_subscriptions();
                 Self::renew_forwarded_subscriptions(state.clone()).await?;
             }
         }
         Ok(())
     }
-    async fn check_subscribe_path(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<SubscribePath> {
+    async fn check_subscribe_path(
+        state: SharedBrokerState,
+        peer_id: PeerId,
+    ) -> shvrpc::Result<SubscribePath> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_path, peer_id: {peer_id}");
         if let Some(subpath) = state_reader(&state).subscribe_path(peer_id)? {
             log!(target: "Subscr", Level::Debug, "Device subscribe path resolved already, peer_id: {peer_id}, path: {:?}", &subpath);
             return Ok(subpath);
         }
-        async fn check_path_with_timeout(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
-            async fn check_path(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
+        async fn check_path_with_timeout(
+            client_id: PeerId,
+            path: &str,
+            broker_command_sender: &Sender<BrokerCommand>,
+        ) -> shvrpc::Result<Option<String>> {
+            async fn check_path(
+                client_id: PeerId,
+                path: &str,
+                broker_command_sender: &Sender<BrokerCommand>,
+            ) -> shvrpc::Result<Option<String>> {
                 let (response_sender, response_receiver) = unbounded();
                 let request = RpcMessage::new_request(path, METH_DIR, Some(METH_SUBSCRIBE.into()));
                 // let request = RpcMessage::new_request(".app", METH_DIR, Some("name".into()));
@@ -1455,7 +1551,10 @@ impl BrokerImpl {
                 }
                 Ok(None)
             }
-            match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
+            match check_path(client_id, path, broker_command_sender)
+                .timeout(Duration::from_secs(5))
+                .await
+            {
                 None => Err("Timeout".into()),
                 Some(res) => res,
             }
@@ -1479,7 +1578,9 @@ impl BrokerImpl {
         state_writer(&state).set_subscribe_path(peer_id, subscribe_path.clone())?;
         Ok(subscribe_path)
     }
-    pub(crate) async fn renew_forwarded_subscriptions(state: SharedBrokerState) -> shvrpc::Result<()> {
+    pub(crate) async fn renew_forwarded_subscriptions(
+        state: SharedBrokerState,
+    ) -> shvrpc::Result<()> {
         let mut to_subscribe: HashMap<_, _> = Default::default();
         for (peer_id, peer) in &mut state_writer(&state).peers {
             if let Some(SubscribePath::CanSubscribe(subpath)) = &peer.subscribe_path {
@@ -1507,14 +1608,28 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    async fn call_subscribe_with_timeout(state: SharedBrokerState, peer_id: PeerId, subscribe_path: &str, subscription: SubscriptionParam) -> shvrpc::Result<()> {
+    async fn call_subscribe_with_timeout(
+        state: SharedBrokerState,
+        peer_id: PeerId,
+        subscribe_path: &str,
+        subscription: SubscriptionParam,
+    ) -> shvrpc::Result<()> {
         let broker_command_sender = state_reader(&state).command_sender.clone();
-        async fn call_subscribe1(peer_id: PeerId, subscribe_path: &str, subscription: SubscriptionParam, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<()> {
+        async fn call_subscribe1(
+            peer_id: PeerId,
+            subscribe_path: &str,
+            subscription: SubscriptionParam,
+            broker_command_sender: &Sender<BrokerCommand>,
+        ) -> shvrpc::Result<()> {
             log!(target: "Subscr", Level::Debug, "call_subscribe, peer_id: {peer_id}, subscriptions: {:?}", &subscription);
             let (response_sender, response_receiver) = unbounded();
             let cmd = BrokerCommand::RpcCall {
                 peer_id,
-                request: RpcMessage::new_request(subscribe_path, METH_SUBSCRIBE, Some(subscription.to_rpcvalue())),
+                request: RpcMessage::new_request(
+                    subscribe_path,
+                    METH_SUBSCRIBE,
+                    Some(subscription.to_rpcvalue()),
+                ),
                 response_sender,
             };
             broker_command_sender.send(cmd).await?;
@@ -1522,7 +1637,15 @@ impl BrokerImpl {
             Ok(())
         }
         const TIMEOUT: u64 = 10;
-        match call_subscribe1(peer_id, subscribe_path, subscription.clone(), &broker_command_sender).timeout(Duration::from_secs(TIMEOUT)).await {
+        match call_subscribe1(
+            peer_id,
+            subscribe_path,
+            subscription.clone(),
+            &broker_command_sender,
+        )
+        .timeout(Duration::from_secs(TIMEOUT))
+        .await
+        {
             Some(r) => {
                 match r {
                     Ok(_) => {
@@ -1561,8 +1684,8 @@ pub(crate) struct NodeRequestContext {
 
 #[cfg(test)]
 mod test {
-    use crate::brokerimpl::state_reader;
     use crate::brokerimpl::BrokerImpl;
+    use crate::brokerimpl::state_reader;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     #[test]
