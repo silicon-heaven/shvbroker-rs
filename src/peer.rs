@@ -6,7 +6,7 @@ use futures::FutureExt;
 use futures::io::BufWriter;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
-use shvproto::{make_list, make_map, RpcValue};
+use shvproto::{RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -27,6 +27,8 @@ use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
+#[cfg(feature = "entra-id")]
+use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
 
@@ -136,10 +138,9 @@ pub(crate) async fn server_peer_loop(
                 },
                 "workflows" => {
                     debug!("Client ID: {peer_id}, workflows received.");
-                    let mut workflows = make_list!{
-                        "PLAIN",
-                        "SHA1",
-                    };
+                    let mut workflows = vec![];
+                    workflows.push(RpcValue::from("PLAIN"));
+                    workflows.push(RpcValue::from("SHA1"));
 
                     #[cfg(feature = "entra-id")]
                     {
