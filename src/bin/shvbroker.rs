@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use log::*;
 use simple_logger::SimpleLogger;
-use shvrpc::util::{join_path, parse_log_verbosity};
+use shvrpc::util::{parse_log_verbosity};
 use clap::{Args, Command, FromArgMatches, Parser};
 use rusqlite::Connection;
 use shvbroker::config::{AccessConfig, BrokerConfig, SharedBrokerConfig};
@@ -108,18 +108,18 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
     let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
     let (access, sql_connection) = if use_access_db {
-        let config_file = join_path(&data_dir, "shvbroker.sqlite");
-        if let Some(path) = Path::new(&config_file).parent() {
+        let config_file = Path::new(&data_dir).join("shvbroker.sqlite");
+        if let Some(path) = config_file.parent() {
             fs::create_dir_all(path)?;
         }
         let create_db = !Path::new(&config_file).exists();
         let sql_connection = Connection::open(&config_file)?;
         let config = if create_db {
-            info!("Creating SQLite access db: {config_file}");
+            info!("Creating SQLite access db: {}", config_file.to_str().expect("Invalid path"));
             create_access_sqlite(&sql_connection, &config.access)?;
             config.access.clone()
         } else {
-            info!("Loading SQLite access db: {config_file}");
+            info!("Loading SQLite access db: {}", config_file.to_str().expect("Invalid path"));
             load_access_sqlite(&sql_connection)?
         };
         (config, Some(sql_connection))

@@ -1,23 +1,23 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, ConnectionKind, Password, SharedBrokerConfig};
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Password, Role, SharedBrokerConfig};
 use crate::peer::next_peer_id;
 use crate::shvnode::{
-    find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode,
-    BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode,
-    ProcessRequestRetval, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
+    AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
+    BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
     DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
     DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS,
-    METH_SUBSCRIBE, SIG_LSMOD,
+    METH_SUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, ShvNode, find_longest_prefix,
+    process_local_dir_ls,
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
-use futures::select;
 use futures::FutureExt;
 use futures::StreamExt;
+use futures::select;
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{rpcvalue, Map, MetaMap, RpcValue};
+use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -26,7 +26,7 @@ use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId, Tag};
 use shvrpc::util::{join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol::channel;
-use smol::channel::{unbounded, Receiver, Sender};
+use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
@@ -143,7 +143,7 @@ impl Peer {
         }
         false
     }
-    pub(crate) fn user(&self) -> Option<&str> {
+    fn user(&self) -> Option<&str> {
         match &self.peer_kind {
             PeerKind::Client { user, .. } => Some(user),
             PeerKind::Broker(_) => None,
@@ -164,7 +164,14 @@ pub(crate) struct ParsedAccessRule {
     pub(crate) access: String,
     pub(crate) access_level: AccessLevel,
 }
+impl TryFrom<&AccessRule> for ParsedAccessRule {
+    type Error = shvrpc::Error;
 
+    fn try_from(rule: &AccessRule) -> Result<Self, Self::Error> {
+        let ri = ShvRI::try_from(rule.shv_ri.as_str()).map_err(|err| { format!("Parse RI: {} error: {err}", rule.shv_ri) })?;
+        ParsedAccessRule::new(&ri, &rule.grant)
+    }
+}
 impl ParsedAccessRule {
     pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
         Ok(Self {
@@ -185,8 +192,7 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(broker: BrokerImpl) {
-    let mut broker = broker;
+pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
     loop {
         select! {
             command = broker.command_receiver.recv().fuse() => match command {
@@ -228,11 +234,7 @@ async fn tcp_server_accept_loop(
     Ok(())
 }
 
-async fn ws_server_accept_loop(
-    address: String,
-    broker_sender: Sender<BrokerCommand>,
-    broker_config: SharedBrokerConfig
-) -> shvrpc::Result<()> {
+async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address).await?;
     info!("Listening on WebSocket: {address}");
     let mut incoming = listener.incoming();
@@ -292,7 +294,7 @@ pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
     pub(crate) access: AccessConfig,
-    role_access: HashMap<String, Vec<ParsedAccessRule>>,
+    role_access_rules: HashMap<String, Vec<ParsedAccessRule>>,
 
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
@@ -303,20 +305,28 @@ pub struct BrokerState {
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
+    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>) -> Self {
+        let role_access = parse_config_roles(&access.roles);
+        Self {
+            peers: Default::default(),
+            mounts: Default::default(),
+            access,
+            role_access_rules: role_access,
+            azure_user_groups: Default::default(),
+            command_sender,
+            active_tunnels: Default::default(),
+            next_tunnel_number: 1,
+        }
+    }
     fn mount_point(&self, peer_id: PeerId) -> Option<String> {
         self.peers
             .get(&peer_id)
             .and_then(|peer| peer.mount_point.clone())
     }
-    fn grant_for_request(
-        &self,
-        client_id: PeerId,
-        frame: &RpcFrame,
-    ) -> Result<(Option<i32>, Option<String>), RpcError> {
+    fn access_level_for_request(&self, peer_id: PeerId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
         log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
         let shv_path = frame.shv_path().unwrap_or_default();
         let method = frame.method().unwrap_or_default();
-        //let source = frame.source().unwrap_or_default();
         if method.is_empty() {
             return Err(RpcError::new(
                 RpcErrorCode::PermissionDenied,
@@ -325,7 +335,7 @@ impl BrokerState {
         }
         let peer = self
             .peers
-            .get(&client_id)
+            .get(&peer_id)
             .ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
         let ri = match ShvRI::from_path_method_signal(shv_path, method, None) {
             Ok(ri) => ri,
@@ -336,7 +346,7 @@ impl BrokerState {
         let grant_from_flatten_roles = |flatten_roles| {
             let found_grant = (|| {
                 for role_name in flatten_roles {
-                    if let Some(rules) = self.role_access.get(&role_name) {
+                    if let Some(rules) = self.role_access_rules.get(&role_name) {
                         log!(target: "Access", Level::Debug, "----------- access for role: {role_name}");
                         for rule in rules {
                             log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
@@ -354,28 +364,44 @@ impl BrokerState {
                 Some((access_level, access)) => Ok((Some(access_level), Some(access))),
                 None => Err(RpcError::new(
                     RpcErrorCode::PermissionDenied,
-                    format!("Access denied for user: {}", &client_id),
+                    format!("Access denied for user: {}", &peer_id),
                 )),
             }
         };
 
-        if let Some(roles) = self.azure_user_groups.get(&client_id) {
+        if let Some(roles) = self.azure_user_groups.get(&peer_id) {
             let flatten_roles = self.impl_flatten_roles(roles);
-            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &client_id, flatten_roles);
+            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
             grant_from_flatten_roles(flatten_roles)
         } else if let Some(user) = peer.user() {
-            log!(target: "Access", Level::Debug, "Peer: {client_id}");
+            // connection to the parent broker has no user logged in, since it is outgoing
+            log!(target: "Access", Level::Debug, "Peer: {peer_id}");
+            let flatten_roles = self.flatten_roles(user).unwrap_or_default();
+            if flatten_roles.iter().any(|s| s == "preserve_access") {
+                // upper broker can be connected as a client, if this broker should preserve access resolved
+                // by master, then upper login should have the role 'preserve_access'
+                let access = frame.tag(Tag::Access as i32);
+                let access_level = frame.tag(Tag::AccessLevel as i32);
+                if access_level.is_some() || access.is_some() {
+                    log!(target: "Access", Level::Debug, "\tAccess granted by user role, access: {access:?}, access_level: {access_level:?}");
+                    return Ok((
+                        access_level.map(RpcValue::as_i32),
+                        access.map(RpcValue::as_str).map(|s| s.to_string()),
+                    ))
+                }
+            }
             grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
+
         } else {
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {
                     match connection_kind {
                         ConnectionKind::ToParentBroker { .. } => {
-                            log!(target: "Access", Level::Debug, "ParentBroker: {client_id}");
+                            log!(target: "Access", Level::Debug, "ParentBroker: {peer_id}");
                             let access = frame.tag(Tag::Access as i32);
                             let access_level = frame.tag(Tag::AccessLevel as i32);
                             if access_level.is_some() || access.is_some() {
-                                log!(target: "Access", Level::Debug, "\tGranted access: {access:?}, access level: {access_level:?}");
+                                log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
                                 Ok((
                                     access_level.map(RpcValue::as_i32),
                                     access.map(RpcValue::as_str).map(|s| s.to_string()),
@@ -754,24 +780,25 @@ impl BrokerState {
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
     }
-    pub(crate) fn set_access_role(&mut self, id: &str, role: Option<crate::config::Role>) {
+    pub(crate) fn set_access_role(&mut self, role_name: &str, role: Option<Role>) -> shvrpc::Result<()> {
         let sqlop = if let Some(role) = role {
-            let json = serde_json::to_string(&role).unwrap_or_else(|e| {
-                error!("Generate SQL statement error: {e}");
-                "".to_string()
-            });
-            let sql = if self.access.roles.contains_key(id) {
-                UpdateSqlOperation::Update { id, json }
+            let parsed_access_rules = parse_role_access_rules(&role)?;
+            let json = serde_json::to_string(&role).expect("JSON should be generated");
+            let sql = if self.access.roles.contains_key(role_name) {
+                UpdateSqlOperation::Update { id: role_name, json }
             } else {
-                UpdateSqlOperation::Insert { id, json }
+                UpdateSqlOperation::Insert { id: role_name, json }
             };
-            self.access.roles.insert(id.to_string(), role);
+            self.access.roles.insert(role_name.to_string(), role);
+            self.role_access_rules.insert(role_name.to_string(), parsed_access_rules);
             sql
         } else {
-            self.access.roles.remove(id);
-            UpdateSqlOperation::Delete { id }
+            self.access.roles.remove(role_name);
+            self.role_access_rules.remove(role_name);
+            UpdateSqlOperation::Delete { id: role_name }
         };
         self.uddate_sql("roles", sqlop);
+        Ok(())
     }
     fn uddate_sql(&self, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
@@ -880,6 +907,23 @@ impl BrokerState {
         }
     }
 }
+
+fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
+    roles.
+        iter()
+        .map(|(name, role)| {
+            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
+        })
+        .collect()
+
+}
+fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
+    role.access
+        .iter()
+        .map(ParsedAccessRule::try_from)
+        .collect::<Result<Vec<_>,_>>()
+}
+
 enum UpdateSqlOperation<'a> {
     Insert { id: &'a str, json: String },
     Update { id: &'a str, json: String },
@@ -917,36 +961,7 @@ impl BrokerImpl {
         sql_connection: Option<rusqlite::Connection>,
     ) -> Self {
         let (command_sender, command_receiver) = unbounded();
-        let mut role_access: HashMap<String, Vec<ParsedAccessRule>> = Default::default();
-        for (name, role) in &access.roles {
-            let mut list = vec![];
-            for rule in &role.access {
-                match ParsedAccessRule::new(
-                    &ShvRI::try_from(&*rule.shv_ri).expect("Valid SHV RI"),
-                    &rule.grant,
-                ) {
-                    Ok(rule) => {
-                        list.push(rule);
-                    }
-                    Err(err) => {
-                        panic!("Parse access rule: {} error: {}", rule.shv_ri, err);
-                    }
-                }
-            }
-            if !list.is_empty() {
-                role_access.insert(name.clone(), list);
-            }
-        }
-        let state = BrokerState {
-            peers: Default::default(),
-            mounts: Default::default(),
-            access,
-            role_access,
-            azure_user_groups: Default::default(),
-            command_sender: command_sender.clone(),
-            active_tunnels: Default::default(),
-            next_tunnel_number: 1,
-        };
+        let state = BrokerState::new(access, command_sender.clone());
         let mut broker = Self {
             state: Arc::new(RwLock::new(state)),
             nodes: Default::default(),
@@ -1000,7 +1015,7 @@ impl BrokerImpl {
             let method = frame.method().unwrap_or_default().to_string();
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
             // println!("response meta: {:?}", response_meta);
-            let access = state_reader(&self.state).grant_for_request(peer_id, &frame);
+            let access = state_reader(&self.state).access_level_for_request(peer_id, &frame);
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
@@ -1561,8 +1576,8 @@ pub(crate) struct NodeRequestContext {
 
 #[cfg(test)]
 mod test {
-    use crate::brokerimpl::state_reader;
     use crate::brokerimpl::BrokerImpl;
+    use crate::brokerimpl::state_reader;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     #[test]
