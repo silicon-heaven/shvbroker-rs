@@ -6,6 +6,7 @@ use futures::FutureExt;
 use futures::io::BufWriter;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
+use shvproto::make_list;
 use shvproto::{RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
@@ -138,9 +139,11 @@ pub(crate) async fn server_peer_loop(
                 },
                 "workflows" => {
                     debug!("Client ID: {peer_id}, workflows received.");
-                    let mut workflows = vec![];
-                    workflows.push(RpcValue::from("PLAIN"));
-                    workflows.push(RpcValue::from("SHA1"));
+                    #[cfg_attr(not(feature = "entra-id"), allow(unused_mut))]
+                    let mut workflows = make_list!(
+                        "PLAIN",
+                        "SHA1",
+                    );
 
                     #[cfg(feature = "entra-id")]
                     {
