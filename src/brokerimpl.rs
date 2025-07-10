@@ -168,7 +168,7 @@ impl TryFrom<&AccessRule> for ParsedAccessRule {
     type Error = shvrpc::Error;
 
     fn try_from(rule: &AccessRule) -> Result<Self, Self::Error> {
-        let ri = ShvRI::try_from(&*rule.shv_ri).map_err(|err| { format!("Parse RI: {} error: {err}", rule.shv_ri) })?;
+        let ri = ShvRI::try_from(rule.shv_ri.as_str()).map_err(|err| { format!("Parse RI: {} error: {err}", rule.shv_ri) })?;
         ParsedAccessRule::new(&ri, &rule.grant)
     }
 }
@@ -192,8 +192,7 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(broker: BrokerImpl) {
-    let mut broker = broker;
+pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
     loop {
         select! {
             command = broker.command_receiver.recv().fuse() => match command {
@@ -910,26 +909,19 @@ impl BrokerState {
 }
 
 fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
-    let mut role_access = HashMap::new();
-    for (name, role) in roles {
-        match parse_role_access_rules(role) {
-            Ok(parsed_access_rules) => {
-                role_access.insert(name.clone(), parsed_access_rules);
-            }
-            Err(err) => {
-                panic!("Parse access rule error: {err}");
-            }
-        }
-    }
-    role_access
+    roles.
+        iter()
+        .map(|(name, role)| {
+            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
+        })
+        .collect()
+
 }
 fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
-    let mut list = vec![];
-    for rule in &role.access {
-        let parsed_rule = ParsedAccessRule::try_from(rule)?;
-        list.push(parsed_rule);
-    }
-    Ok(list)
+    role.access
+        .iter()
+        .map(ParsedAccessRule::try_from)
+        .collect::<Result<Vec<_>,_>>()
 }
 
 enum UpdateSqlOperation<'a> {
