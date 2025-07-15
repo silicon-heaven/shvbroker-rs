@@ -777,8 +777,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.state).set_access_role(key.as_str(), role);
-                Ok(ProcessRequestRetval::Retval(().into()))
+                state_writer(&ctx.state).set_access_role(key.as_str(), role).map(|_| ProcessRequestRetval::Retval(().into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
