@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicI64, Ordering};
-
 use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
@@ -32,12 +30,6 @@ use crate::serial::create_serial_frame_reader_writer;
 use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
-
-static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
-pub(crate)  fn next_peer_id() -> i64 {
-    let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
-    old_id + 1
-}
 
 pub(crate) async fn try_server_tcp_peer_loop(
     peer_id: PeerId,

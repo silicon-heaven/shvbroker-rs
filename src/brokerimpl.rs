@@ -1,6 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Password, Role, SharedBrokerConfig};
-use crate::peer::next_peer_id;
 use crate::shvnode::{
     AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
     BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
@@ -30,6 +29,7 @@ use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
@@ -60,7 +60,7 @@ impl Subscription {
 }
 
 #[derive(Debug)]
-pub(crate) enum BrokerCommand {
+pub enum BrokerCommand {
     GetPassword {
         sender: Sender<BrokerToPeerMessage>,
         user: String,
@@ -100,7 +100,7 @@ pub(crate) enum BrokerCommand {
 }
 
 #[derive(Debug)]
-pub(crate) enum BrokerToPeerMessage {
+pub enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
     DisconnectByBroker,
@@ -112,7 +112,7 @@ pub(crate) enum SubscribePath {
     CanSubscribe(String),
 }
 #[derive(Debug, Clone)]
-pub(crate) enum PeerKind {
+pub enum PeerKind {
     Client {
         user: String,
     },
@@ -150,6 +150,12 @@ impl Peer {
             PeerKind::Device { user, .. } => Some(user),
         }
     }
+}
+
+static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
+pub  fn next_peer_id() -> i64 {
+    let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
+    old_id + 1
 }
 
 pub(crate) enum Mount {
@@ -935,7 +941,7 @@ pub struct BrokerImpl {
     nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
     pending_rpc_calls: Vec<PendingRpcCall>,
-    pub(crate) command_sender: Sender<BrokerCommand>,
+    pub command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
 
     pub(crate) sql_connection: Option<rusqlite::Connection>,
