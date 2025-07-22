@@ -2,10 +2,10 @@ use std::fs;
 use std::path::Path;
 use log::*;
 use simple_logger::SimpleLogger;
-use shvrpc::util::{parse_log_verbosity};
+use shvrpc::util::parse_log_verbosity;
 use clap::{Args, Command, FromArgMatches, Parser};
 use rusqlite::Connection;
-use shvbroker::config::{AccessConfig, BrokerConfig, SharedBrokerConfig};
+use shvbroker::{brokerimpl::BrokerImpl, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -51,7 +51,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     let cli_tunneling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
     let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
     let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
-    
+
     if cli_opts.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());   
@@ -131,7 +131,8 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    smol::block_on(shvbroker::brokerimpl::create_broker_instance(SharedBrokerConfig::new(config), access, sql_connection))
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, sql_connection);
+    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl))
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
@@ -215,4 +216,3 @@ fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
 
     Ok(access)
 }
-

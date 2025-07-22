@@ -5,11 +5,11 @@ use serialport::SerialPort;
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpcmessage::PeerId;
 use shvrpc::serialrw::{SerialFrameReader, SerialFrameWriter};
-use smol::{Unblock};
+use smol::Unblock;
 use smol::channel::Sender;
 use smol::io::BufReader;
-use crate::brokerimpl::{BrokerCommand};
-use crate::config::{SharedBrokerConfig};
+use crate::brokerimpl::BrokerCommand;
+use crate::config::SharedBrokerConfig;
 use crate::peer::server_peer_loop;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {

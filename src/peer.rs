@@ -7,7 +7,7 @@ use futures::io::BufWriter;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::make_list;
-use shvproto::{RpcValue};
+use shvproto::RpcValue;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -20,7 +20,7 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
-use smol::{channel};
+use smol::channel;
 use smol::channel::Sender;
 use smol::io::BufReader;
 use smol::net::TcpStream;
@@ -264,7 +264,7 @@ pub(crate) async fn server_peer_loop(
 
                     user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
-                    broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
+                    broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await?;
                     match peer_reader.recv().await? {
                         BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
                             let chkpwd = || {
