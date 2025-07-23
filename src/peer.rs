@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicI64, Ordering};
-
 use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
@@ -7,7 +5,7 @@ use futures::io::BufWriter;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::make_list;
-use shvproto::{RpcValue};
+use shvproto::RpcValue;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -20,7 +18,7 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
-use smol::{channel};
+use smol::channel;
 use smol::channel::Sender;
 use smol::io::BufReader;
 use smol::net::TcpStream;
@@ -32,12 +30,6 @@ use crate::serial::create_serial_frame_reader_writer;
 use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
-
-static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
-pub(crate)  fn next_peer_id() -> i64 {
-    let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
-    old_id + 1
-}
 
 pub(crate) async fn try_server_tcp_peer_loop(
     peer_id: PeerId,
@@ -264,7 +256,7 @@ pub(crate) async fn server_peer_loop(
 
                     user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
-                    broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await.unwrap();
+                    broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await?;
                     match peer_reader.recv().await? {
                         BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
                             let chkpwd = || {

@@ -26,7 +26,7 @@ pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 
 pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
 pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
-const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
+pub const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
 pub const DOT_LOCAL_GRANT: &str = "dot-local";
 pub const DOT_LOCAL_DIR: &str = ".local";
 pub const DOT_LOCAL_HACK: &str = "dot-local-hack";
@@ -55,7 +55,7 @@ impl From<Option<&RpcValue>> for DirParam {
     }
 }
 
-fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
+pub fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
     if let DirParam::MethodExists(ref method_name) = param {
         return methods.any(|mm| mm.name == method_name).into()
     }

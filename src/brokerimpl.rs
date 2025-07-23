@@ -1,6 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Password, Role, SharedBrokerConfig};
-use crate::peer::next_peer_id;
 use crate::shvnode::{
     AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
     BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
@@ -30,6 +29,7 @@ use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
@@ -60,7 +60,7 @@ impl Subscription {
 }
 
 #[derive(Debug)]
-pub(crate) enum BrokerCommand {
+pub enum BrokerCommand {
     GetPassword {
         sender: Sender<BrokerToPeerMessage>,
         user: String,
@@ -100,7 +100,7 @@ pub(crate) enum BrokerCommand {
 }
 
 #[derive(Debug)]
-pub(crate) enum BrokerToPeerMessage {
+pub enum BrokerToPeerMessage {
     PasswordSha1(Option<Vec<u8>>),
     SendFrame(RpcFrame),
     DisconnectByBroker,
@@ -112,7 +112,7 @@ pub(crate) enum SubscribePath {
     CanSubscribe(String),
 }
 #[derive(Debug, Clone)]
-pub(crate) enum PeerKind {
+pub enum PeerKind {
     Client {
         user: String,
     },
@@ -150,6 +150,12 @@ impl Peer {
             PeerKind::Device { user, .. } => Some(user),
         }
     }
+}
+
+static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
+pub  fn next_peer_id() -> i64 {
+    let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
+    old_id + 1
 }
 
 pub(crate) enum Mount {
@@ -261,22 +267,22 @@ async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerComm
     Ok(())
 }
 
-pub async fn create_broker_instance(config: SharedBrokerConfig, access: AccessConfig, sql_connection: Option<rusqlite::Connection>) -> shvrpc::Result<()> {
-    let broker_impl = BrokerImpl::new(config.clone(), access, sql_connection);
+pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
+    let broker_config = broker_impl.config.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
-    if let Some(address) = &config.listen.tcp {
-        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
+    if let Some(address) = &broker_config.listen.tcp {
+        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), broker_config.clone()));
     }
-    if let Some(address) = &config.listen.ws {
-        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), config.clone()));
+    if let Some(address) = &broker_config.listen.ws {
+        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), broker_config.clone()));
     }
-    if let Some(port) = &config.listen.serial {
+    if let Some(port) = &broker_config.listen.serial {
         let peer_id = next_peer_id();
-        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), config.clone()));
+        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), broker_config.clone()));
     }
 
-    let broker_peers = &config.connections;
+    let broker_peers = &broker_config.connections;
     for peer_config in broker_peers {
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
         if peer_config.enabled {
@@ -931,10 +937,11 @@ enum UpdateSqlOperation<'a> {
 }
 pub struct BrokerImpl {
     pub(crate) state: SharedBrokerState,
+    pub(crate) config: SharedBrokerConfig,
     nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
     pending_rpc_calls: Vec<PendingRpcCall>,
-    pub(crate) command_sender: Sender<BrokerCommand>,
+    pub command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
 
     pub(crate) sql_connection: Option<rusqlite::Connection>,
@@ -955,7 +962,7 @@ fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
     }
 }
 impl BrokerImpl {
-    pub(crate) fn new(
+    pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
         sql_connection: Option<rusqlite::Connection>,
@@ -969,6 +976,7 @@ impl BrokerImpl {
             command_sender,
             command_receiver,
             sql_connection,
+            config: config.clone(),
         };
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             state_writer(&broker.state)

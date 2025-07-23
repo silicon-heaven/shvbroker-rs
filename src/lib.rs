@@ -8,7 +8,7 @@ mod test;
 mod tunnelnode;
 mod serial;
 
-mod spawn {
+pub mod spawn {
     use log::error;
     use std::future::Future;
 
