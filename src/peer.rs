@@ -349,15 +349,13 @@ pub(crate) async fn server_peer_loop(
                         }
                         let mut frame = frame;
                         if frame.is_request() {
-                            let broker_id = broker_config.name.as_ref()
-                                    .map(|name| format!("@{name}"))
-                                    .unwrap_or_default();
-                            let user_id = format!("{}{broker_id}", user.as_str());
-                            let user_id_chain = frame.tag(Tag::UserId as i32)
-                                .and_then(|id| if id.as_str().is_empty() { None } else { Some(id.as_str()) } )
-                                .map(|id| format!("{id},{user_id}"))
-                                .unwrap_or(user_id);
-                            frame.set_tag(Tag::UserId as i32, Some(user_id_chain.into()));
+                            if let Some(req_user_id) = frame.user_id() {
+                                let broker_id = broker_config.name.as_ref()
+                                        .map(|name| format!("@{name}"))
+                                        .unwrap_or_default();
+                                let user_id_chain = format!("{req_user_id},{user}{broker_id}");
+                                frame.set_tag(Tag::UserId as i32, Some(user_id_chain.into()));
+                            }
                         }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);

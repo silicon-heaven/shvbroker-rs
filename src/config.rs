@@ -220,7 +220,7 @@ impl Default for BrokerConfig {
             },
         };
         Self {
-            name: None,
+            name: Some("foo".into()),
             listen: Listen { tcp: Some("localhost:3755".to_string()), ws: None, ssl: None, serial: None },
             use_access_db: false,
             shv2_compatibility: false,
