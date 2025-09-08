@@ -243,11 +243,10 @@ pub(crate) async fn server_peer_loop(
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
                             frame_writer.send_result(resp_meta.clone(), result.into()).await?;
-                            if let Some(options) = params.get("options") {
-                                if let Some(device) = options.as_map().get("device") {
+                            if let Some(options) = params.get("options")
+                                && let Some(device) = options.as_map().get("device") {
                                     device_options = device.clone();
                                 }
-                            }
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
                             break 'login_loop;
@@ -295,11 +294,10 @@ pub(crate) async fn server_peer_loop(
                                 let mut result = shvproto::Map::new();
                                 result.insert("clientId".into(), RpcValue::from(peer_id));
                                 frame_writer.send_result(resp_meta, result.into()).await?;
-                                if let Some(options) = params.get("options") {
-                                    if let Some(device) = options.as_map().get("device") {
+                                if let Some(options) = params.get("options")
+                                    && let Some(device) = options.as_map().get("device") {
                                         device_options = device.clone();
                                     }
-                                }
                                 break 'login_loop;
                             } else {
                                 warn!("Peer: {peer_id}, invalid login credentials.");
@@ -348,15 +346,14 @@ pub(crate) async fn server_peer_loop(
                             continue 'session_loop;
                         }
                         let mut frame = frame;
-                        if frame.is_request() {
-                            if let Some(req_user_id) = frame.user_id() {
+                        if frame.is_request()
+                            && let Some(req_user_id) = frame.user_id() {
                                 let broker_id = broker_config.name.as_ref()
                                         .map(|name| format!("@{name}"))
                                         .unwrap_or_default();
                                 let user_id_chain = format!("{req_user_id},{user}{broker_id}");
                                 frame.set_tag(Tag::UserId as i32, Some(user_id_chain.into()));
                             }
-                        }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);
                         fut_receive_frame = frame_reader.receive_frame().fuse();
@@ -563,11 +560,10 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
                             let mut frame = frame;
                             match &config.connection_kind {
                                 ConnectionKind::ToParentBroker{shv_root} => {
-                                    if frame.is_signal() {
-                                        if let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
+                                    if frame.is_signal()
+                                        && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
                                             frame.set_shvpath(&new_path);
                                         }
-                                    }
                                 }
                                 ConnectionKind::ToChildBroker{ .. } => {
                                     if frame.is_request() {
