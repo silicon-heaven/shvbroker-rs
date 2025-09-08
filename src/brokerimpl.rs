@@ -941,10 +941,10 @@ pub struct BrokerImpl {
 
     pub(crate) sql_connection: Option<rusqlite::Connection>,
 }
-pub(crate) fn state_reader(state: &SharedBrokerState) -> RwLockReadGuard<BrokerState> {
+pub(crate) fn state_reader<'a>(state: &'a SharedBrokerState) -> RwLockReadGuard<'a, BrokerState> {
     state.read().unwrap()
 }
-pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<BrokerState> {
+pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard<'a, BrokerState> {
     state.write().unwrap()
 }
 fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
