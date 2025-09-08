@@ -469,11 +469,10 @@ impl BrokerState {
         }
         self.peers.remove(&peer_id);
         self.mounts.retain(|_k, v| {
-            if let Mount::Peer(id) = v {
-                if *id == peer_id {
+            if let Mount::Peer(id) = v
+                && *id == peer_id {
                     return false;
                 }
-            }
             true
         });
         Ok(mount_point)
@@ -507,12 +506,11 @@ impl BrokerState {
                 mount_point,
                 ..
             } => 'find_mount: {
-                if let Some(mount_point) = mount_point {
-                    if mount_point.starts_with("test/") {
+                if let Some(mount_point) = mount_point
+                    && mount_point.starts_with("test/") {
                         info!("Client id: {} mounted on path: '{}'", peer_id, &mount_point);
                         break 'find_mount Some(mount_point.clone());
                     }
-                }
                 if let Some(device_id) = &device_id {
                     match self.access.mounts.get(device_id) {
                         None => {
@@ -587,11 +585,10 @@ impl BrokerState {
     }
     pub(crate) fn mounted_client_info(&self, mount_point: &str) -> Option<rpcvalue::Map> {
         for (client_id, peer) in &self.peers {
-            if let Some(mount_point1) = &peer.mount_point {
-                if mount_point1 == mount_point {
+            if let Some(mount_point1) = &peer.mount_point
+                && mount_point1 == mount_point {
                     return Some(BrokerState::peer_to_info(*client_id, peer));
                 }
-            }
         }
         None
     }
@@ -686,8 +683,8 @@ impl BrokerState {
         for (peer_id, peer) in &self.peers {
             if let Some(SubscribePath::CanSubscribe(_)) = &peer.subscribe_path {
                 for ri in &fwd_subs {
-                    if let Some(mount_point) = &peer.mount_point {
-                        if let Ok(Some((_local, remote))) =
+                    if let Some(mount_point) = &peer.mount_point
+                        && let Ok(Some((_local, remote))) =
                             split_glob_on_match(ri.path(), mount_point)
                         {
                             log!(target: "Subscr", Level::Debug, "Schedule forward subscription: {}:{}:{:?}", remote, ri.method(), ri.signal());
@@ -701,7 +698,6 @@ impl BrokerState {
                                 to_forward.insert(*peer_id, set1);
                             }
                         }
-                    }
                 }
             }
         }
@@ -711,15 +707,14 @@ impl BrokerState {
                 peer.forwarded_subscriptions.retain_mut(|subs| {
                     if to_fwd_peer.contains(&subs.param.ri) {
                         to_fwd_peer.remove(&subs.param.ri);
-                        if let Some(subscribed) = &subs.subscribed {
-                            if let Some(ttl) = subs.param.ttl {
+                        if let Some(subscribed) = &subs.subscribed
+                            && let Some(ttl) = subs.param.ttl {
                                 let expires = subscribed.add(Duration::from_secs(ttl as u64 - 10));
                                 if expires < Instant::now() {
                                     // subscriptions near to expiration, schedule subscribe RPC call
                                     subs.subscribed = None;
                                 }
                             }
-                        }
                         true
                     } else {
                         false
@@ -946,10 +941,10 @@ pub struct BrokerImpl {
 
     pub(crate) sql_connection: Option<rusqlite::Connection>,
 }
-pub(crate) fn state_reader(state: &SharedBrokerState) -> RwLockReadGuard<BrokerState> {
+pub(crate) fn state_reader<'a>(state: &'a SharedBrokerState) -> RwLockReadGuard<'a, BrokerState> {
     state.read().unwrap()
 }
-pub(crate) fn state_writer(state: &SharedBrokerState) -> RwLockWriteGuard<BrokerState> {
+pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard<'a, BrokerState> {
     state.write().unwrap()
 }
 fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
@@ -1471,11 +1466,10 @@ impl BrokerImpl {
                 };
                 broker_command_sender.send(cmd).await?;
                 let resp = response_receiver.recv().await?.to_rpcmesage()?;
-                if let Ok(Response::Success(val)) = resp.response() {
-                    if !val.is_null() {
+                if let Ok(Response::Success(val)) = resp.response()
+                    && !val.is_null() {
                         return Ok(Some(path.to_string()));
                     }
-                }
                 Ok(None)
             }
             match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
@@ -1488,8 +1482,8 @@ impl BrokerImpl {
         for path in [".broker/currentClient", ".broker/app"] {
             match check_path_with_timeout(peer_id, path, &broker_command_sender).await {
                 Ok(path) => {
-                    if path.is_some() {
-                        subscribe_path = SubscribePath::CanSubscribe(path.unwrap().clone());
+                    if let Some(path) = path {
+                        subscribe_path = SubscribePath::CanSubscribe(path.clone());
                         break;
                     }
                 }

@@ -176,12 +176,11 @@ pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<V
             dir_exists = true;
             if !key_rest.is_empty() {
                 let mut updirs = key_rest.split('/');
-                if let Some(dir) = updirs.next() {
-                    if !unique_dirs.contains(dir) {
+                if let Some(dir) = updirs.next()
+                    && !unique_dirs.contains(dir) {
                         dirs.push(dir.to_string());
                         unique_dirs.insert(dir.to_string());
                     }
-                }
             }
         } else {
             break;
