@@ -76,7 +76,7 @@ pub struct CanBusDeviceConfig {
     #[serde(default)]
     pub enabled: bool,
     pub name: String,
-    pub can_id: u8,
+    pub address: u8,
 }
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
