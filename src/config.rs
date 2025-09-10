@@ -66,7 +66,7 @@ type DeviceId = String;
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CanBusConnectionConfig {
     #[serde(default)]
-    pub enabled:bool,
+    pub enabled: bool,
     pub interface: String,
     #[serde(default)]
     pub devices: Vec<CanBusDeviceConfig>,
@@ -74,7 +74,7 @@ pub struct CanBusConnectionConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CanBusDeviceConfig {
     #[serde(default)]
-    pub enabled:bool,
+    pub enabled: bool,
     pub name: String,
     pub can_id: u8,
 }
