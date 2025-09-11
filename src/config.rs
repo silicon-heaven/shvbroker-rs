@@ -21,6 +21,8 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub connections: Vec<BrokerConnectionConfig>,
     #[serde(default)]
+    pub canbus: Option<CanBusConnectionConfig>,
+    #[serde(default)]
     pub access: AccessConfig,
     #[serde(default)]
     pub tunnelling: TunnellingConfig,
@@ -60,6 +62,22 @@ pub struct BrokerConnectionConfig {
     pub client: ClientConfig,
 }
 type DeviceId = String;
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CanBusConnectionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub interface: String,
+    #[serde(default)]
+    pub devices: Vec<CanBusDeviceConfig>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CanBusDeviceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub name: String,
+    pub address: u8,
+}
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
@@ -288,6 +306,7 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
+            canbus: Default::default(),
         }
     }
 }
