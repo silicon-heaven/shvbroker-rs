@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_tungstenite::WebSocketStream;
 use futures::select;
 use futures::FutureExt;
@@ -6,6 +8,7 @@ use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::make_list;
 use shvproto::RpcValue;
+use shvrpc::client::ClientConfig;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
@@ -476,33 +479,62 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let bwr = BufWriter::new(writer);
         let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
         let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
-        return broker_as_client_peer_loop(peer_id, config, false, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(
+            peer_id,
+            login_params_from_client_config(&config.client),
+            config.client.heartbeat_interval,
+            config.connection_kind,
+            false,
+            broker_writer,
+            frame_reader,
+            frame_writer,
+        ).await
     } else if scheme == "serial" {
         let port_name = url.path();
         debug!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-        return broker_as_client_peer_loop(peer_id, config, true, broker_writer, frame_reader, frame_writer).await
+        return broker_as_client_peer_loop(
+            peer_id,
+            login_params_from_client_config(&config.client),
+            config.client.heartbeat_interval,
+            config.connection_kind,
+            true,
+            broker_writer,
+            frame_reader,
+            frame_writer,
+        ).await
     }
     Err(format!("Scheme {scheme} is not supported yet.").into())
 }
-async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, reset_session: bool, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
-    // login
-    let url = &config.client.url;
-    let (user, password) = login_from_url(url);
-    let heartbeat_interval = config.client.heartbeat_interval;
-    let login_params = LoginParams {
+
+fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams {
+    let (user, password) = login_from_url(&client_config.url);
+    LoginParams {
         user,
         password,
-        mount_point: config.client.mount.clone().unwrap_or_default().to_owned(),
-        device_id: config.client.device_id.clone().unwrap_or_default().to_owned(),
-        heartbeat_interval,
+        mount_point: client_config.mount.clone().unwrap_or_default().to_owned(),
+        device_id: client_config.device_id.clone().unwrap_or_default().to_owned(),
+        heartbeat_interval: client_config.heartbeat_interval,
         ..Default::default()
-    };
+    }
+}
 
+#[allow(clippy::too_many_arguments)]
+async fn broker_as_client_peer_loop(
+    peer_id: PeerId,
+    login_params: LoginParams,
+    heartbeat_interval: Duration,
+    connection_kind: ConnectionKind,
+    reset_session: bool,
+    broker_writer: Sender<BrokerCommand>,
+    mut frame_reader: impl FrameReader + Send,
+    mut frame_writer: impl FrameWriter + Send,
+) -> shvrpc::Result<()>
+{
     info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
     client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).await?;
 
-    match &config.connection_kind {
+    match &connection_kind {
         ConnectionKind::ToParentBroker { .. } => {
             info!("Login to parent broker OK");
         }
@@ -514,7 +546,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {
         peer_id,
-        peer_kind: PeerKind::Broker(config.connection_kind.clone()),
+        peer_kind: PeerKind::Broker(connection_kind.clone()),
         sender: broker_to_peer_sender,
     }).await?;
 
@@ -536,7 +568,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
             },
             res_frame = fut_receive_frame => match res_frame {
                 Ok(frame) => {
-                    process_broker_client_peer_frame(peer_id, frame, &config.connection_kind, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
@@ -561,7 +593,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
                         BrokerToPeerMessage::SendFrame(frame) => {
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
-                            match &config.connection_kind {
+                            match &connection_kind {
                                 ConnectionKind::ToParentBroker{shv_root} => {
                                     if frame.is_signal()
                                         && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
@@ -570,7 +602,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
                                 }
                                 ConnectionKind::ToChildBroker{ .. } => {
                                     if frame.is_request() {
-                                        frame = fix_request_frame_shv_root(frame, &config.connection_kind)?;
+                                        frame = fix_request_frame_shv_root(frame, &connection_kind)?;
                                     }
                                 }
                             }
