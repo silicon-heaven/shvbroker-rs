@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
+use std::time::Duration;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
-use shvrpc::client::ClientConfig;
+use shvrpc::client::{ClientConfig, LoginParams};
 use url::Url;
 
 pub type SharedBrokerConfig = Arc<BrokerConfig>;
@@ -21,7 +22,7 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub connections: Vec<BrokerConnectionConfig>,
     #[serde(default)]
-    pub canbus: Option<CanBusConnectionConfig>,
+    pub canbus: Vec<CanInterfaceConfig>,
     #[serde(default)]
     pub access: AccessConfig,
     #[serde(default)]
@@ -64,20 +65,54 @@ pub struct BrokerConnectionConfig {
 type DeviceId = String;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanBusConnectionConfig {
+pub struct CanInterfaceConfig {
     #[serde(default)]
     pub enabled: bool,
+    // can0, can1, vcan0, ...
     pub interface: String,
+    pub address: u8,
     #[serde(default)]
-    pub devices: Vec<CanBusDeviceConfig>,
+    pub connections: Vec<CanConnectionConfig>,
 }
+
+const fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(60)
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanBusDeviceConfig {
+pub struct CanConnectionConfig {
     #[serde(default)]
     pub enabled: bool,
     pub name: String,
+    pub user: String,
+    pub password: String,
     pub address: u8,
+    pub connection_kind: ConnectionKind,
+    #[serde(
+        default = "default_heartbeat_interval",
+        deserialize_with = "duration_str::deserialize_duration",
+        // serialize_with = "serialize_duration"
+    )]
+    pub heartbeat_interval: Duration,
+    #[serde(
+        default,
+        deserialize_with = "duration_str::deserialize_option_duration",
+        // serialize_with = "serialize_option_duration"
+    )]
+    pub reconnect_interval: Option<Duration>,
 }
+
+impl CanConnectionConfig {
+    pub fn to_login_params(&self) -> LoginParams {
+        LoginParams {
+            user: self.user.clone(),
+            password: self.password.clone(),
+            heartbeat_interval: self.heartbeat_interval,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
