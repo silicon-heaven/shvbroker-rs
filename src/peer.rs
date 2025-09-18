@@ -1,19 +1,31 @@
+use std::collections::HashMap;
+use std::pin::pin;
 use std::time::Duration;
 
 use async_tungstenite::WebSocketStream;
+use futures::channel::mpsc::UnboundedSender;
 use futures::select;
+use futures::stream::FuturesUnordered;
 use futures::FutureExt;
 use futures::io::BufWriter;
+use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::make_list;
 use shvproto::RpcValue;
+use shvrpc::canrw::CanFrameReader;
+use shvrpc::canrw::CanFrameWriter;
 use shvrpc::client::ClientConfig;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::{Protocol, RpcFrame};
+use smol::Task;
+use socketcan::CanFdFrame;
+use crate::brokerimpl::next_peer_id;
+use crate::config::CanConnectionConfig;
+use crate::config::CanInterfaceConfig;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
@@ -517,6 +529,193 @@ fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams 
         heartbeat_interval: client_config.heartbeat_interval,
         ..Default::default()
     }
+}
+
+pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig, broker_sender: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+    let can_iface = &can_interface_config.interface;
+    let broker_address = can_interface_config.address;
+
+    use shvrpc::canrw::{
+        ShvCanFrame,
+        AckFrame as ShvCanAckFrame,
+        DataFrame as ShvCanDataFrame
+    };
+
+    struct PeerChannels {
+        writer_ack_tx: UnboundedSender<ShvCanAckFrame>,
+        reader_frames_tx: UnboundedSender<ShvCanDataFrame>,
+    }
+
+    let mut peers_channels = HashMap::<u8, PeerChannels>::new();
+    let mut peers_tasks: FuturesUnordered<Task<(PeerId, u8, shvrpc::Result<()>)>> = FuturesUnordered::new();
+
+    let (writer_frames_tx, mut writer_frames_rx) = futures::channel::mpsc::unbounded();
+    let (reader_ack_tx, mut reader_ack_rx) = futures::channel::mpsc::unbounded();
+
+    fn run_peer_task(
+        broker_address: u8,
+        connection_config: CanConnectionConfig,
+        tasks: &mut FuturesUnordered<Task<(PeerId, u8, shvrpc::Result<()>)>>,
+        channels: &mut HashMap::<u8, PeerChannels>,
+        broker_sender: Sender<BrokerCommand>,
+        writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
+        reader_ack_tx: UnboundedSender<ShvCanAckFrame>,
+    ) {
+        let peer_address = connection_config.address;
+        let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
+        let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
+        channels.insert(peer_address, PeerChannels { writer_ack_tx, reader_frames_tx });
+        tasks.push(smol::spawn(async move {
+            let peer_id = next_peer_id();
+            let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_address);
+            let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_address, broker_address);
+
+            let res = broker_as_client_peer_loop(
+                peer_id,
+                connection_config.to_login_params(),
+                connection_config.heartbeat_interval,
+                connection_config.connection_kind,
+                false, // FIXME
+                broker_sender,
+                frame_reader,
+                frame_writer,
+            ).await;
+
+            (peer_id, peer_address, res)
+        }));
+    }
+
+    for connection_config in &can_interface_config.connections {
+        if !connection_config.enabled {
+            continue;
+        }
+        run_peer_task(
+            broker_address,
+            connection_config.clone(),
+            &mut peers_tasks,
+            &mut peers_channels,
+            broker_sender.clone(),
+            writer_frames_tx.clone(),
+            reader_ack_tx.clone()
+        );
+
+    }
+
+    'init_iface: loop {
+        let socket = socketcan::smol::CanFdSocket::open(can_iface)
+            .map_err(|err| format!("Cannot open CAN interface {can_iface}: {err}"))?;
+
+        let mut read_frame = pin!(socket.read_frame().fuse());
+        loop {
+            futures::select! {
+                maybe_frame = read_frame => {
+                    match maybe_frame {
+                        Ok(frame) => {
+                            match frame {
+                                socketcan::CanAnyFrame::Normal(_) | socketcan::CanAnyFrame::Fd(_)  => {
+                                    // Handle classic 2.0 frames and FD frames the same way
+                                    let fd_frame: CanFdFrame = match frame.try_into() {
+                                        Ok(fd_frame) => fd_frame,
+                                        Err(err) => {
+                                            error!("Normal or FD frame should be convertible to FD frame: {err}, frame: {frame:?}");
+                                            continue
+                                        }
+                                    };
+                                    let Ok(shvcan_frame) = ShvCanFrame::try_from(&fd_frame) else {
+                                        continue
+                                    };
+                                    let header = shvcan_frame.header();
+                                    if header.dst() != broker_address {
+                                        continue;
+                                    }
+
+                                    let peer_address = header.src();
+                                    if let std::collections::hash_map::Entry::Occupied(entry) = peers_channels.entry(peer_address) {
+                                        let peer_channels = entry.get();
+                                        match shvcan_frame {
+                                            ShvCanFrame::Data(data_frame) => {
+                                                peer_channels
+                                                    .reader_frames_tx
+                                                    .unbounded_send(data_frame)
+                                                    .unwrap_or_else(|e| warn!("Cannot send a data frame to task of peer {peer_address}: {e}"));
+                                                }
+                                            ShvCanFrame::Ack(ack_frame) => {
+                                                peer_channels
+                                                    .writer_ack_tx
+                                                    .unbounded_send(ack_frame)
+                                                    .unwrap_or_else(|e| warn!("Cannot send an ACK frame to task of peer {peer_address}: {e}"));
+                                                }
+                                            ShvCanFrame::Terminate(_terminate_frame) => {
+                                                entry.remove();
+                                            }
+                                        }
+                                    }
+                                }
+                                socketcan::CanAnyFrame::Remote(can_remote_frame) => {
+                                    // Ignore remote frames
+                                    debug!("CAN remote frame received on {can_iface}: {can_remote_frame:?}");
+                                }
+                                socketcan::CanAnyFrame::Error(can_error_frame) => {
+                                    debug!("CAN error frame received on {can_iface}: {can_error_frame:?}");
+                                },
+                            }
+                        }
+                        Err(err) => {
+                            warn!("Error reading from CAN interface {can_iface}: {err}");
+                            continue 'init_iface;
+                        }
+                    }
+                }
+                data_frame = writer_frames_rx.select_next_some() => {
+                    let fd_frame = match CanFdFrame::try_from(&data_frame) {
+                        Ok(fd_frame) => fd_frame,
+                        Err(err) => {
+                            error!("Cannot convert CAN SHV DataFrame to FD frame: {err}, frame: {data_frame:?}");
+                            continue
+                        }
+                    };
+                    socket
+                        .write_frame(&fd_frame)
+                        .await
+                        .unwrap_or_else(|e| warn!("Cannot send CAN FD frame: {e}, frame: {fd_frame:?}"));
+                }
+                ack_frame = reader_ack_rx.select_next_some() => {
+                    let fd_frame = match CanFdFrame::try_from(&ack_frame) {
+                        Ok(fd_frame) => fd_frame,
+                        Err(err) => {
+                            error!("Cannot convert CAN SHV AckFrame to FD frame: {err}, frame: {ack_frame:?}");
+                            continue
+                        }
+                    };
+                    socket
+                        .write_frame(&fd_frame)
+                        .await
+                        .unwrap_or_else(|e| warn!("Cannot send CAN FD frame: {e}, frame: {fd_frame:?}"));
+                }
+                (peer_id, peer_address, result) = peers_tasks.select_next_some() => {
+                    match result {
+                        Ok(_) => info!("CAN peer ID: {peer_id}, address: 0x{peer_address:x} task finished successfuly"),
+                        Err(err) => warn!("CAN peer ID: {peer_id}, address: 0x{peer_address:x} task finished with error: {err}"),
+                    }
+                    broker_sender.send(BrokerCommand::PeerGone { peer_id }).await?;
+                    // TODO: Run after reconnect interval
+                    if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.address == peer_address) {
+                        run_peer_task(
+                            broker_address,
+                            connection_cfg.clone(),
+                            &mut peers_tasks,
+                            &mut peers_channels,
+                            broker_sender.clone(),
+                            writer_frames_tx.clone(),
+                            reader_ack_tx.clone(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
