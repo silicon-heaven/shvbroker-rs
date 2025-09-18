@@ -491,7 +491,7 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let bwr = BufWriter::new(writer);
         let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
         let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
-        return broker_as_client_peer_loop(
+        broker_as_client_peer_loop(
             peer_id,
             login_params_from_client_config(&config.client),
             config.client.heartbeat_interval,
@@ -505,7 +505,7 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let port_name = url.path();
         debug!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-        return broker_as_client_peer_loop(
+        broker_as_client_peer_loop(
             peer_id,
             login_params_from_client_config(&config.client),
             config.client.heartbeat_interval,
@@ -515,8 +515,9 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
             frame_reader,
             frame_writer,
         ).await
+    } else {
+        Err(format!("Scheme {scheme} is not supported yet.").into())
     }
-    Err(format!("Scheme {scheme} is not supported yet.").into())
 }
 
 fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams {
