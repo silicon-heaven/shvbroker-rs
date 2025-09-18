@@ -562,12 +562,13 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
         reader_ack_tx: UnboundedSender<ShvCanAckFrame>,
     ) {
+        let peer_id = next_peer_id();
         let peer_address = connection_config.address;
+        info!("Connecting to broker peer id: {peer_id} CAN address: 0x{peer_address:x}");
         let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
         let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
         channels.insert(peer_address, PeerChannels { writer_ack_tx, reader_frames_tx });
         tasks.push(smol::spawn(async move {
-            let peer_id = next_peer_id();
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_address);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_address, broker_address);
 
@@ -576,7 +577,7 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                 connection_config.to_login_params(),
                 connection_config.heartbeat_interval,
                 connection_config.connection_kind,
-                false, // FIXME
+                true,
                 broker_sender,
                 frame_reader,
                 frame_writer,
@@ -599,8 +600,9 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
             writer_frames_tx.clone(),
             reader_ack_tx.clone()
         );
-
     }
+
+    let (reconnect_tx, mut reconnect_rx) = futures::channel::mpsc::unbounded();
 
     'init_iface: loop {
         let socket = socketcan::smol::CanFdSocket::open(can_iface)
@@ -695,28 +697,39 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                 }
                 (peer_id, peer_address, result) = peers_tasks.select_next_some() => {
                     match result {
-                        Ok(_) => info!("CAN peer ID: {peer_id}, address: 0x{peer_address:x} task finished successfuly"),
-                        Err(err) => warn!("CAN peer ID: {peer_id}, address: 0x{peer_address:x} task finished with error: {err}"),
+                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, address: 0x{peer_address:x}"),
+                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, address: 0x{peer_address:x}, err: {err}"),
                     }
                     broker_sender.send(BrokerCommand::PeerGone { peer_id }).await?;
-                    // TODO: Run after reconnect interval
                     if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.address == peer_address) {
-                        run_peer_task(
-                            broker_address,
-                            connection_cfg.clone(),
-                            &mut peers_tasks,
-                            &mut peers_channels,
-                            broker_sender.clone(),
-                            writer_frames_tx.clone(),
-                            reader_ack_tx.clone(),
-                        );
+                        let reconnect_interval = connection_cfg.reconnect_interval.unwrap_or_else(|| {
+                            const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
+                            debug!("Peer broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC}s will be used.");
+                            std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
+                        });
+                        info!("Reconnecting to CAN peer broker 0x{peer_address:x} after {reconnect_interval:?}");
+                        let reconnect_tx = reconnect_tx.clone();
+                        let connection_cfg = connection_cfg.clone();
+                        smol::spawn(async move {
+                            smol::Timer::after(reconnect_interval).await;
+                            reconnect_tx.unbounded_send(connection_cfg).ok();
+                        }).detach();
                     }
+                }
+                connection_cfg = reconnect_rx.select_next_some() => {
+                    run_peer_task(
+                        broker_address,
+                        connection_cfg,
+                        &mut peers_tasks,
+                        &mut peers_channels,
+                        broker_sender.clone(),
+                        writer_frames_tx.clone(),
+                        reader_ack_tx.clone(),
+                    );
                 }
             }
         }
     }
-
-    // Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
