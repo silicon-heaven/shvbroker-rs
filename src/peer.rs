@@ -753,7 +753,7 @@ async fn broker_as_client_peer_loop(
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
     let mut fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
     let make_timeout = || {
-        Box::pin(smol::Timer::after(heartbeat_interval)).fuse()
+        FutureExt::fuse(Box::pin(smol::Timer::after(heartbeat_interval)))
         // Box::pin(timeout(heartbeat_interval, futures::future::pending::<()>())).fuse()
     };
     let mut fut_timeout = make_timeout();
