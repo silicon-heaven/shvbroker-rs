@@ -290,6 +290,11 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
             spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
         }
     }
+    for can_interface_config in &broker_config.canbus {
+        if can_interface_config.enabled {
+            spawn_and_log_error(peer::can_interface_task(can_interface_config.clone(), broker_sender.clone()));
+        }
+    }
     drop(broker_sender);
     broker_task.await;
     Ok(())

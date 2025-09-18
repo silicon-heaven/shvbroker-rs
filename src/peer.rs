@@ -1,16 +1,31 @@
+use std::collections::HashMap;
+use std::pin::pin;
+use std::time::Duration;
+
 use async_tungstenite::WebSocketStream;
+use futures::channel::mpsc::UnboundedSender;
 use futures::select;
+use futures::stream::FuturesUnordered;
 use futures::FutureExt;
 use futures::io::BufWriter;
+use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
 use shvproto::make_list;
 use shvproto::RpcValue;
+use shvrpc::canrw::CanFrameReader;
+use shvrpc::canrw::CanFrameWriter;
+use shvrpc::client::ClientConfig;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::{Protocol, RpcFrame};
+use smol::Task;
+use socketcan::CanFdFrame;
+use crate::brokerimpl::next_peer_id;
+use crate::config::CanConnectionConfig;
+use crate::config::CanInterfaceConfig;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
@@ -476,33 +491,263 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
         let bwr = BufWriter::new(writer);
         let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
         let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
-        return broker_as_client_peer_loop(peer_id, config, false, broker_writer, frame_reader, frame_writer).await
+        broker_as_client_peer_loop(
+            peer_id,
+            login_params_from_client_config(&config.client),
+            config.client.heartbeat_interval,
+            config.connection_kind,
+            false,
+            broker_writer,
+            frame_reader,
+            frame_writer,
+        ).await
     } else if scheme == "serial" {
         let port_name = url.path();
         debug!("Connecting to broker serial peer: {port_name}");
         let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-        return broker_as_client_peer_loop(peer_id, config, true, broker_writer, frame_reader, frame_writer).await
+        broker_as_client_peer_loop(
+            peer_id,
+            login_params_from_client_config(&config.client),
+            config.client.heartbeat_interval,
+            config.connection_kind,
+            true,
+            broker_writer,
+            frame_reader,
+            frame_writer,
+        ).await
+    } else {
+        Err(format!("Scheme {scheme} is not supported yet.").into())
     }
-    Err(format!("Scheme {scheme} is not supported yet.").into())
 }
-async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionConfig, reset_session: bool, broker_writer: Sender<BrokerCommand>, mut frame_reader: impl FrameReader + Send, mut frame_writer: impl FrameWriter + Send) -> shvrpc::Result<()> {
-    // login
-    let url = &config.client.url;
-    let (user, password) = login_from_url(url);
-    let heartbeat_interval = config.client.heartbeat_interval;
-    let login_params = LoginParams {
+
+fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams {
+    let (user, password) = login_from_url(&client_config.url);
+    LoginParams {
         user,
         password,
-        mount_point: config.client.mount.clone().unwrap_or_default().to_owned(),
-        device_id: config.client.device_id.clone().unwrap_or_default().to_owned(),
-        heartbeat_interval,
+        mount_point: client_config.mount.clone().unwrap_or_default().to_owned(),
+        device_id: client_config.device_id.clone().unwrap_or_default().to_owned(),
+        heartbeat_interval: client_config.heartbeat_interval,
         ..Default::default()
+    }
+}
+
+pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig, broker_sender: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+    let can_iface = &can_interface_config.interface;
+    let broker_address = can_interface_config.address;
+
+    use shvrpc::canrw::{
+        ShvCanFrame,
+        AckFrame as ShvCanAckFrame,
+        DataFrame as ShvCanDataFrame
     };
 
+    struct PeerChannels {
+        writer_ack_tx: UnboundedSender<ShvCanAckFrame>,
+        reader_frames_tx: UnboundedSender<ShvCanDataFrame>,
+    }
+
+    let mut peers_channels = HashMap::<u8, PeerChannels>::new();
+    let mut peers_tasks: FuturesUnordered<Task<(PeerId, u8, shvrpc::Result<()>)>> = FuturesUnordered::new();
+
+    let (writer_frames_tx, mut writer_frames_rx) = futures::channel::mpsc::unbounded();
+    let (reader_ack_tx, mut reader_ack_rx) = futures::channel::mpsc::unbounded();
+
+    fn run_peer_task(
+        broker_address: u8,
+        connection_config: CanConnectionConfig,
+        tasks: &mut FuturesUnordered<Task<(PeerId, u8, shvrpc::Result<()>)>>,
+        channels: &mut HashMap::<u8, PeerChannels>,
+        broker_sender: Sender<BrokerCommand>,
+        writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
+        reader_ack_tx: UnboundedSender<ShvCanAckFrame>,
+    ) {
+        let peer_id = next_peer_id();
+        let peer_address = connection_config.address;
+        info!("Connecting to broker peer id: {peer_id} CAN address: 0x{peer_address:x}");
+        let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
+        let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
+        channels.insert(peer_address, PeerChannels { writer_ack_tx, reader_frames_tx });
+        tasks.push(smol::spawn(async move {
+            let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_address);
+            let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_address, broker_address);
+
+            let res = broker_as_client_peer_loop(
+                peer_id,
+                connection_config.to_login_params(),
+                connection_config.heartbeat_interval,
+                connection_config.connection_kind,
+                true,
+                broker_sender,
+                frame_reader,
+                frame_writer,
+            ).await;
+
+            (peer_id, peer_address, res)
+        }));
+    }
+
+    for connection_config in &can_interface_config.connections {
+        if !connection_config.enabled {
+            continue;
+        }
+        run_peer_task(
+            broker_address,
+            connection_config.clone(),
+            &mut peers_tasks,
+            &mut peers_channels,
+            broker_sender.clone(),
+            writer_frames_tx.clone(),
+            reader_ack_tx.clone()
+        );
+    }
+
+    let (reconnect_tx, mut reconnect_rx) = futures::channel::mpsc::unbounded();
+
+    'init_iface: loop {
+        let socket = socketcan::smol::CanFdSocket::open(can_iface)
+            .map_err(|err| format!("Cannot open CAN interface {can_iface}: {err}"))?;
+
+        let mut read_frame = pin!(socket.read_frame().fuse());
+        loop {
+            futures::select! {
+                maybe_frame = read_frame => {
+                    match maybe_frame {
+                        Ok(frame) => {
+                            match frame {
+                                socketcan::CanAnyFrame::Normal(_) | socketcan::CanAnyFrame::Fd(_)  => {
+                                    // Handle classic 2.0 frames and FD frames the same way
+                                    let fd_frame: CanFdFrame = match frame.try_into() {
+                                        Ok(fd_frame) => fd_frame,
+                                        Err(err) => {
+                                            error!("Normal or FD frame should be convertible to FD frame: {err}, frame: {frame:?}");
+                                            continue
+                                        }
+                                    };
+                                    let Ok(shvcan_frame) = ShvCanFrame::try_from(&fd_frame) else {
+                                        continue
+                                    };
+                                    let header = shvcan_frame.header();
+                                    if header.dst() != broker_address {
+                                        continue;
+                                    }
+
+                                    let peer_address = header.src();
+                                    if let std::collections::hash_map::Entry::Occupied(entry) = peers_channels.entry(peer_address) {
+                                        let peer_channels = entry.get();
+                                        match shvcan_frame {
+                                            ShvCanFrame::Data(data_frame) => {
+                                                peer_channels
+                                                    .reader_frames_tx
+                                                    .unbounded_send(data_frame)
+                                                    .unwrap_or_else(|e| warn!("Cannot send a data frame to task of peer {peer_address}: {e}"));
+                                                }
+                                            ShvCanFrame::Ack(ack_frame) => {
+                                                peer_channels
+                                                    .writer_ack_tx
+                                                    .unbounded_send(ack_frame)
+                                                    .unwrap_or_else(|e| warn!("Cannot send an ACK frame to task of peer {peer_address}: {e}"));
+                                                }
+                                            ShvCanFrame::Terminate(_terminate_frame) => {
+                                                entry.remove();
+                                            }
+                                        }
+                                    }
+                                }
+                                socketcan::CanAnyFrame::Remote(can_remote_frame) => {
+                                    // Ignore remote frames
+                                    debug!("CAN remote frame received on {can_iface}: {can_remote_frame:?}");
+                                }
+                                socketcan::CanAnyFrame::Error(can_error_frame) => {
+                                    debug!("CAN error frame received on {can_iface}: {can_error_frame:?}");
+                                },
+                            }
+                        }
+                        Err(err) => {
+                            warn!("Error reading from CAN interface {can_iface}: {err}");
+                            continue 'init_iface;
+                        }
+                    }
+                }
+                data_frame = writer_frames_rx.select_next_some() => {
+                    let fd_frame = match CanFdFrame::try_from(&data_frame) {
+                        Ok(fd_frame) => fd_frame,
+                        Err(err) => {
+                            error!("Cannot convert CAN SHV DataFrame to FD frame: {err}, frame: {data_frame:?}");
+                            continue
+                        }
+                    };
+                    socket
+                        .write_frame(&fd_frame)
+                        .await
+                        .unwrap_or_else(|e| warn!("Cannot send CAN FD frame: {e}, frame: {fd_frame:?}"));
+                }
+                ack_frame = reader_ack_rx.select_next_some() => {
+                    let fd_frame = match CanFdFrame::try_from(&ack_frame) {
+                        Ok(fd_frame) => fd_frame,
+                        Err(err) => {
+                            error!("Cannot convert CAN SHV AckFrame to FD frame: {err}, frame: {ack_frame:?}");
+                            continue
+                        }
+                    };
+                    socket
+                        .write_frame(&fd_frame)
+                        .await
+                        .unwrap_or_else(|e| warn!("Cannot send CAN FD frame: {e}, frame: {fd_frame:?}"));
+                }
+                (peer_id, peer_address, result) = peers_tasks.select_next_some() => {
+                    match result {
+                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, address: 0x{peer_address:x}"),
+                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, address: 0x{peer_address:x}, err: {err}"),
+                    }
+                    broker_sender.send(BrokerCommand::PeerGone { peer_id }).await?;
+                    if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.address == peer_address) {
+                        let reconnect_interval = connection_cfg.reconnect_interval.unwrap_or_else(|| {
+                            const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
+                            debug!("Peer broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC}s will be used.");
+                            std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
+                        });
+                        info!("Reconnecting to CAN peer broker 0x{peer_address:x} after {reconnect_interval:?}");
+                        let reconnect_tx = reconnect_tx.clone();
+                        let connection_cfg = connection_cfg.clone();
+                        smol::spawn(async move {
+                            smol::Timer::after(reconnect_interval).await;
+                            reconnect_tx.unbounded_send(connection_cfg).ok();
+                        }).detach();
+                    }
+                }
+                connection_cfg = reconnect_rx.select_next_some() => {
+                    run_peer_task(
+                        broker_address,
+                        connection_cfg,
+                        &mut peers_tasks,
+                        &mut peers_channels,
+                        broker_sender.clone(),
+                        writer_frames_tx.clone(),
+                        reader_ack_tx.clone(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn broker_as_client_peer_loop(
+    peer_id: PeerId,
+    login_params: LoginParams,
+    heartbeat_interval: Duration,
+    connection_kind: ConnectionKind,
+    reset_session: bool,
+    broker_writer: Sender<BrokerCommand>,
+    mut frame_reader: impl FrameReader + Send,
+    mut frame_writer: impl FrameWriter + Send,
+) -> shvrpc::Result<()>
+{
     info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
     client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).await?;
 
-    match &config.connection_kind {
+    match &connection_kind {
         ConnectionKind::ToParentBroker { .. } => {
             info!("Login to parent broker OK");
         }
@@ -514,14 +759,14 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
     let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {
         peer_id,
-        peer_kind: PeerKind::Broker(config.connection_kind.clone()),
+        peer_kind: PeerKind::Broker(connection_kind.clone()),
         sender: broker_to_peer_sender,
     }).await?;
 
     let mut fut_receive_frame = frame_reader.receive_frame().fuse();
     let mut fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
     let make_timeout = || {
-        Box::pin(smol::Timer::after(heartbeat_interval)).fuse()
+        FutureExt::fuse(Box::pin(smol::Timer::after(heartbeat_interval)))
         // Box::pin(timeout(heartbeat_interval, futures::future::pending::<()>())).fuse()
     };
     let mut fut_timeout = make_timeout();
@@ -536,7 +781,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
             },
             res_frame = fut_receive_frame => match res_frame {
                 Ok(frame) => {
-                    process_broker_client_peer_frame(peer_id, frame, &config.connection_kind, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
                     drop(fut_receive_frame);
                     fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
@@ -561,7 +806,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
                         BrokerToPeerMessage::SendFrame(frame) => {
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
-                            match &config.connection_kind {
+                            match &connection_kind {
                                 ConnectionKind::ToParentBroker{shv_root} => {
                                     if frame.is_signal()
                                         && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
@@ -570,7 +815,7 @@ async fn broker_as_client_peer_loop(peer_id: PeerId, config: BrokerConnectionCon
                                 }
                                 ConnectionKind::ToChildBroker{ .. } => {
                                     if frame.is_request() {
-                                        frame = fix_request_frame_shv_root(frame, &config.connection_kind)?;
+                                        frame = fix_request_frame_shv_root(frame, &connection_kind)?;
                                     }
                                 }
                             }
