@@ -607,11 +607,16 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
     'init_iface: loop {
         let socket = socketcan::smol::CanFdSocket::open(can_iface)
             .map_err(|err| format!("Cannot open CAN interface {can_iface}: {err}"))?;
+        let socket = std::sync::Arc::new(socket);
 
-        let mut read_frame = pin!(socket.read_frame().fuse());
+        let mut frames = pin!(futures::stream::unfold(socket.clone(), |sock| async move {
+            let frame_res = sock.read_frame().await;
+            Some((frame_res, sock))
+        }));
+
         loop {
             futures::select! {
-                maybe_frame = read_frame => {
+                maybe_frame = frames.select_next_some() => {
                     match maybe_frame {
                         Ok(frame) => {
                             match frame {
@@ -624,10 +629,12 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                                             continue
                                         }
                                     };
+                                    debug!(target: "can", "{can_iface} recv: {fd_frame:?}");
                                     let Ok(shvcan_frame) = ShvCanFrame::try_from(&fd_frame) else {
                                         continue
                                     };
                                     let header = shvcan_frame.header();
+                                    debug!(target: "shvcan", "{can_iface} recv: {shvcan_frame:?}");
                                     if header.dst() != broker_address {
                                         continue;
                                     }
