@@ -91,13 +91,13 @@ pub struct CanConnectionConfig {
     #[serde(
         default = "default_heartbeat_interval",
         deserialize_with = "duration_str::deserialize_duration",
-        // serialize_with = "serialize_duration"
+        serialize_with = "shvrpc::client::serialize_duration_as_string"
     )]
     pub heartbeat_interval: Duration,
     #[serde(
         default,
         deserialize_with = "duration_str::deserialize_option_duration",
-        // serialize_with = "serialize_option_duration"
+        serialize_with = "shvrpc::client::serialize_option_duration_as_string"
     )]
     pub reconnect_interval: Option<Duration>,
 }
