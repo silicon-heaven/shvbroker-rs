@@ -647,15 +647,15 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                                             continue
                                         }
                                     };
-                                    debug!(target: "can", "{can_iface} recv: {fd_frame:?}");
                                     let Ok(shvcan_frame) = ShvCanFrame::try_from(&fd_frame) else {
                                         continue
                                     };
                                     let header = shvcan_frame.header();
-                                    debug!(target: "shvcan", "{can_iface} recv: {shvcan_frame:?}");
                                     if header.dst() != broker_address {
                                         continue;
                                     }
+
+                                    debug!(target: "shvcan", "{can_iface} RECV: {frame}", frame = shvcan_frame.to_brief_string());
 
                                     let peer_address = header.src();
                                     if let std::collections::hash_map::Entry::Occupied(entry) = peers_channels.entry(peer_address) {
@@ -702,6 +702,7 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                             continue
                         }
                     };
+                    debug!(target: "shvcan", "{can_iface} SEND: {frame}", frame = ShvCanFrame::Data(data_frame).to_brief_string());
                     socket
                         .write_frame(&fd_frame)
                         .await
@@ -715,6 +716,7 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                             continue
                         }
                     };
+                    debug!(target: "shvcan", "{can_iface} SEND: {frame}", frame = ShvCanFrame::Ack(ack_frame).to_brief_string());
                     socket
                         .write_frame(&fd_frame)
                         .await
