@@ -341,7 +341,33 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
-            canbus: Default::default(),
+            canbus: vec![
+                CanInterfaceConfig {
+                    enabled: false,
+                    interface: "vcan0".into(),
+                    address: 0x01,
+                    connections: vec![
+                        CanConnectionConfig {
+                            enabled: false,
+                            name: "CAN-to-child-broker".into(),
+                            user: "child-broker".into(),
+                            password: "child-broker".into(),
+                            address: 0x2,
+                            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".into(), mount_point: "test/child-broker".into() },
+                            ..Default::default()
+                        },
+                        CanConnectionConfig {
+                            enabled: false,
+                            name: "CAN-to-parent-broker".into(),
+                            user: "child-broker".into(),
+                            password: "child-broker".into(),
+                            address: 0x1,
+                            connection_kind: ConnectionKind::ToParentBroker { shv_root: "".into() },
+                            ..Default::default()
+                        },
+                    ]
+                }
+            ],
         }
     }
 }
