@@ -550,7 +550,7 @@ fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams 
     }
 }
 
-pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig, broker_sender: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let can_iface = &can_interface_config.interface;
     let broker_address = can_interface_config.address;
 
@@ -571,9 +571,11 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
     let (writer_frames_tx, mut writer_frames_rx) = futures::channel::mpsc::unbounded();
     let (reader_ack_tx, mut reader_ack_rx) = futures::channel::mpsc::unbounded();
 
-    fn run_peer_task(
+    #[allow(clippy::too_many_arguments)]
+    fn run_broker_peer_task(
         broker_address: u8,
         connection_config: CanConnectionConfig,
+        broker_config: SharedBrokerConfig,
         tasks: &mut FuturesUnordered<Task<(PeerId, u8, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<u8, PeerChannels>,
         broker_sender: Sender<BrokerCommand>,
@@ -590,16 +592,23 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_address);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_address, broker_address);
 
-            let res = broker_as_client_peer_loop(
-                peer_id,
-                connection_config.to_login_params(),
-                connection_config.heartbeat_interval,
-                connection_config.connection_kind,
-                true,
-                broker_sender,
-                frame_reader,
-                frame_writer,
-            ).await;
+            let res = match connection_config.connection_kind {
+                ConnectionKind::ToChildBroker { .. } => {
+                    broker_as_client_peer_loop(
+                        peer_id,
+                        connection_config.to_login_params(),
+                        connection_config.heartbeat_interval,
+                        connection_config.connection_kind,
+                        true,
+                        broker_sender,
+                        frame_reader,
+                        frame_writer,
+                    ).await
+                }
+                ConnectionKind::ToParentBroker { .. } => {
+                    server_peer_loop(peer_id, broker_sender, frame_reader, frame_writer, broker_config).await
+                }
+            };
 
             (peer_id, peer_address, res)
         }));
@@ -609,9 +618,10 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
         if !connection_config.enabled {
             continue;
         }
-        run_peer_task(
+        run_broker_peer_task(
             broker_address,
             connection_config.clone(),
+            broker_config.clone(),
             &mut peers_tasks,
             &mut peers_channels,
             broker_sender.clone(),
@@ -744,9 +754,10 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                     }
                 }
                 connection_cfg = reconnect_rx.select_next_some() => {
-                    run_peer_task(
+                    run_broker_peer_task(
                         broker_address,
                         connection_cfg,
+                        broker_config.clone(),
                         &mut peers_tasks,
                         &mut peers_channels,
                         broker_sender.clone(),
