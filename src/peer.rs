@@ -116,8 +116,8 @@ async fn server_ws_peer_loop(
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
-    mut frame_reader: impl FrameReader + std::marker::Send,
-    mut frame_writer: impl FrameWriter + Send,
+    mut frame_reader: impl FrameReader + Send,
+    mut frame_writer: impl FrameWriter + Send + 'static,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     debug!("Entering peer loop client ID: {peer_id}.");
@@ -349,6 +349,17 @@ pub(crate) async fn server_peer_loop(
                 sender: peer_writer.clone()
             }).await?;
 
+        let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
+        let frame_writer_task = smol::spawn(async move {
+            while let Some(frame) = frames_rx.next().await {
+                if let Err(e) = frame_writer.send_frame(frame).await {
+                    log::error!("frame send failed: {}", e);
+                    return Err((e, frame_writer));
+                }
+            }
+            Ok(frame_writer)
+        });
+
         let mut fut_receive_frame = frame_reader.receive_frame().fuse();
         let mut fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
         loop {
@@ -358,7 +369,14 @@ pub(crate) async fn server_peer_loop(
                         if frame.protocol == Protocol::ResetSession {
                             // delete peer state
                             broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-                            continue 'session_loop;
+                            drop(frames_tx);
+                            match frame_writer_task.await {
+                                Ok(writer) => {
+                                    frame_writer = writer;
+                                    continue 'session_loop;
+                                }
+                                Err(_) => break 'session_loop,
+                            }
                         }
                         let mut frame = frame;
                         if frame.is_request() && let Some(req_user_id) = frame.user_id() {
@@ -396,7 +414,7 @@ pub(crate) async fn server_peer_loop(
                                 break 'session_loop;
                             }
                             BrokerToPeerMessage::SendFrame(frame) => {
-                                frame_writer.send_frame(frame).await?;
+                                frames_tx.unbounded_send(frame)?
                             }
                         }
                         fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
@@ -748,7 +766,7 @@ async fn broker_as_client_peer_loop(
     reset_session: bool,
     broker_writer: Sender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
-    mut frame_writer: impl FrameWriter + Send,
+    mut frame_writer: impl FrameWriter + Send + 'static,
 ) -> shvrpc::Result<()>
 {
     info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
@@ -774,8 +792,19 @@ async fn broker_as_client_peer_loop(
     let mut fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
     let make_timeout = || {
         FutureExt::fuse(Box::pin(smol::Timer::after(heartbeat_interval)))
-        // Box::pin(timeout(heartbeat_interval, futures::future::pending::<()>())).fuse()
     };
+
+    let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
+    smol::spawn(async move {
+        while let Some(frame) = frames_rx.next().await {
+            if let Err(e) = frame_writer.send_frame(frame).await {
+                log::error!("frame send failed: {}", e);
+                return Err((e, frame_writer));
+            }
+        }
+        Ok(frame_writer)
+    }).detach();
+
     let mut fut_timeout = make_timeout();
     loop {
         select! {
@@ -783,7 +812,7 @@ async fn broker_as_client_peer_loop(
                 // send heartbeat
                 let msg = RpcMessage::new_request(".app", METH_PING, None);
                 debug!("sending ping");
-                frame_writer.send_message(msg).await?;
+                frames_tx.unbounded_send(msg.to_frame()?)?;
                 fut_timeout = make_timeout();
             },
             res_frame = fut_receive_frame => match res_frame {
@@ -827,7 +856,7 @@ async fn broker_as_client_peer_loop(
                                 }
                             }
                             debug!("Sending rpc frame");
-                            frame_writer.send_frame(frame).await?;
+                            frames_tx.unbounded_send(frame)?;
                             fut_timeout = make_timeout();
                         }
                     }
