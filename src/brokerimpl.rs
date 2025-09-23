@@ -1,5 +1,6 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, AccessRule, ConnectionKind, Password, Role, SharedBrokerConfig};
+use crate::config::{AccessConfig, AccessRule, BrokerConfig, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
+use crate::peer::login_params_from_client_config;
 use crate::shvnode::{
     AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
     BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
@@ -17,6 +18,7 @@ use futures::select;
 use log::Level;
 use log::{debug, error, info, log, warn};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
+use shvrpc::client::LoginParams;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -27,6 +29,7 @@ use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol::channel;
 use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
+use url::Url;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -271,33 +274,137 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
     let broker_config = broker_impl.config.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl));
-    if let Some(address) = &broker_config.listen.tcp {
-        spawn_and_log_error(tcp_server_accept_loop(address.clone(), broker_sender.clone(), broker_config.clone()));
-    }
-    if let Some(address) = &broker_config.listen.ws {
-        spawn_and_log_error(ws_server_accept_loop(address.clone(), broker_sender.clone(), broker_config.clone()));
-    }
-    if let Some(port) = &broker_config.listen.serial {
-        let peer_id = next_peer_id();
-        spawn_and_log_error(serial::try_serial_peer_loop(peer_id, broker_sender.clone(), port.clone(), broker_config.clone()));
+    for Listen { url } in &broker_config.listen {
+        let address_string = |url: &Url| {
+            format!("{host}:{port}",
+                host = url.host_str().unwrap_or("localhost"),
+                port = url.port().unwrap_or_else(||
+                    match url.scheme() {
+                        "tcp" => 3755,
+                        "ssl" => 3756,
+                        "ws" => 8755,
+                        "wss" => 8766,
+                        _ => 3755,
+                    })
+            )
+        };
+        match url.scheme() {
+            "tcp" => spawn_and_log_error(tcp_server_accept_loop(address_string(url), broker_sender.clone(), broker_config.clone())),
+            "ws" => spawn_and_log_error(ws_server_accept_loop(address_string(url), broker_sender.clone(), broker_config.clone())),
+            "serial" | "tty" => spawn_and_log_error(serial::try_serial_peer_loop(next_peer_id(), broker_sender.clone(), url.path().into(), broker_config.clone())),
+            _ => { }
+        }
     }
 
     let broker_peers = &broker_config.connections;
     for peer_config in broker_peers {
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
-        if peer_config.enabled {
+        if peer_config.enabled && ["tcp", "serial"].contains(&peer_config.client.url.scheme()) {
             let peer_id = next_peer_id();
             spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
         }
     }
-    for can_interface_config in &broker_config.canbus {
-        if can_interface_config.enabled {
-            spawn_and_log_error(peer::can_interface_task(can_interface_config.clone(), broker_sender.clone(), broker_config.clone()));
-        }
+
+    for can_interface_config in can_interfaces_config(&broker_config) {
+        spawn_and_log_error(peer::can_interface_task(can_interface_config, broker_sender.clone(), broker_config.clone()));
     }
+
     drop(broker_sender);
     broker_task.await;
     Ok(())
+}
+
+#[derive(Clone,Debug)]
+pub(crate) struct CanConnectionConfig {
+    pub local_address: u8,
+    pub peer_address: u8,
+    pub login_params: LoginParams,
+    pub connection_kind: ConnectionKind,
+    pub reconnect_interval: Duration,
+}
+
+#[derive(Debug,Default)]
+pub(crate) struct CanInterfaceConfig {
+    pub interface: String,
+    pub listen_addrs: Vec<u8>,
+    pub connections: Vec<CanConnectionConfig>,
+}
+
+fn can_interfaces_config(broker_config: &BrokerConfig) -> Vec<CanInterfaceConfig> {
+    let mut interfaces: HashMap<String, CanInterfaceConfig> = HashMap::new();
+
+    for Listen { url } in &broker_config.listen {
+        if url.scheme() != "can" {
+            continue
+        }
+
+        let iface = url.path();
+
+        let Some(listen_addr) = url
+            .query_pairs()
+            .find(|(k, _)| k == "address")
+            .and_then(|(_,v)| v
+                .parse::<u8>()
+                .inspect_err(|e| error!("Cannot parse CAN address from URL: {url}, {e}")).ok()
+            ) else
+        {
+            continue
+        };
+
+        let iface_cfg = interfaces
+            .entry(iface.to_string())
+            .or_insert_with(|| CanInterfaceConfig { interface: iface.into(), ..Default::default() });
+
+        iface_cfg.listen_addrs.push(listen_addr);
+    }
+
+    for connection_config in &broker_config.connections {
+        let client_config = &connection_config.client;
+        if !connection_config.enabled || client_config.url.scheme() != "can" {
+            continue
+        }
+
+        let iface = client_config.url.path();
+
+        let Some(local_address) = client_config.url
+            .query_pairs()
+            .find(|(k, _)| k == "local_address")
+            .and_then(|(_,v)| v
+                .parse::<u8>()
+                .inspect_err(|e| error!("Cannot parse local CAN address from URL: {url}, {e}", url = client_config.url)).ok()
+            ) else
+        {
+            continue
+        };
+
+        let Some(peer_address) = client_config.url
+            .query_pairs()
+            .find(|(k, _)| k == "peer_address")
+            .and_then(|(_,v)| v
+                .parse::<u8>()
+                .inspect_err(|e| error!("Cannot parse peer CAN address from URL: {url}, {e}", url = client_config.url)).ok()
+            ) else
+        {
+            continue
+        };
+
+        let login_params = login_params_from_client_config(client_config);
+        let connection_kind = connection_config.connection_kind.clone();
+
+        let reconnect_interval = connection_config.client.reconnect_interval.unwrap_or_else(|| {
+            const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
+            debug!("Peer broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC}s will be used.");
+            std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
+        });
+
+        let iface_cfg = interfaces
+            .entry(iface.to_string())
+            .or_insert_with(|| CanInterfaceConfig { interface: iface.into(), ..Default::default() });
+
+        iface_cfg.connections.push(CanConnectionConfig { local_address, peer_address, login_params, reconnect_interval, connection_kind });
+    }
+
+    interfaces.into_values().collect()
 }
 
 pub type TunnelId = u64;

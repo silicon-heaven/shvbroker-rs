@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
-use std::time::Duration;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
-use shvrpc::client::{ClientConfig, LoginParams};
+use shvrpc::client::ClientConfig;
 use url::Url;
 
 pub type SharedBrokerConfig = Arc<BrokerConfig>;
@@ -12,7 +11,7 @@ pub type SharedBrokerConfig = Arc<BrokerConfig>;
 pub struct BrokerConfig {
     #[serde(default)]
     pub name: Option<String>,
-    pub listen: Listen,
+    pub listen: Vec<Listen>,
     #[serde(default)]
     pub use_access_db: bool,
     #[serde(default)]
@@ -21,8 +20,6 @@ pub struct BrokerConfig {
     pub data_directory: Option<String>,
     #[serde(default)]
     pub connections: Vec<BrokerConnectionConfig>,
-    #[serde(default)]
-    pub canbus: Vec<CanInterfaceConfig>,
     #[serde(default)]
     pub access: AccessConfig,
     #[serde(default)]
@@ -63,56 +60,6 @@ pub struct BrokerConnectionConfig {
     pub client: ClientConfig,
 }
 type DeviceId = String;
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanInterfaceConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    // can0, can1, vcan0, ...
-    pub interface: String,
-    pub address: u8,
-    #[serde(default)]
-    pub connections: Vec<CanConnectionConfig>,
-}
-
-const fn default_heartbeat_interval() -> Duration {
-    Duration::from_secs(60)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanConnectionConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    pub name: String,
-    pub user: String,
-    pub password: String,
-    pub address: u8,
-    pub connection_kind: ConnectionKind,
-    #[serde(
-        default = "default_heartbeat_interval",
-        deserialize_with = "duration_str::deserialize_duration",
-        serialize_with = "shvrpc::client::serialize_duration_as_string"
-    )]
-    pub heartbeat_interval: Duration,
-    #[serde(
-        default,
-        deserialize_with = "duration_str::deserialize_option_duration",
-        serialize_with = "shvrpc::client::serialize_option_duration_as_string"
-    )]
-    pub reconnect_interval: Option<Duration>,
-}
-
-impl CanConnectionConfig {
-    pub fn to_login_params(&self) -> LoginParams {
-        LoginParams {
-            user: self.user.clone(),
-            password: self.password.clone(),
-            heartbeat_interval: self.heartbeat_interval,
-            ..Default::default()
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
@@ -121,14 +68,7 @@ pub struct AccessConfig {
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
-    #[serde(default)]
-    pub tcp: Option<String>,
-    #[serde(default)]
-    pub ws: Option<String>,
-    #[serde(default)]
-    pub ssl: Option<String>,
-    #[serde(default)]
-    pub serial: Option<String>,
+    pub url: Url,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(PartialEq)]
@@ -268,13 +208,22 @@ impl Default for BrokerConfig {
             enabled: false,
             connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
             client: ClientConfig {
-                url: Url::parse("serial:///dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
+                url: Url::parse("serial:/dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
+                ..ClientConfig::default()
+            },
+        };
+        let child_can_broker_config = BrokerConnectionConfig {
+            name: "CAN-to-child-broker".to_string(),
+            enabled: false,
+            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            client: ClientConfig {
+                url: Url::parse("can:vcan0?local_address=1&peer_address=2&user=test").expect("CAN default URL must be valid"),
                 ..ClientConfig::default()
             },
         };
         Self {
             name: Some("foo".into()),
-            listen: Listen { tcp: Some("localhost:3755".to_string()), ws: None, ssl: None, serial: None },
+            listen: vec![Listen { url: Url::parse("tcp://localhost:3755").expect("TCP default URL should be valid") }],
             use_access_db: false,
             shv2_compatibility: false,
             data_directory: None,
@@ -285,6 +234,7 @@ impl Default for BrokerConfig {
                 },
                 child_tcp_broker_config,
                 child_serial_broker_config,
+                child_can_broker_config,
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
@@ -341,33 +291,6 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
-            canbus: vec![
-                CanInterfaceConfig {
-                    enabled: false,
-                    interface: "vcan0".into(),
-                    address: 0x01,
-                    connections: vec![
-                        CanConnectionConfig {
-                            enabled: false,
-                            name: "CAN-to-child-broker".into(),
-                            user: "child-broker".into(),
-                            password: "child-broker".into(),
-                            address: 0x2,
-                            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".into(), mount_point: "test/child-broker".into() },
-                            ..Default::default()
-                        },
-                        CanConnectionConfig {
-                            enabled: false,
-                            name: "CAN-to-parent-broker".into(),
-                            user: "child-broker".into(),
-                            password: "child-broker".into(),
-                            address: 0x1,
-                            connection_kind: ConnectionKind::ToParentBroker { shv_root: "".into() },
-                            ..Default::default()
-                        },
-                    ]
-                }
-            ],
         }
     }
 }
