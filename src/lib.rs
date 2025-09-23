@@ -18,7 +18,7 @@ pub mod spawn {
     {
         smol::spawn(async move {
             if let Err(e) = fut.await {
-                error!("{e}")
+                error!("Task finished with error: {e}")
             }
         }).detach();
     }

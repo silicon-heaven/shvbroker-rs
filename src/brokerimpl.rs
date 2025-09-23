@@ -223,7 +223,9 @@ async fn tcp_server_accept_loop(
     broker_sender: Sender<BrokerCommand>,
     broker_config: SharedBrokerConfig,
 ) -> shvrpc::Result<()> {
-    let listener = smol::net::TcpListener::bind(&address).await?;
+    let listener = smol::net::TcpListener::bind(&address)
+        .await
+        .map_err(|err| format!("Cannot listen on address {address}: {err}"))?;
     info!("Listening on TCP: {address}");
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
@@ -244,7 +246,9 @@ async fn tcp_server_accept_loop(
 }
 
 async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
-    let listener = smol::net::TcpListener::bind(&address).await?;
+    let listener = smol::net::TcpListener::bind(&address)
+        .await
+        .map_err(|err| format!("Cannot listen on address {address}: {err}"))?;
     info!("Listening on WebSocket: {address}");
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
