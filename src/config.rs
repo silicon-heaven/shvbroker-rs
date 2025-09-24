@@ -11,7 +11,7 @@ pub type SharedBrokerConfig = Arc<BrokerConfig>;
 pub struct BrokerConfig {
     #[serde(default)]
     pub name: Option<String>,
-    pub listen: Listen,
+    pub listen: Vec<Listen>,
     #[serde(default)]
     pub use_access_db: bool,
     #[serde(default)]
@@ -20,8 +20,6 @@ pub struct BrokerConfig {
     pub data_directory: Option<String>,
     #[serde(default)]
     pub connections: Vec<BrokerConnectionConfig>,
-    #[serde(default)]
-    pub canbus: Option<CanBusConnectionConfig>,
     #[serde(default)]
     pub access: AccessConfig,
     #[serde(default)]
@@ -62,22 +60,6 @@ pub struct BrokerConnectionConfig {
     pub client: ClientConfig,
 }
 type DeviceId = String;
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanBusConnectionConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    pub interface: String,
-    #[serde(default)]
-    pub devices: Vec<CanBusDeviceConfig>,
-}
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct CanBusDeviceConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    pub name: String,
-    pub address: u8,
-}
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
@@ -86,14 +68,7 @@ pub struct AccessConfig {
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
-    #[serde(default)]
-    pub tcp: Option<String>,
-    #[serde(default)]
-    pub ws: Option<String>,
-    #[serde(default)]
-    pub ssl: Option<String>,
-    #[serde(default)]
-    pub serial: Option<String>,
+    pub url: Url,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(PartialEq)]
@@ -233,13 +208,22 @@ impl Default for BrokerConfig {
             enabled: false,
             connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
             client: ClientConfig {
-                url: Url::parse("serial:///dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
+                url: Url::parse("serial:/dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
+                ..ClientConfig::default()
+            },
+        };
+        let child_can_broker_config = BrokerConnectionConfig {
+            name: "CAN-to-child-broker".to_string(),
+            enabled: false,
+            connection_kind: ConnectionKind::ToChildBroker { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            client: ClientConfig {
+                url: Url::parse("can:vcan0?local_address=1&peer_address=2&user=test").expect("CAN default URL must be valid"),
                 ..ClientConfig::default()
             },
         };
         Self {
             name: Some("foo".into()),
-            listen: Listen { tcp: Some("localhost:3755".to_string()), ws: None, ssl: None, serial: None },
+            listen: vec![Listen { url: Url::parse("tcp://localhost:3755").expect("TCP default URL should be valid") }],
             use_access_db: false,
             shv2_compatibility: false,
             data_directory: None,
@@ -250,6 +234,7 @@ impl Default for BrokerConfig {
                 },
                 child_tcp_broker_config,
                 child_serial_broker_config,
+                child_can_broker_config,
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
@@ -306,7 +291,6 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
-            canbus: Default::default(),
         }
     }
 }

@@ -11,7 +11,7 @@ use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
 use shvrpc::metamethod::{Flag, MetaMethod};
 use smol::lock::RwLock;
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
 use url::Url;
 use crate::common::{KillProcessGuard, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
@@ -29,24 +29,26 @@ fn test_broker() -> shvrpc::Result<()> {
     assert!(broker_process_guard.is_running());
 
     let _process_guard_3756 = {
-        let mut config = BrokerConfig::default();
-        config.listen.tcp = Some("localhost:3756".into());
-        config.connections = vec![
-            BrokerConnectionConfig {
-                name: "test1".to_string(),
-                enabled: true,
-                client: ClientConfig{
-                    url: Url::parse("tcp://child-broker@localhost:3755?password=child-broker")?,
-                    device_id: Some("test-child-broker".into()),
-                    mount: None,
-                    heartbeat_interval: duration_str::parse("1m")?,
-                    reconnect_interval: None,
-                },
-                connection_kind: ConnectionKind::ToParentBroker {
-                    shv_root: "test".to_string(),
-                },
-            }
-        ];
+        let config = BrokerConfig {
+            listen: vec![Listen { url: Url::parse("tcp://localhost:3756")? }],
+            connections: vec![
+                BrokerConnectionConfig {
+                    name: "test1".to_string(),
+                    enabled: true,
+                    client: ClientConfig{
+                        url: Url::parse("tcp://child-broker@localhost:3755?password=child-broker")?,
+                        device_id: Some("test-child-broker".into()),
+                        mount: None,
+                        heartbeat_interval: duration_str::parse("1m")?,
+                        reconnect_interval: None,
+                    },
+                    connection_kind: ConnectionKind::ToParentBroker {
+                        shv_root: "test".to_string(),
+                    },
+                }
+            ],
+            ..Default::default()
+        };
         let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
         fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
         let mut process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
@@ -253,25 +255,27 @@ fn check_subscription_along_property_path(property_path: &str, port: i32) -> shv
     Ok(())
 }
 fn test_child_broker_as_client() -> shvrpc::Result<()> {
-    let mut config = BrokerConfig::default();
-    config.listen.tcp = Some("localhost:3754".into());
-    config.connections = vec![
-        BrokerConnectionConfig {
-            name: "test2".to_string(),
-            enabled: true,
-            client: ClientConfig{
-                url: Url::parse("tcp://localhost:3755?user=test&password=test")?,
-                device_id: None,
-                mount: None,
-                heartbeat_interval: duration_str::parse("1m")?,
-                reconnect_interval: None,
-            },
-            connection_kind: ConnectionKind::ToChildBroker {
-                shv_root: "test/child-broker/device".to_string(),
-                mount_point: "test/child-device".to_string(),
-            },
-        }
-    ];
+    let config = BrokerConfig {
+        listen: vec![Listen { url: Url::parse("tcp://localhost:3754")? }],
+        connections: vec![
+            BrokerConnectionConfig {
+                name: "test2".to_string(),
+                enabled: true,
+                client: ClientConfig{
+                    url: Url::parse("tcp://localhost:3755?user=test&password=test")?,
+                    device_id: None,
+                    mount: None,
+                    heartbeat_interval: duration_str::parse("1m")?,
+                    reconnect_interval: None,
+                },
+                connection_kind: ConnectionKind::ToChildBroker {
+                    shv_root: "test/child-broker/device".to_string(),
+                    mount_point: "test/child-device".to_string(),
+                },
+            }
+        ],
+        ..Default::default()
+    };
     let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
     fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
