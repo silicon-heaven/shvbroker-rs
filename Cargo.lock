@@ -1062,18 +1062,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashbrown"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
-
-[[package]]
 name = "hashlink"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown",
 ]
 
 [[package]]
@@ -1350,7 +1344,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -2303,8 +2297,8 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "3.8.10"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#fb78f3384c293c05c0bc6a49176248033f475e96"
+version = "3.8.11"
+source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?branch=master#3ac94eea67107e1902f27f07a714e33b56d87a18"
 dependencies = [
  "anyhow",
  "async-trait",
