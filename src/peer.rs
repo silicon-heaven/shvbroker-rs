@@ -737,7 +737,7 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                                         let ShvCanFrame::Data(data_frame) = shvcan_frame else {
                                             continue
                                         };
-                                        if can_interface_config.listen_addrs.iter().all(|listen_addr| *listen_addr != local_addr)
+                                        if !can_interface_config.listen_addrs.contains(&local_addr)
                                             || can_interface_config.connections.iter().any(|conn_cfg| conn_cfg.local_address == local_addr && conn_cfg.peer_address == peer_addr)
                                         {
                                             continue
