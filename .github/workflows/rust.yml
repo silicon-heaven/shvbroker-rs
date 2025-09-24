@@ -83,7 +83,7 @@ jobs:
           sudo apt update
           sudo apt-get install -y libudev-dev pkg-config
       - name: Generate coverage
-        uses: syyyr/rust-pycobertura-action@v3.0.0
+        uses: silicon-heaven/rust-pycobertura-action@v3.0.0
         with:
           project_name: shvbroker
 
@@ -92,4 +92,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check version bump
-        uses: syyyr/rust-check-version-bump@ed0644b33a4994450066d35f02905be30e80e627
+        uses: silicon-heaven/rust-check-version-bump@v1.0.1
