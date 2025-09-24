@@ -380,16 +380,16 @@ pub(crate) async fn server_peer_loop(
                         }
                         let mut frame = frame;
                         if frame.is_request() && let Some(req_user_id) = frame.user_id() {
-                                let broker_id = broker_config.name.as_ref()
-                                        .map(|name| format!(":{name}"))
-                                        .unwrap_or_default();
-                                let user_id_chain = if req_user_id.is_empty() {
-                                    format!("{user}{broker_id}")
-                                } else {
-                                    format!("{req_user_id};{user}{broker_id}")
-                                };
-                                frame.set_user_id(&user_id_chain);
-                            }
+                            let broker_id = broker_config.name.as_ref()
+                                .map(|name| format!(":{name}"))
+                                .unwrap_or_default();
+                            let user_id_chain = if req_user_id.is_empty() {
+                                format!("{user}{broker_id}")
+                            } else {
+                                format!("{req_user_id};{user}{broker_id}")
+                            };
+                            frame.set_user_id(&user_id_chain);
+                        }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);
                         fut_receive_frame = frame_reader.receive_frame().fuse();
@@ -650,6 +650,22 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
             .unwrap_or_else(|e| warn!("Cannot send CAN FD frame: {e}, frame: {fd_frame:?}"));
         Ok(())
     }
+
+    info!("Setting up CAN interface {can_iface}");
+    info!("  listen addrs: {listen_addrs}", listen_addrs = can_interface_config
+        .listen_addrs
+        .iter()
+        .map(|a| format!("0x{a:x}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+    );
+    info!("  connections: {connections}", connections = can_interface_config
+        .connections
+        .iter()
+        .map(|cfg| format!("0x{local:x}->0x{peer:x}", local = cfg.local_address, peer = cfg.peer_address))
+        .collect::<Vec<_>>()
+        .join(", ")
+    );
 
     for connection_config in &can_interface_config.connections {
         run_broker_client_peer_task(
