@@ -14,6 +14,7 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
+  contents: write
   # For syyyr/rust-pycobertura-action
   pull-requests: write
 
@@ -41,6 +42,38 @@ jobs:
     - name: Run tests
       run: cargo test --verbose --all-features -- --test-threads=1
 
+  create-nightly-release:
+    name: Create nightly
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    env:
+      HASH_FOR_FILENAMES: ${{github.event.pull_request.head.sha || github.sha}}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Build and Install Binary
+        run: |
+          mkdir -p ${{github.workspace}}/install
+          cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --all-features --locked
+        shell: bash
+
+      - name: Rename artifacts
+        run: |
+          SHVBROKER_FILE_NAME="$(printf "shvbroker-nightly-g%s" "$(head -c 7 <<< '${{env.HASH_FOR_FILENAMES}}')")"
+          mv '${{github.workspace}}/install/bin/shvbroker' "${{github.workspace}}/install/bin/${SHVBROKER_FILE_NAME}"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        uses: silicon-heaven/rust-nightly-release-action@v1.0.0
+        with:
+          path_glob: ${{github.workspace}}/install/bin/shvbroker*
+
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
@@ -50,7 +83,7 @@ jobs:
           sudo apt update
           sudo apt-get install -y libudev-dev pkg-config
       - name: Generate coverage
-        uses: syyyr/rust-pycobertura-action@v3.0.0
+        uses: silicon-heaven/rust-pycobertura-action@v3.0.0
         with:
           project_name: shvbroker
 
@@ -59,4 +92,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check version bump
-        uses: syyyr/rust-check-version-bump@ed0644b33a4994450066d35f02905be30e80e627
+        uses: silicon-heaven/rust-check-version-bump@v1.0.1
