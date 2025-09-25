@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_tungstenite::WebSocketStream;
+use duration_str::HumanFormat;
 use futures::channel::mpsc::UnboundedSender;
 use futures::select;
 use futures::stream::FuturesUnordered;
@@ -16,12 +18,15 @@ use shvproto::RpcValue;
 use shvrpc::canrw::CanFrameReader;
 use shvrpc::canrw::CanFrameWriter;
 use shvrpc::client::ClientConfig;
+use shvrpc::framerw::ReceiveFrameError;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::{Protocol, RpcFrame};
 use smol::Task;
+use smol::Timer;
+use smol::future::FutureExt as _;
 use socketcan::CanFdFrame;
 use crate::brokerimpl::next_peer_id;
 use crate::brokerimpl::CanConnectionConfig;
@@ -113,6 +118,20 @@ async fn server_ws_peer_loop(
 
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
+
+const IDLE_WATCHDOG_TIMEOUT_DEFAULT: u64 = 180;
+
+async fn frame_read_timeout<T>(timeout: Duration) -> Result<T, ReceiveFrameError> {
+    Timer::after(timeout).await;
+    Err(ReceiveFrameError::Timeout)
+}
+
+async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
+    let timeout = Duration::from_secs(10);
+    Timer::after(timeout).await;
+    Err(format!("frame write timeout after {timeout_str}", timeout_str = timeout.human_format()).into())
+}
+
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
@@ -126,10 +145,17 @@ pub(crate) async fn server_peer_loop(
 
     'session_loop: loop {
         let mut device_options = RpcValue::null();
+        let mut idle_watchdog_timeout = Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT);
         let mut user;
         let mut nonce = None;
         'login_loop: loop {
-            let frame = frame_reader.receive_frame().await?;
+            let login_phase_timeout = if nonce.is_none() {
+                // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
+                Duration::from_secs(5)
+            } else {
+                idle_watchdog_timeout
+            };
+            let frame = frame_reader.receive_frame().or(frame_read_timeout(login_phase_timeout)).await?;
             if frame.protocol == Protocol::ResetSession {
                 continue 'session_loop;
             }
@@ -142,7 +168,7 @@ pub(crate) async fn server_peer_loop(
                     let nonce: &String = nonce.get_or_insert_with(|| Alphanumeric.sample_string(&mut rand::rng(), 16));
                     let mut result = shvproto::Map::new();
                     result.insert("nonce".into(), RpcValue::from(nonce));
-                    frame_writer.send_result(resp_meta, result.into()).await?;
+                    frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
                 },
                 "workflows" => {
                     debug!("Client ID: {peer_id}, workflows received.");
@@ -165,7 +191,7 @@ pub(crate) async fn server_peer_loop(
                         }
                     }
 
-                    frame_writer.send_result(resp_meta, workflows.into()).await?;
+                    frame_writer.send_result(resp_meta, workflows.into()).or(frame_write_timeout()).await?;
                 },
                 "login" => {
                     debug!("Client ID: {peer_id}, login received.");
@@ -177,7 +203,7 @@ pub(crate) async fn server_peer_loop(
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {
-                            frame_writer.send_error(resp_meta, "Entra ID login is not supported on this broker.").await?;
+                            frame_writer.send_error(resp_meta, "Entra ID login is not supported on this broker.").or(frame_write_timeout()).await?;
                             continue 'login_loop;
                         }
                         #[cfg(feature = "entra-id")]
@@ -188,12 +214,12 @@ pub(crate) async fn server_peer_loop(
                             } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
                                 access_token
                             } else {
-                                frame_writer.send_error(resp_meta, "Unsupported token type.").await?;
+                                frame_writer.send_error(resp_meta, "Unsupported token type.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             };
 
                             let Some(azure_config) = &broker_config.azure else {
-                                frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").await?;
+                                frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             };
 
@@ -250,18 +276,22 @@ pub(crate) async fn server_peer_loop(
 
                             if mapped_groups.is_empty() {
                                 warn!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
-                                frame_writer.send_error(resp_meta, "No relevant Azure groups found.").await?;
+                                frame_writer.send_error(resp_meta, "No relevant Azure groups found.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
 
                             debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {mapped_groups:?}");
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
-                            frame_writer.send_result(resp_meta.clone(), result.into()).await?;
-                            if let Some(options) = params.get("options")
-                                && let Some(device) = options.as_map().get("device") {
+                            frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
+                            if let Some(options) = params.get("options") {
+                                if let Some(idle_timeout)  = options.as_map().get("idleWatchDogTimeOut").map(RpcValue::as_u64) && idle_timeout > 0 {
+                                    idle_watchdog_timeout = Duration::from_secs(idle_timeout);
+                                }
+                                if let Some(device) = options.as_map().get("device") {
                                     device_options = device.clone();
                                 }
+                            }
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
                             break 'login_loop;
@@ -308,15 +338,19 @@ pub(crate) async fn server_peer_loop(
                                 debug!("Client ID: {peer_id}, password OK.");
                                 let mut result = shvproto::Map::new();
                                 result.insert("clientId".into(), RpcValue::from(peer_id));
-                                frame_writer.send_result(resp_meta, result.into()).await?;
-                                if let Some(options) = params.get("options")
-                                    && let Some(device) = options.as_map().get("device") {
+                                frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
+                                if let Some(options) = params.get("options") {
+                                    if let Some(idle_timeout)  = options.as_map().get("idleWatchDogTimeOut").map(RpcValue::as_u64) && idle_timeout > 0 {
+                                        idle_watchdog_timeout = Duration::from_secs(idle_timeout);
+                                    }
+                                    if let Some(device) = options.as_map().get("device") {
                                         device_options = device.clone();
                                     }
+                                }
                                 break 'login_loop;
                             } else {
                                 warn!("Peer: {peer_id}, invalid login credentials.");
-                                frame_writer.send_error(resp_meta, "Invalid login credentials.").await?;
+                                frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
                         }
@@ -326,7 +360,7 @@ pub(crate) async fn server_peer_loop(
                     }
                 },
                 _ => {
-                    frame_writer.send_error(resp_meta, "Invalid login message.").await?;
+                    frame_writer.send_error(resp_meta, "Invalid login message.").or(frame_write_timeout()).await?;
                 }
             }
         }
@@ -352,15 +386,15 @@ pub(crate) async fn server_peer_loop(
         let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
         let frame_writer_task = smol::spawn(async move {
             while let Some(frame) = frames_rx.next().await {
-                if let Err(e) = frame_writer.send_frame(frame).await {
-                    log::error!("frame send failed: {}", e);
+                if let Err(e) = frame_writer.send_frame(frame).or(frame_write_timeout()).await {
+                    log::error!("RpcFrame send failed: {}", e);
                     return Err((e, frame_writer));
                 }
             }
             Ok(frame_writer)
         });
 
-        let mut fut_receive_frame = frame_reader.receive_frame().fuse();
+        let mut fut_receive_frame = Box::pin(frame_reader.receive_frame().or(frame_read_timeout(idle_watchdog_timeout)).fuse());
         let mut fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
         loop {
             select! {
@@ -392,16 +426,16 @@ pub(crate) async fn server_peer_loop(
                         }
                         broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         drop(fut_receive_frame);
-                        fut_receive_frame = frame_reader.receive_frame().fuse();
+                        fut_receive_frame = Box::pin(frame_reader.receive_frame().or(frame_read_timeout(idle_watchdog_timeout)).fuse());
                     }
                     Err(e) => {
-                        debug!("Peer socket closed: {}", &e);
+                        debug!("Peer network session closed: {e}");
                         break 'session_loop;
                     }
                 },
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
-                        debug!("Broker to Peer channel closed: {}", &e);
+                        debug!("Broker to Peer channel closed: {e}");
                         break 'session_loop;
                     }
                     Ok(event) => {
@@ -853,7 +887,6 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn broker_as_client_peer_loop(
     peer_id: PeerId,
     login_params: LoginParams,
@@ -866,7 +899,14 @@ async fn broker_as_client_peer_loop(
 {
     let heartbeat_interval = login_params.heartbeat_interval;
     info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
-    client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).await?;
+
+    let login_timeout = async move {
+        const LOGIN_TIMEOUT: u64 = 10;
+        let timeout = Duration::from_secs(LOGIN_TIMEOUT);
+        Timer::after(timeout).await;
+        Err(format!("login timeout after {timeout_str}", timeout_str = timeout.human_format()).into())
+    };
+    client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).or(login_timeout).await?;
 
     match &connection_kind {
         ConnectionKind::ToParentBroker { .. } => {
@@ -884,7 +924,15 @@ async fn broker_as_client_peer_loop(
         sender: broker_to_peer_sender,
     }).await?;
 
-    let mut fut_receive_frame = frame_reader.receive_frame().fuse();
+    let mut frames_stream = pin!(futures::stream::unfold(frame_reader, async |mut reader| {
+        let idle_read_timeout = login_params.heartbeat_interval * 3;
+        let frame_res = reader
+            .receive_frame()
+            .or(frame_read_timeout(idle_read_timeout))
+            .await;
+        Some((frame_res, reader))
+    }));
+
     let mut fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
     let make_timeout = || {
         FutureExt::fuse(Box::pin(smol::Timer::after(heartbeat_interval)))
@@ -894,7 +942,7 @@ async fn broker_as_client_peer_loop(
     smol::spawn(async move {
         while let Some(frame) = frames_rx.next().await {
             if let Err(e) = frame_writer.send_frame(frame).await {
-                log::error!("frame send failed: {}", e);
+                log::debug!("frame send failed: {}", e);
                 return Err((e, frame_writer));
             }
         }
@@ -911,11 +959,9 @@ async fn broker_as_client_peer_loop(
                 frames_tx.unbounded_send(msg.to_frame()?)?;
                 fut_timeout = make_timeout();
             },
-            res_frame = fut_receive_frame => match res_frame {
+            res_frame = frames_stream.select_next_some() => match res_frame {
                 Ok(frame) => {
                     process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
-                    drop(fut_receive_frame);
-                    fut_receive_frame = frame_reader.receive_frame().fuse();
                 }
                 Err(e) => {
                     return Err(format!("Read frame error: {e}").into());
