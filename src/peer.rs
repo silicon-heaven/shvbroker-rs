@@ -20,6 +20,8 @@ use shvrpc::canrw::CanFrameWriter;
 use shvrpc::client::ClientConfig;
 use shvrpc::framerw::ReceiveFrameError;
 use shvrpc::metamethod::AccessLevel;
+use shvrpc::rpcmessage::RpcError;
+use shvrpc::rpcmessage::RpcErrorCode;
 use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
@@ -123,7 +125,7 @@ const IDLE_WATCHDOG_TIMEOUT_DEFAULT: u64 = 180;
 
 async fn frame_read_timeout<T>(timeout: Duration) -> Result<T, ReceiveFrameError> {
     Timer::after(timeout).await;
-    Err(ReceiveFrameError::Timeout)
+    Err(ReceiveFrameError::Timeout(None))
 }
 
 async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
@@ -155,7 +157,25 @@ pub(crate) async fn server_peer_loop(
             } else {
                 idle_watchdog_timeout
             };
-            let frame = frame_reader.receive_frame().or(frame_read_timeout(login_phase_timeout)).await?;
+            let frame = match frame_reader.receive_frame().or(frame_read_timeout(login_phase_timeout)).await {
+                Ok(frame) => frame,
+                Err(err) => {
+                    match &err {
+                        ReceiveFrameError::Timeout(Some(meta)) if meta.is_request() => {
+                            let mut msg = RpcMessage::prepare_response_from_meta(meta)?;
+                            msg.set_error(RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallTimeout, "Method call timeout"));
+                            frame_writer.send_message(msg).or(frame_write_timeout()).await?;
+                        }
+                        ReceiveFrameError::FrameTooLarge(reason, Some(meta)) if meta.is_request() => {
+                            let mut msg = RpcMessage::prepare_response_from_meta(meta)?;
+                            msg.set_error(RpcError::new(shvrpc::rpcmessage::RpcErrorCode::InvalidParam, reason));
+                            frame_writer.send_message(msg).or(frame_write_timeout()).await?;
+                        }
+                        _ => { }
+                    }
+                    return Err(err.into());
+                }
+            };
             if frame.protocol == Protocol::ResetSession {
                 continue 'session_loop;
             }
@@ -398,41 +418,69 @@ pub(crate) async fn server_peer_loop(
         let mut fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
         loop {
             select! {
-                frame = fut_receive_frame => match frame {
-                    Ok(frame) => {
-                        if frame.protocol == Protocol::ResetSession {
-                            // delete peer state
-                            broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-                            drop(frames_tx);
-                            match frame_writer_task.await {
-                                Ok(writer) => {
-                                    frame_writer = writer;
-                                    continue 'session_loop;
+                frame = fut_receive_frame => {
+                    match frame {
+                        Ok(frame) => {
+                            if frame.protocol == Protocol::ResetSession {
+                                // delete peer state
+                                broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+                                drop(frames_tx);
+                                match frame_writer_task.await {
+                                    Ok(writer) => {
+                                        frame_writer = writer;
+                                        continue 'session_loop;
+                                    }
+                                    Err(_) => break 'session_loop,
                                 }
-                                Err(_) => break 'session_loop,
+                            }
+                            let mut frame = frame;
+                            if frame.is_request() && let Some(req_user_id) = frame.user_id() {
+                                let broker_id = broker_config.name.as_ref()
+                                    .map(|name| format!(":{name}"))
+                                    .unwrap_or_default();
+                                let user_id_chain = if req_user_id.is_empty() {
+                                    format!("{user}{broker_id}")
+                                } else {
+                                    format!("{req_user_id};{user}{broker_id}")
+                                };
+                                frame.set_user_id(&user_id_chain);
+                            }
+                            broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+                        }
+                        Err(err) => {
+                            let (meta, rpc_error) = match &err {
+                                ReceiveFrameError::Timeout(Some(meta)) if meta.is_request() => {
+                                    (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Request receive timeout"))
+                                }
+                                ReceiveFrameError::Timeout(Some(meta)) if meta.is_response() => {
+                                    (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Response receive timeout"))
+                                }
+                                ReceiveFrameError::FrameTooLarge(reason, Some(meta)) => {
+                                    (meta, RpcError::new(RpcErrorCode::MethodCallException, reason))
+                                }
+                                _ => {
+                                    debug!("Peer network session closed: {err}");
+                                    break 'session_loop;
+                                }
+                            };
+                            if meta.is_request() && let Ok(mut rpc_msg) = RpcMessage::prepare_response_from_meta(meta) {
+                                // Send an error response back to the caller
+                                rpc_msg.set_error(rpc_error);
+                                frames_tx.unbounded_send(rpc_msg.to_frame()?)?;
+                            } else if meta.is_response() {
+                                // Forward the error response to the request caller
+                                let mut rpc_msg = RpcMessage::from_meta(meta.clone());
+                                rpc_msg.set_error(rpc_error);
+                                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
+                            } else {
+                                debug!("Peer network session closed: {err}");
+                                break 'session_loop;
                             }
                         }
-                        let mut frame = frame;
-                        if frame.is_request() && let Some(req_user_id) = frame.user_id() {
-                            let broker_id = broker_config.name.as_ref()
-                                .map(|name| format!(":{name}"))
-                                .unwrap_or_default();
-                            let user_id_chain = if req_user_id.is_empty() {
-                                format!("{user}{broker_id}")
-                            } else {
-                                format!("{req_user_id};{user}{broker_id}")
-                            };
-                            frame.set_user_id(&user_id_chain);
-                        }
-                        broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
-                        drop(fut_receive_frame);
-                        fut_receive_frame = Box::pin(frame_reader.receive_frame().or(frame_read_timeout(idle_watchdog_timeout)).fuse());
                     }
-                    Err(e) => {
-                        debug!("Peer network session closed: {e}");
-                        break 'session_loop;
-                    }
-                },
+                    drop(fut_receive_frame);
+                    fut_receive_frame = Box::pin(frame_reader.receive_frame().or(frame_read_timeout(idle_watchdog_timeout)).fuse());
+                }
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
                         debug!("Broker to Peer channel closed: {e}");
@@ -963,8 +1011,31 @@ async fn broker_as_client_peer_loop(
                 Ok(frame) => {
                     process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
                 }
-                Err(e) => {
-                    return Err(format!("Read frame error: {e}").into());
+                Err(err) => {
+                    let (meta, rpc_error) = match &err {
+                        ReceiveFrameError::Timeout(Some(meta)) if meta.is_request() => {
+                            (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Request receive timeout"))
+                        }
+                        ReceiveFrameError::Timeout(Some(meta)) if meta.is_response() => {
+                            (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Response receive timeout"))
+                        }
+                        ReceiveFrameError::FrameTooLarge(reason, Some(meta)) => {
+                            (meta, RpcError::new(RpcErrorCode::MethodCallException, reason))
+                        }
+                        _ => return Err(format!("Receive frame error: {err}").into()),
+                    };
+                    if meta.is_request() && let Ok(mut msg) = RpcMessage::prepare_response_from_meta(meta) {
+                        // Send the error response back to the caller
+                        msg.set_error(rpc_error);
+                        frames_tx.unbounded_send(msg.to_frame()?)?;
+                    } else if meta.is_response() {
+                        // Forward the error response to the request caller
+                        let mut msg = RpcMessage::from_meta(meta.clone());
+                        msg.set_error(rpc_error);
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_kind, broker_writer.clone()).await?;
+                    } else {
+                        return Err(format!("Receive frame error: {err}").into());
+                    }
                 }
             },
             event = fut_receive_broker_event => match event {
