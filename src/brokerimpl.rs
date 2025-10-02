@@ -231,7 +231,7 @@ struct TlsConfig {
     key: String,
 }
 
-fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
+pub(crate) fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
     rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(path)?))
         .collect::<Result<Vec<_>,_>>()
 }
@@ -263,6 +263,7 @@ async fn server_accept_loop(
     }
 
     let tls_acceptor = if let Some(tls_config) = &tls_config {
+        info!("TLS enabled");
         let server_config = futures_rustls::rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(load_certs(&tls_config.cert)?, load_private_key(&tls_config.key)?)?;
@@ -284,13 +285,16 @@ async fn server_accept_loop(
 
         let peer_id = next_peer_id();
         let peer_addr = stream.peer_addr().map_or(Cow::from("<unknown>"), |a| a.to_string().into());
-        info!("Accepting TCP connection from: {peer_addr}, peer: {peer_id}");
+        info!("Accepted TCP connection from peer: {peer_addr}, peer_id: {peer_id}");
 
         let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.as_ref().cloned() {
             match tls_acceptor.accept(stream).await {
-                Ok(stream) => Box::new(stream),
+                Ok(stream) => {
+                    info!("TLS handshake OK, peer: {peer_addr}, peer_id: {peer_id}");
+                    Box::new(stream)
+                }
                 Err(err) => {
-                    error!("TLS handshake with peer {peer_addr} failed, err: {err}");
+                    error!("TLS handshake FAILED, peer: {peer_addr}, err: {err}");
                     smol::Timer::after(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -354,7 +358,7 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
             continue
         }
         let scheme = peer_config.client.url.scheme();
-        if !["tcp", "serial"].contains(&scheme) {
+        if !["tcp", "ssl", "serial"].contains(&scheme) {
             if scheme != "can" {
                 // CAN connections are handled below
                 error!("URL scheme {scheme} is not supported for a broker connection");

@@ -45,6 +45,7 @@ async-compat = { version = "0.2.4", optional = true }
 socketcan = { version = "3.5.0", features = ["smol"] }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
+rustls-platform-verifier = "0.6.1"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
