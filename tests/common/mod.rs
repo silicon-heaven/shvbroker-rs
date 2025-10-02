@@ -84,13 +84,16 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
     let port = port.unwrap_or(3755);
     println!("shvcall port: {port} {path}:{method} param: {param}");
     let shvcall_binary = &*SHVCALL_BINARY;
-    let output = match Command::new(shvcall_binary)
+    let mut cmd = Command::new(shvcall_binary);
+    cmd
         .arg("-v").arg(".:T")
         .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
-        .arg("--method").arg(format!("{path}:{method}"))
-        .arg("--param").arg(param)
-        //.arg("--output-format").arg(output_format.as_str())
-        .output() {
+        .arg("--method").arg(format!("{path}:{method}"));
+    if !param.is_empty() {
+        cmd.arg("--param").arg(param);
+    }
+    //.arg("--output-format").arg(output_format.as_str())
+    let output = match cmd.output() {
         Ok(output) => {output}
         Err(e) => {
             panic!("{shvcall_binary} exec error: {e}");
