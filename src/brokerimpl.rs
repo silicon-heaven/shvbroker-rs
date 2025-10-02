@@ -231,7 +231,7 @@ struct TlsConfig {
     key: String,
 }
 
-fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
+pub(crate) fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
     rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(path)?))
         .collect::<Result<Vec<_>,_>>()
 }
