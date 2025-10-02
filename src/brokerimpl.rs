@@ -350,10 +350,19 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
     let broker_peers = &broker_config.connections;
     for peer_config in broker_peers {
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
-        if peer_config.enabled && ["tcp", "serial"].contains(&peer_config.client.url.scheme()) {
-            let peer_id = next_peer_id();
-            spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
+        if !peer_config.enabled {
+            continue
         }
+        let scheme = peer_config.client.url.scheme();
+        if !["tcp", "serial"].contains(&scheme) {
+            if scheme != "can" {
+                // CAN connections are handled below
+                error!("URL scheme {scheme} is not supported for a broker connection");
+            }
+            continue
+        }
+        let peer_id = next_peer_id();
+        spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
     }
 
     for can_interface_config in can_interfaces_config(&broker_config) {
