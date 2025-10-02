@@ -3,11 +3,11 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_tungstenite::WebSocketStream;
 use duration_str::HumanFormat;
 use futures::channel::mpsc::UnboundedSender;
 use futures::select;
 use futures::stream::FuturesUnordered;
+use futures::AsyncReadExt;
 use futures::FutureExt;
 use futures::io::BufWriter;
 use futures::StreamExt;
@@ -31,8 +31,10 @@ use smol::Timer;
 use smol::future::FutureExt as _;
 use socketcan::CanFdFrame;
 use crate::brokerimpl::next_peer_id;
+use crate::brokerimpl::AsyncReadWriteBox;
 use crate::brokerimpl::CanConnectionConfig;
 use crate::brokerimpl::CanInterfaceConfig;
+use crate::brokerimpl::ServerMode;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
@@ -53,14 +55,24 @@ use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
 
-pub(crate) async fn try_server_tcp_peer_loop(
+pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
+    server_mode: ServerMode,
     broker_writer: Sender<BrokerCommand>,
-    stream: TcpStream,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    info!("Entering TCP peer loop, peer: {peer_id}.");
-    match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
+    let res = match server_mode {
+        ServerMode::Tcp => {
+            info!("Entering TCP peer loop, peer: {peer_id}.");
+            server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+        }
+        ServerMode::WebSocket => {
+            info!("Entering WebSocket peer loop, peer: {peer_id}.");
+            server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+        }
+    };
+    match res {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -74,11 +86,11 @@ pub(crate) async fn try_server_tcp_peer_loop(
 async fn server_tcp_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
-    stream: TcpStream,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
 
-    let (socket_reader, socket_writer) = (stream.clone(), stream);
+    let (socket_reader, socket_writer) = stream.split();
 
     let brd = BufReader::new(socket_reader);
     let bwr = BufWriter::new(socket_writer);
@@ -89,31 +101,14 @@ async fn server_tcp_peer_loop(
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
-pub(crate) async fn try_server_ws_peer_loop(
-    peer_id: PeerId,
-    broker_writer: Sender<BrokerCommand>,
-    stream: WebSocketStream<TcpStream>,
-    broker_config: SharedBrokerConfig
-) -> shvrpc::Result<()> {
-    info!("Entering WS peer loop client ID: {peer_id}.");
-    match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
-        Ok(_) => {
-            info!("Client loop exit OK, peer id: {peer_id}");
-        }
-        Err(e) => {
-            error!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
-        }
-    }
-    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-    Ok(())
-}
 async fn server_ws_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
-    stream: WebSocketStream<TcpStream>,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     use futures::StreamExt;
+    let stream = async_tungstenite::accept_async(stream).await?;
     let (socket_sink, socket_stream) = stream.split();
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
     let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
