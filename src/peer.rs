@@ -459,7 +459,9 @@ pub(crate) async fn server_peer_loop(
                                     (meta, RpcError::new(RpcErrorCode::MethodCallException, reason))
                                 }
                                 _ => {
-                                    debug!("Peer network session closed: {err}");
+                                    debug!("Peer receive frame error: {err}");
+                                    drop(frames_tx);
+                                    frame_writer_task.await.ok();
                                     break 'session_loop;
                                 }
                             };
@@ -473,7 +475,9 @@ pub(crate) async fn server_peer_loop(
                                 rpc_msg.set_error(rpc_error);
                                 broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
                             } else {
-                                debug!("Peer network session closed: {err}");
+                                debug!("Peer receive frame error: {err}");
+                                drop(frames_tx);
+                                frame_writer_task.await.ok();
                                 break 'session_loop;
                             }
                         }
@@ -484,6 +488,8 @@ pub(crate) async fn server_peer_loop(
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
                         debug!("Broker to Peer channel closed: {e}");
+                        drop(frames_tx);
+                        frame_writer_task.await.ok();
                         break 'session_loop;
                     }
                     Ok(event) => {
@@ -493,6 +499,8 @@ pub(crate) async fn server_peer_loop(
                             }
                             BrokerToPeerMessage::DisconnectByBroker => {
                                 info!("Disconnected by broker, client ID: {peer_id}");
+                                drop(frames_tx);
+                                frame_writer_task.await.ok();
                                 break 'session_loop;
                             }
                             BrokerToPeerMessage::SendFrame(frame) => {
