@@ -4,7 +4,6 @@ use std::sync::LazyLock;
 use std::thread;
 use shvproto::{RpcValue};
 use shvrpc::{RpcMessage};
-use shvrpc::rpcmessage::Response;
 
 pub struct KillProcessGuard {
     pub child: Child,
@@ -60,15 +59,6 @@ pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     }
     Ok(values)
 }
-pub fn result_from_output(output: Output) -> shvrpc::Result<RpcValue> {
-    let msg = rpcmsg_from_output(output)?;
-    if let Ok(Response::Success(val)) = msg.response() {
-        return Ok(val.clone());
-    }
-    //println!("cpon: {}, expected: {}", result, expected_value.to_cpon());
-    //assert_eq!(result, expected_value);
-    Err(format!("Success response result expected, got: {msg}").into())
-}
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
     let shvcall_package = cargo_run_bin::metadata::get_binary_packages()
@@ -80,7 +70,7 @@ static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
     cargo_run_bin::binary::install(shvcall_package).unwrap()
 });
 
-pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcValue> {
+pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcMessage> {
     let port = port.unwrap_or(3755);
     println!("shvcall port: {port} {path}:{method} param: {param}");
     let shvcall_binary = &*SHVCALL_BINARY;
@@ -90,17 +80,19 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
         .arg("--method").arg(format!("{path}:{method}"));
     if !param.is_empty() {
-        cmd.arg("--param").arg(param);
-    }
-    //.arg("--output-format").arg(output_format.as_str())
-    let output = match cmd.output() {
-        Ok(output) => {output}
-        Err(e) => {
-            panic!("{shvcall_binary} exec error: {e}");
-        }
+        cmd.arg("--param-file").arg("-");
     };
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut chld = cmd.spawn().unwrap();
+    let mut stdin = chld.stdin.take().unwrap();
+    stdin.write_all(param.as_bytes()).unwrap();
+    drop(stdin);
 
-    result_from_output(output)
+    //.arg("--output-format").arg(output_format.as_str())
+    chld.wait_with_output()
+        .map(rpcmsg_from_output)
+        .unwrap_or_else(|e| panic!("{shvcall_binary} exec error: {e}"))
+
 }
 pub fn shv_call_many(calls: Vec<String>, port: Option<i32>) -> shvrpc::Result<Vec<String>> {
     let port = port.unwrap_or(3755);

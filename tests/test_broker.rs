@@ -1,5 +1,6 @@
 use std::process::Command;
 use assert_cmd::prelude::*;
+use shvrpc::rpcmessage::RpcErrorCode;
 use tempfile::NamedTempFile;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
@@ -62,10 +63,24 @@ fn test_broker() -> shvrpc::Result<()> {
     };
 
     pub fn shv_call_parent(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
-        shv_call(path, method, param, None)
+        let rpcmsg = shv_call(path, method, param, None)?;
+        rpcmsg
+            .response()?
+            .success()
+            .cloned()
+            .ok_or_else(|| format!("Not a success response: {msg}", msg = rpcmsg.to_cpon()).into())
     }
     pub fn shv_call_child(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
-        shv_call(path, method, param, Some(3756))
+        let rpcmsg = shv_call(path, method, param, Some(3756))?;
+        rpcmsg
+            .response()?
+            .success()
+            .cloned()
+            .ok_or_else(|| format!("Not a success response: {msg}", msg = rpcmsg.to_cpon()).into())
+    }
+
+    pub fn shv_call_parent_get_response(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcMessage> {
+        shv_call(path, method, param, None)
     }
 
     println!("====== broker =====");
@@ -154,6 +169,10 @@ fn test_broker() -> shvrpc::Result<()> {
 
     test_child_broker_as_client()?;
 
+    const OVERSIZED_FRAME_SIZE: usize = 60 << 20;
+    let resp = shv_call_parent_get_response("test/child-broker/device/state/oversized", "get", &OVERSIZED_FRAME_SIZE.to_string())?;
+    assert_eq!(resp.response().unwrap_err().code, RpcErrorCode::MethodCallException);
+
     Ok(())
 }
 
@@ -165,6 +184,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
 
     const NUMBER_MOUNT: &str = "state/number";
     const TEXT_MOUNT: &str = "state/text";
+    const OVERSIZED_MOUNT: &str = "state/oversized";
 
     let client_config = ClientConfig {
         url,
@@ -206,6 +226,13 @@ fn run_testing_device(url: Url, mount_point: &str) {
             }
        }
     };
+    let oversized_node = shvclient::fixed_node!{
+        text_node_handler<State>(_request, _client_cmd_tx, _app_state) {
+            "get" [IsGetter, Read, "String", "Null"] (param: usize) => {
+                Some(Ok(std::iter::repeat_n('A', param).collect::<String>().into()))
+            }
+       }
+    };
 
     smol::spawn(async move {
         shvclient::Client::new()
@@ -213,6 +240,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
             .mount(NUMBER_MOUNT, number_node)
             .mount(TEXT_MOUNT, text_node)
+            .mount(OVERSIZED_MOUNT, oversized_node)
             .with_app_state(state)
             //.run_with_init(&client_config, init_task)
             .run(&client_config)
@@ -287,7 +315,12 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
     assert!(broker_process_guard.is_running());
 
     pub fn shv_call_3754(path: &str, method: &str, param: &str) -> shvrpc::Result<RpcValue> {
-        shv_call(path, method, param, Some(3754))
+        let rpcmsg = shv_call(path, method, param, Some(3754))?;
+        rpcmsg
+            .response()?
+            .success()
+            .cloned()
+            .ok_or_else(|| format!("Not a success response: {msg}", msg = rpcmsg.to_cpon()).into())
     }
     assert_eq!(shv_call_3754("test/child-device/.app", "name", "")?, RpcValue::from("shvbrokertestingdevice"));
     check_subscription_along_property_path("test/child-device/state/number", 3754)?;
