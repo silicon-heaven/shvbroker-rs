@@ -80,17 +80,19 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         .arg("--url").arg(format!("tcp://localhost:{port}?user=admin&password=admin"))
         .arg("--method").arg(format!("{path}:{method}"));
     if !param.is_empty() {
-        cmd.arg("--param").arg(param);
-    }
-    //.arg("--output-format").arg(output_format.as_str())
-    let output = match cmd.output() {
-        Ok(output) => {output}
-        Err(e) => {
-            panic!("{shvcall_binary} exec error: {e}");
-        }
+        cmd.arg("--param-file").arg("-");
     };
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut chld = cmd.spawn().unwrap();
+    let mut stdin = chld.stdin.take().unwrap();
+    stdin.write_all(param.as_bytes()).unwrap();
+    drop(stdin);
 
-    rpcmsg_from_output(output)
+    //.arg("--output-format").arg(output_format.as_str())
+    chld.wait_with_output()
+        .map(rpcmsg_from_output)
+        .unwrap_or_else(|e| panic!("{shvcall_binary} exec error: {e}"))
+
 }
 pub fn shv_call_many(calls: Vec<String>, port: Option<i32>) -> shvrpc::Result<Vec<String>> {
     let port = port.unwrap_or(3755);
