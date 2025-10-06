@@ -15,7 +15,7 @@ use futures::io::BufWriter;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
-use rustls_platform_verifier::ConfigVerifierExt;
+use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
 use shvrpc::canrw::CanFrameReader;
@@ -519,16 +519,21 @@ pub(crate) async fn server_peer_loop(
 }
 
 fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConnector> {
+    let crypto_provider = Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider());
     if let Some((_, ca_path)) = url.query_pairs().find(|(k, _)| k == "ca") {
         let ca_certs = load_certs(&ca_path)?;
         let mut root_store = futures_rustls::rustls::RootCertStore::empty();
         root_store.add_parsable_certificates(ca_certs);
-        let client_config = futures_rustls::rustls::ClientConfig::builder()
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
             .with_root_certificates(root_store)
             .with_no_client_auth();
         Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
     } else {
-        let client_config = TlsClientConfig::with_platform_verifier()?;
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .with_platform_verifier()?
+            .with_no_client_auth();
         Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
     }
 }

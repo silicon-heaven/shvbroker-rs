@@ -264,7 +264,8 @@ async fn server_accept_loop(
 
     let tls_acceptor = if let Some(tls_config) = &tls_config {
         info!("TLS enabled");
-        let server_config = futures_rustls::rustls::ServerConfig::builder()
+        let server_config = futures_rustls::rustls::ServerConfig::builder_with_provider(Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider()))
+            .with_safe_default_protocol_versions()?
             .with_no_client_auth()
             .with_single_cert(load_certs(&tls_config.cert)?, load_private_key(&tls_config.key)?)?;
         Some(futures_rustls::TlsAcceptor::from(Arc::new(server_config)))
