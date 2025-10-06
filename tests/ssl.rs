@@ -116,7 +116,7 @@ fn generate_test_cert_files() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
 
     Ok((ca_crt_path, server_crt_path, server_key_path))
 }
-fn setup() -> (BrokerConfig, BrokerConfig) {
+fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let (ca_crt_path, server_crt_path, server_key_path) = generate_test_cert_files().expect("Cannot generate test certificates");
 
@@ -160,7 +160,7 @@ fn ssl() {
             .init()
             .unwrap();
 
-        let (parent_broker_config, child_broker_config) = setup();
+        let (parent_broker_config, child_broker_config) = create_broker_configs();
         start_broker(parent_broker_config, PARENT_BROKER_ADDRESS).await;
         start_broker(child_broker_config, CHILD_BROKER_ADDRESS).await;
 
