@@ -12,9 +12,10 @@ use crate::shvnode::{
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
-use futures::FutureExt;
+use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
 use futures::select;
+use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
@@ -30,6 +31,7 @@ use smol::channel;
 use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use url::Url;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Add;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -218,38 +220,59 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
     }
 }
 
-async fn tcp_server_accept_loop(
+#[derive(Copy, Clone)]
+pub(crate) enum ServerMode {
+    Tcp,
+    WebSocket,
+}
+
+struct TlsConfig {
+    cert: String,
+    key: String,
+}
+
+pub(crate) fn load_certs(path: &str) -> std::io::Result<Vec<CertificateDer<'static>>> {
+    rustls_pemfile::certs(&mut std::io::BufReader::new(std::fs::File::open(path)?))
+        .collect::<Result<Vec<_>,_>>()
+}
+
+fn load_private_key(path: &str) -> std::io::Result<PrivateKeyDer<'static>> {
+    rustls_pemfile::private_key(&mut std::io::BufReader::new(std::fs::File::open(path)?))?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("No private key found in {path}")))
+}
+
+pub(crate) trait AsyncReadWrite: AsyncRead + AsyncWrite {}
+impl<T: AsyncRead + AsyncWrite> AsyncReadWrite for T {}
+
+pub(crate) type AsyncReadWriteBox = Box<dyn AsyncReadWrite + Unpin + Send>;
+
+async fn server_accept_loop(
     address: String,
+    tls_config: Option<TlsConfig>,
+    server_mode: ServerMode,
     broker_sender: Sender<BrokerCommand>,
     broker_config: SharedBrokerConfig,
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address)
         .await
         .map_err(|err| format!("Cannot listen on address {address}: {err}"))?;
-    info!("Listening on TCP: {address}");
-    let mut incoming = listener.incoming();
-    while let Some(stream) = incoming.next().await {
-        let stream = match stream {
-            Ok(stream) => stream,
-            Err(err) => {
-                error!("Failed to accept a TCP connection at {address}: {err}, waiting one second before accepting another connection");
-                smol::Timer::after(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
 
-        let peer_id = next_peer_id();
-        info!("Accepting TCP connection from: {}, peer: {peer_id}", stream.peer_addr()?);
-        spawn_and_log_error(peer::try_server_tcp_peer_loop(peer_id, broker_sender.clone(), stream, broker_config.clone()));
+    match server_mode {
+        ServerMode::Tcp => info!("Listening on TCP: {address}"),
+        ServerMode::WebSocket => info!("Listening on WebSocket: {address}"),
     }
-    Ok(())
-}
 
-async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
-    let listener = smol::net::TcpListener::bind(&address)
-        .await
-        .map_err(|err| format!("Cannot listen on address {address}: {err}"))?;
-    info!("Listening on WebSocket: {address}");
+    let tls_acceptor = if let Some(tls_config) = &tls_config {
+        info!("TLS enabled");
+        let server_config = futures_rustls::rustls::ServerConfig::builder_with_provider(Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider()))
+            .with_safe_default_protocol_versions()?
+            .with_no_client_auth()
+            .with_single_cert(load_certs(&tls_config.cert)?, load_private_key(&tls_config.key)?)?;
+        Some(futures_rustls::TlsAcceptor::from(Arc::new(server_config)))
+    } else {
+        None
+    };
+
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = match stream {
@@ -261,15 +284,27 @@ async fn ws_server_accept_loop(address: String, broker_sender: Sender<BrokerComm
             }
         };
 
-        let stream = async_tungstenite::accept_async(stream).await?;
         let peer_id = next_peer_id();
-        debug!("Accepting from: {}", stream.get_ref().peer_addr()?);
-        spawn_and_log_error(peer::try_server_ws_peer_loop(
-            peer_id,
-            broker_sender.clone(),
-            stream,
-            broker_config.clone(),
-        ));
+        let peer_addr = stream.peer_addr().map_or(Cow::from("<unknown>"), |a| a.to_string().into());
+        info!("Accepted TCP connection from peer: {peer_addr}, peer_id: {peer_id}");
+
+        let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.as_ref().cloned() {
+            match tls_acceptor.accept(stream).await {
+                Ok(stream) => {
+                    info!("TLS handshake OK, peer: {peer_addr}, peer_id: {peer_id}");
+                    Box::new(stream)
+                }
+                Err(err) => {
+                    error!("TLS handshake FAILED, peer: {peer_addr}, err: {err}");
+                    smol::Timer::after(Duration::from_secs(1)).await;
+                    continue;
+                }
+            }
+        } else {
+            Box::new(stream)
+        };
+
+        spawn_and_log_error(peer::try_server_peer_loop(peer_id, server_mode, broker_sender.clone(), stream, broker_config.clone()));
     }
     Ok(())
 }
@@ -292,9 +327,26 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
                     })
             )
         };
+        let tls_config = |url: &Url| {
+            let cert = url
+                .query_pairs()
+                .find_map(|(k, v)| (k == "cert").then_some(v))
+                .ok_or_else(|| format!("Unspecified `cert` option in url: {url}"))?;
+            let key = url
+                .query_pairs()
+                .find_map(|(k, v)| (k == "key").then_some(v))
+                .ok_or_else(|| format!("Unspecified `key` option in url: {url}"))?;
+            Ok::<_, String>(TlsConfig {
+                cert: cert.into(),
+                key: key.into(),
+            })
+        };
+
         match url.scheme() {
-            "tcp" => spawn_and_log_error(tcp_server_accept_loop(address_string(url), broker_sender.clone(), broker_config.clone())),
-            "ws" => spawn_and_log_error(ws_server_accept_loop(address_string(url), broker_sender.clone(), broker_config.clone())),
+            "tcp" => spawn_and_log_error(server_accept_loop(address_string(url), None, ServerMode::Tcp, broker_sender.clone(), broker_config.clone())),
+            "ssl" => spawn_and_log_error(server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::Tcp, broker_sender.clone(), broker_config.clone())),
+            "ws" => spawn_and_log_error(server_accept_loop(address_string(url), None, ServerMode::WebSocket, broker_sender.clone(), broker_config.clone())),
+            "wss" => spawn_and_log_error(server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::WebSocket, broker_sender.clone(), broker_config.clone())),
             "serial" | "tty" => spawn_and_log_error(serial::try_serial_peer_loop(next_peer_id(), broker_sender.clone(), url.path().into(), broker_config.clone())),
             _ => { }
         }
@@ -303,10 +355,19 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
     let broker_peers = &broker_config.connections;
     for peer_config in broker_peers {
         debug!("{} enabled: {}", peer_config.name, peer_config.enabled);
-        if peer_config.enabled && ["tcp", "serial"].contains(&peer_config.client.url.scheme()) {
-            let peer_id = next_peer_id();
-            spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
+        if !peer_config.enabled {
+            continue
         }
+        let scheme = peer_config.client.url.scheme();
+        if !["tcp", "ssl", "serial"].contains(&scheme) {
+            if scheme != "can" {
+                // CAN connections are handled below
+                error!("URL scheme {scheme} is not supported for a broker connection");
+            }
+            continue
+        }
+        let peer_id = next_peer_id();
+        spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
     }
 
     for can_interface_config in can_interfaces_config(&broker_config) {

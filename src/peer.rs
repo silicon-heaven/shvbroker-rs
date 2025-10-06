@@ -3,16 +3,19 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_tungstenite::WebSocketStream;
 use duration_str::HumanFormat;
 use futures::channel::mpsc::UnboundedSender;
 use futures::select;
 use futures::stream::FuturesUnordered;
+use futures::AsyncRead;
+use futures::AsyncReadExt;
+use futures::AsyncWrite;
 use futures::FutureExt;
 use futures::io::BufWriter;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
+use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
 use shvrpc::canrw::CanFrameReader;
@@ -30,9 +33,12 @@ use smol::Task;
 use smol::Timer;
 use smol::future::FutureExt as _;
 use socketcan::CanFdFrame;
+use crate::brokerimpl::load_certs;
 use crate::brokerimpl::next_peer_id;
+use crate::brokerimpl::AsyncReadWriteBox;
 use crate::brokerimpl::CanConnectionConfig;
 use crate::brokerimpl::CanInterfaceConfig;
+use crate::brokerimpl::ServerMode;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
@@ -40,6 +46,7 @@ use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
+use futures_rustls::rustls::ClientConfig as TlsClientConfig;
 use smol::channel;
 use smol::channel::Sender;
 use smol::io::BufReader;
@@ -53,14 +60,24 @@ use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
 
-pub(crate) async fn try_server_tcp_peer_loop(
+pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
+    server_mode: ServerMode,
     broker_writer: Sender<BrokerCommand>,
-    stream: TcpStream,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    info!("Entering TCP peer loop, peer: {peer_id}.");
-    match server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
+    let res = match server_mode {
+        ServerMode::Tcp => {
+            info!("Entering TCP peer loop, peer: {peer_id}.");
+            server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+        }
+        ServerMode::WebSocket => {
+            info!("Entering WebSocket peer loop, peer: {peer_id}.");
+            server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+        }
+    };
+    match res {
         Ok(_) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
@@ -74,11 +91,11 @@ pub(crate) async fn try_server_tcp_peer_loop(
 async fn server_tcp_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
-    stream: TcpStream,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
 
-    let (socket_reader, socket_writer) = (stream.clone(), stream);
+    let (socket_reader, socket_writer) = stream.split();
 
     let brd = BufReader::new(socket_reader);
     let bwr = BufWriter::new(socket_writer);
@@ -89,31 +106,14 @@ async fn server_tcp_peer_loop(
     server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
-pub(crate) async fn try_server_ws_peer_loop(
-    peer_id: PeerId,
-    broker_writer: Sender<BrokerCommand>,
-    stream: WebSocketStream<TcpStream>,
-    broker_config: SharedBrokerConfig
-) -> shvrpc::Result<()> {
-    info!("Entering WS peer loop client ID: {peer_id}.");
-    match server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await {
-        Ok(_) => {
-            info!("Client loop exit OK, peer id: {peer_id}");
-        }
-        Err(e) => {
-            error!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
-        }
-    }
-    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
-    Ok(())
-}
 async fn server_ws_peer_loop(
     peer_id: PeerId,
     broker_writer: Sender<BrokerCommand>,
-    stream: WebSocketStream<TcpStream>,
+    stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     use futures::StreamExt;
+    let stream = async_tungstenite::accept_async(stream).await?;
     let (socket_sink, socket_stream) = stream.split();
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
     let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
@@ -517,24 +517,59 @@ pub(crate) async fn server_peer_loop(
     info!("Client ID: {peer_id} gone.");
     Ok(())
 }
-pub(crate) async fn broker_as_client_peer_loop_with_reconnect(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+
+fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConnector> {
+    let crypto_provider = Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider());
+    if let Some((_, ca_path)) = url.query_pairs().find(|(k, _)| k == "ca") {
+        let ca_certs = load_certs(&ca_path)?;
+        let mut root_store = futures_rustls::rustls::RootCertStore::empty();
+        root_store.add_parsable_certificates(ca_certs);
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
+    } else {
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .with_platform_verifier()?
+            .with_no_client_auth();
+        Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
+    }
+}
+
+pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
+    peer_id: PeerId,
+    config: BrokerConnectionConfig,
+    broker_writer: Sender<BrokerCommand>,
+) -> shvrpc::Result<()> {
     info!("Spawning broker peer connection loop: {}", config.name);
+
     let reconnect_interval = config.client.reconnect_interval.unwrap_or_else(|| {
         const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
         info!("Parent broker connection reconnect interval is not set explicitly, default value {DEFAULT_RECONNECT_INTERVAL_SEC} will be used.");
         std::time::Duration::from_secs(DEFAULT_RECONNECT_INTERVAL_SEC)
     });
     info!("Reconnect interval set to: {reconnect_interval:?}");
+
+    let tls = if config.client.url.scheme() == "ssl" {
+        Some((Arc::new(build_tls_connector(&config.client.url)?), futures_rustls::pki_types::ServerName::try_from(config.client.url.host_str().unwrap_or_default())?.to_owned()))
+    } else {
+        None
+    };
+
     loop {
         info!("Connecting to broker peer id: {peer_id} with url: {}", config.client.url);
-        match broker_as_client_peer_loop_from_url(peer_id, config.clone(), broker_writer.clone()).await {
-            Ok(_) => {
-                info!("Peer broker loop finished without error");
-            }
-            Err(err) => {
-                error!("Peer broker loop finished with error: {err}");
-            }
+        match broker_as_client_peer_loop_from_url(
+            peer_id,
+            config.clone(),
+            broker_writer.clone(),
+            tls.clone(),
+        ).await {
+            Ok(_) => info!("Peer broker loop finished without error"),
+            Err(err) => error!("Peer broker loop finished with error: {err}"),
         }
+
         broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
         info!("Reconnecting to peer broker after: {reconnect_interval:?}");
         smol::Timer::after(reconnect_interval).await;
@@ -584,21 +619,33 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
     };
     Ok(())
 }
-async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConnectionConfig, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+
+async fn broker_as_client_peer_loop_from_url(
+    peer_id: PeerId,
+    config: BrokerConnectionConfig,
+    broker_writer: Sender<BrokerCommand>,
+    tls: Option<(Arc<futures_rustls::TlsConnector>, futures_rustls::pki_types::ServerName<'static>)>,
+) -> shvrpc::Result<()> {
     let url = &config.client.url;
     let scheme = url.scheme();
-    if scheme == "tcp" {
-        let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
-        let address = format!("{host}:{port}");
-        // Establish a connection
-        debug!("Connecting to broker TCP peer: {address}");
-        let reader = TcpStream::connect(&address).await?;
-        let writer = reader.clone();
+
+    async fn setup_stream_and_run<S>(
+        peer_id: PeerId,
+        config: BrokerConnectionConfig,
+        broker_writer: Sender<BrokerCommand>,
+        stream: S,
+    ) -> shvrpc::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let (reader, writer) = stream.split();
 
         let brd = BufReader::new(reader);
         let bwr = BufWriter::new(writer);
+
         let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
         let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
+
         broker_as_client_peer_loop(
             peer_id,
             login_params_from_client_config(&config.client),
@@ -608,21 +655,43 @@ async fn broker_as_client_peer_loop_from_url(peer_id: PeerId, config: BrokerConn
             frame_reader,
             frame_writer,
         ).await
-    } else if scheme == "serial" {
-        let port_name = url.path();
-        debug!("Connecting to broker serial peer: {port_name}");
-        let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-        broker_as_client_peer_loop(
-            peer_id,
-            login_params_from_client_config(&config.client),
-            config.connection_kind,
-            true,
-            broker_writer,
-            frame_reader,
-            frame_writer,
-        ).await
-    } else {
-        Err(format!("Scheme {scheme} is not supported yet.").into())
+    }
+
+    match scheme {
+        "tcp" => {
+            let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3755));
+            let address = format!("{host}:{port}");
+            info!("Connecting to TCP broker peer: {address}");
+            let stream = TcpStream::connect(&address).await?;
+            setup_stream_and_run(peer_id, config, broker_writer, stream).await
+        }
+        "ssl" => {
+            let (host, port) = (url.host_str().unwrap_or_default(), url.port().unwrap_or(3756));
+            let address = format!("{host}:{port}");
+            info!("Connecting to SSL broker peer: {address}");
+            let (connector, server_name) = tls
+                .ok_or("TLS connector not initialized")?;
+            let stream = TcpStream::connect(&address).await?;
+            let stream = connector
+                .connect(server_name, stream)
+                .await?;
+            setup_stream_and_run(peer_id, config, broker_writer, stream).await
+        }
+        "serial" => {
+            let port_name = url.path();
+            info!("Connecting to serial broker peer: {port_name}");
+            let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
+            broker_as_client_peer_loop(
+                peer_id,
+                login_params_from_client_config(&config.client),
+                config.connection_kind,
+                true,
+                broker_writer,
+                frame_reader,
+                frame_writer,
+            ).await
+        }
+        _ => Err(format!("Scheme {scheme} is not supported yet.").into()),
     }
 }
 

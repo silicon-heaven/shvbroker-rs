@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.7.19"
+version = "3.8.0"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,6 +13,9 @@ cargo-run-bin = "1.7.4"
 assert_cmd = "2.0"
 shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["smol"] }
 tempfile = "3"
+const_format = "0.2.35"
+anyhow = "1.0.100"
+rcgen = "0.14.5"
 
 [package.metadata.bin]
 shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.9" }
@@ -43,6 +46,9 @@ serialport = "4.7.1"
 async-tungstenite = "0.29.1"
 async-compat = { version = "0.2.4", optional = true }
 socketcan = { version = "3.5.0", features = ["smol"] }
+futures-rustls = "0.26.0"
+rustls-pemfile = "2.2.0"
+rustls-platform-verifier = "0.6.1"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]
@@ -58,3 +64,7 @@ name = "shvbroker"
 [[test]]
 name = "test_broker"
 path = "tests/test_broker.rs"
+
+[[test]]
+name = "ssl"
+path = "tests/ssl.rs"
