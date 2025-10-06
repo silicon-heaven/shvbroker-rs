@@ -13,6 +13,9 @@ cargo-run-bin = "1.7.4"
 assert_cmd = "2.0"
 shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", branch = "main", features = ["smol"] }
 tempfile = "3"
+const_format = "0.2.35"
+anyhow = "1.0.100"
+rcgen = "0.14.5"
 
 [package.metadata.bin]
 shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.9" }
@@ -61,3 +64,7 @@ name = "shvbroker"
 [[test]]
 name = "test_broker"
 path = "tests/test_broker.rs"
+
+[[test]]
+name = "ssl"
+path = "tests/ssl.rs"
