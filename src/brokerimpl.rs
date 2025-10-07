@@ -2,16 +2,12 @@ use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, BrokerConfig, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::peer::login_params_from_client_config;
 use crate::shvnode::{
-    AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
-    BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS,
-    DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
-    DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS,
-    METH_SUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, ShvNode, find_longest_prefix,
-    process_local_dir_ls,
+    find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, SIG_LSMOD
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
 use futures::select;
@@ -32,8 +28,7 @@ use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use url::Url;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::ops::Add;
+use std::collections::{BTreeMap, HashMap,VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
@@ -47,7 +42,7 @@ pub(crate) struct Subscription {
 #[derive(Debug)]
 pub(crate) struct ForwardedSubscription {
     pub(crate) param: SubscriptionParam,
-    pub(crate) subscribed: Option<Instant>,
+    pub(crate) count: u32,
 }
 
 impl Subscription {
@@ -111,11 +106,24 @@ pub enum BrokerToPeerMessage {
     DisconnectByBroker,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum SubscribePath {
-    NotBroker,
-    CanSubscribe(String),
+const SUBSCRIBE_PATH_API_V2: &str = ".broker/app";
+const SUBSCRIBE_PATH_API_V3: &str = ".broker/currentClient";
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum SubscribeApi {
+    ApiV2,
+    ApiV3,
 }
+
+impl SubscribeApi {
+    pub(crate) fn path(&self) -> &'static str {
+        match self {
+            SubscribeApi::ApiV2 => SUBSCRIBE_PATH_API_V2,
+            SubscribeApi::ApiV3 => SUBSCRIBE_PATH_API_V3,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PeerKind {
     Client {
@@ -128,12 +136,14 @@ pub enum PeerKind {
         mount_point: Option<String>,
     },
 }
+
 #[derive(Debug)]
 pub(crate) struct Peer {
+    pub(crate) peer_id: PeerId,
     pub(crate) peer_kind: PeerKind,
     pub(crate) sender: Sender<BrokerToPeerMessage>,
     pub(crate) mount_point: Option<String>,
-    pub(crate) subscribe_path: Option<SubscribePath>,
+    pub(crate) subscribe_api: Option<SubscribeApi>,
     pub(crate) subscriptions: Vec<Subscription>,
     pub(crate) forwarded_subscriptions: Vec<ForwardedSubscription>,
 }
@@ -148,6 +158,7 @@ impl Peer {
         }
         false
     }
+
     fn user(&self) -> Option<&str> {
         match &self.peer_kind {
             PeerKind::Client { user, .. } => Some(user),
@@ -155,10 +166,160 @@ impl Peer {
             PeerKind::Device { user, .. } => Some(user),
         }
     }
+
+    pub(crate) fn add_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
+        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        let Some((subscribe_path, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
+            return Ok(false)
+        };
+        debug!(target: "Subscr", "  forwarded_ri: {forwarded_ri}");
+        // TODO: V2 subscriptions
+        if let Some(subscr) = self.forwarded_subscriptions.iter_mut().find(|subscr| subscr.param.ri == forwarded_ri) {
+            subscr.count += 1;
+            debug!(target: "Subscr", "  refcount increased to: {refcount}", refcount = subscr.count);
+            Ok(false)
+        } else {
+            debug!(target: "Subscr", "  new subscription on the peer");
+            let subscr_param = SubscriptionParam {
+                ri: forwarded_ri,
+                ttl: None,
+            };
+
+            self.forwarded_subscriptions.push(ForwardedSubscription {
+                param: subscr_param.clone(),
+                count: 1,
+            });
+
+            Ok(subscr_tx.unbounded_send(SubscriptionCommand {
+                peer_id: self.peer_id,
+                api: subscribe_path,
+                param: subscr_param,
+                action: SubscriptionAction::Subscribe,
+            })
+            .map(|_| true)?)
+        }
+    }
+
+    pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
+        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        let Some((subscribe_api, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
+            return Ok(false)
+        };
+        debug!(target: "Subscr", "  forwarded_ri: {forwarded_ri}");
+        let Some(subscr_idx) = self.forwarded_subscriptions.iter().position(|subscr| subscr.param.ri == forwarded_ri) else {
+            return Ok(false)
+        };
+        let subscr = &mut self.forwarded_subscriptions[subscr_idx];
+        if subscr.count > 1 {
+            subscr.count -= 1;
+            debug!(target: "Subscr", "  refcount decreased to: {refcount}", refcount = subscr.count);
+            Ok(false)
+        } else {
+            debug!(target: "Subscr", "  remove subscription from the peer");
+            let subscr = self.forwarded_subscriptions.remove(subscr_idx);
+
+            subscr_tx.unbounded_send(SubscriptionCommand {
+                peer_id: self.peer_id,
+                api: subscribe_api,
+                param: subscr.param,
+                action: SubscriptionAction::Unsubscribe,
+            })?;
+           Ok(true)
+        }
+    }
+
+    fn forwarded_subscription_params(&self, ri: &ShvRI) -> shvrpc::Result<Option<(SubscribeApi, ShvRI)>> {
+        if self.is_parent_broker() {
+            return Ok(None);
+        }
+        let (mount_point, subscribe_api) = match (&self.mount_point, self.subscribe_api) {
+            (Some(mount_point), Some(subscribe_path)) => (mount_point, subscribe_path),
+            _ => return Ok(None),
+        };
+        let Ok(Some((_, forwarded_path))) = split_glob_on_match(ri.path(), mount_point) else {
+            return Ok(None)
+        };
+        let forwarded_ri = ShvRI::from_path_method_signal(forwarded_path, ri.method(), ri.signal())?;
+        Ok(Some((subscribe_api, forwarded_ri)))
+    }
+
+    fn is_parent_broker(&self) -> bool {
+        matches!(self.peer_kind, PeerKind::Broker(ConnectionKind::ToParentBroker { .. }))
+    }
+}
+
+pub(crate) struct SubscriptionCommand {
+    peer_id: PeerId,
+    api: SubscribeApi,
+    param: SubscriptionParam,
+    action: SubscriptionAction,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SubscriptionAction {
+    Subscribe,
+    Unsubscribe,
+}
+
+impl SubscriptionAction {
+    fn method_name(&self) -> &'static str {
+        match self {
+            SubscriptionAction::Subscribe => METH_SUBSCRIBE,
+            SubscriptionAction::Unsubscribe => METH_UNSUBSCRIBE,
+        }
+    }
+}
+
+fn shv_path_glob_to_prefix(path: &str) -> String {
+    path
+        .split('/')
+        .take_while(|segment| !segment.contains('*'))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+async fn call_subscribe_or_unsubscribe(
+    action: SubscriptionAction,
+    peer_id: PeerId,
+    subscribe_api: SubscribeApi,
+    subscription: SubscriptionParam,
+    broker_command_sender: &Sender<BrokerCommand>,
+) -> shvrpc::Result<()> {
+    let path = subscribe_api.path();
+    let method = action.method_name();
+    let param = match subscribe_api {
+        SubscribeApi::ApiV2 => {
+            let ri = &subscription.ri;
+            shvproto::make_map!(
+                "path" => shv_path_glob_to_prefix(ri.path()),
+                "method" => ri.method(),
+                "signal" => ri.signal().unwrap_or_default(),
+            ).into()
+        }
+        SubscribeApi::ApiV3 => match action {
+            SubscriptionAction::Subscribe => subscription.to_rpcvalue(),
+            SubscriptionAction::Unsubscribe => subscription.ri.to_string().into(),
+        },
+    };
+    debug!(target: "Subscr", "calling {method}, peer_id: {peer_id}, path: {path}, param: {param}");
+    let (response_sender, response_receiver) = unbounded();
+    let cmd = BrokerCommand::RpcCall {
+        peer_id,
+        request: RpcMessage::new_request(path, method, Some(param)),
+        response_sender,
+    };
+    broker_command_sender
+        .send(cmd)
+        .await?;
+    response_receiver
+        .recv()
+        .await?
+        .to_rpcmesage()?;
+    Ok(())
 }
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
-pub  fn next_peer_id() -> i64 {
+pub fn next_peer_id() -> i64 {
     let old_id = G_PEER_COUNT.fetch_add(1, Ordering::SeqCst);
     old_id + 1
 }
@@ -472,7 +633,9 @@ fn can_interfaces_config(broker_config: &BrokerConfig) -> Vec<CanInterfaceConfig
     interfaces.into_values().collect()
 }
 
+
 pub type TunnelId = u64;
+
 pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
@@ -482,13 +645,14 @@ pub struct BrokerState {
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
 
     pub(crate) command_sender: Sender<BrokerCommand>,
+    pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
 
     active_tunnels: BTreeMap<TunnelId, ActiveTunnel>,
     next_tunnel_number: TunnelId,
 }
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
-    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>) -> Self {
+    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
         let role_access = parse_config_roles(&access.roles);
         Self {
             peers: Default::default(),
@@ -497,6 +661,7 @@ impl BrokerState {
             role_access_rules: role_access,
             azure_user_groups: Default::default(),
             command_sender,
+            subscr_cmd_sender,
             active_tunnels: Default::default(),
             next_tunnel_number: 1,
         }
@@ -644,7 +809,16 @@ impl BrokerState {
         if let Some(mount_point) = mount_point.as_ref() {
             info!("Unmounting peer: {peer_id} at: {mount_point}");
         }
-        self.peers.remove(&peer_id);
+        if let Some(removed_peer) = self.peers.remove(&peer_id) {
+            for subscr in removed_peer.subscriptions {
+                let ri = subscr.param.ri;
+                for peer in self.peers.values_mut() {
+                    peer.remove_forwarded_subscription(&ri, &self.subscr_cmd_sender)
+                        .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
+                        .ok();
+                }
+            }
+        }
         self.mounts.retain(|_k, v| {
             if let Mount::Peer(id) = v
                 && *id == peer_id {
@@ -654,9 +828,9 @@ impl BrokerState {
         });
         Ok(mount_point)
     }
-    fn set_subscribe_path(&mut self, peer_id: PeerId, subscribe_path: SubscribePath) -> shvrpc::Result<()> {
+    fn set_subscribe_api(&mut self, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
         let peer = self.peers.get_mut(&peer_id).ok_or("Peer not found")?;
-        peer.subscribe_path = Some(subscribe_path);
+        peer.subscribe_api = subscribe_api;
         Ok(())
     }
     fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> shvrpc::Result<()> {
@@ -710,10 +884,11 @@ impl BrokerState {
             }
         };
         let peer = Peer {
+            peer_id,
             peer_kind,
             sender,
             mount_point: effective_mount_point.clone(),
-            subscribe_path: None,
+            subscribe_api: None,
             subscriptions: vec![],
             forwarded_subscriptions: vec![],
         };
@@ -808,6 +983,21 @@ impl BrokerState {
         } else {
             log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {peer_id} - {subpar:?}");
             peer.subscriptions.push(Subscription::new(subpar)?);
+
+            // Forward this subscription to all other peers - sub-brokers
+            self
+                .peers
+                .iter_mut()
+                .filter_map(|(id, peer)|
+                    (peer_id != *id).then_some(peer)
+                )
+                .for_each(|peer| {
+                    let ri = &subpar.ri;
+                    peer.add_forwarded_subscription(ri, &self.subscr_cmd_sender)
+                        .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {peer_id}, err: {e}"))
+                        .ok();
+                    }
+                );
             Ok(true)
         }
     }
@@ -820,97 +1010,25 @@ impl BrokerState {
         let cnt = peer.subscriptions.len();
         peer.subscriptions
             .retain(|subscr| subscr.param.ri != subpar.ri);
-        Ok(cnt != peer.subscriptions.len())
-    }
-    fn subscribe_path(&self, peer_id: PeerId) -> shvrpc::Result<Option<SubscribePath>> {
-        let peer = self
+
+        let peer_subscr_len = peer.subscriptions.len();
+
+        self
             .peers
-            .get(&peer_id)
-            .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
-        Ok(peer.subscribe_path.clone())
-    }
-    pub(crate) fn gc_subscriptions(&mut self) {
-        let now = Instant::now();
-        for peer in self.peers.values_mut() {
-            peer.subscriptions.retain(|subscr| {
-                match subscr.param.ttl {
-                    None => {
-                        true
-                    }
-                    Some(ttl) => {
-                        let expired = now - subscr.subscribed > Duration::from_secs(ttl as u64);
-                        if expired {
-                            log!(target: "Subscr", Level::Debug, "Subscription expired: {:?}", subscr.param);
-                        }
-                        !expired
-                    }
+            .iter_mut()
+            .filter_map(|(id, peer)|
+                (peer_id != *id).then_some(peer)
+            )
+            .for_each(|peer| {
+                let ri = &subpar.ri;
+                peer.remove_forwarded_subscription(ri, &self.subscr_cmd_sender)
+                    .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
+                    .ok();
                 }
-            });
-        }
+            );
+        Ok(cnt != peer_subscr_len)
     }
-    pub(crate) fn update_forwarded_subscriptions(&mut self) -> shvrpc::Result<()> {
-        let mut fwd_subs: HashSet<ShvRI> = Default::default();
-        for peer in self.peers.values() {
-            for subscr in &peer.subscriptions {
-                fwd_subs.insert(subscr.param.ri.clone());
-            }
-        }
-        const DEFAULT_TTL: Option<u32> = Some(10 * 60);
-        let mut to_forward: HashMap<PeerId, HashSet<ShvRI>> = Default::default();
-        for (peer_id, peer) in &self.peers {
-            if let Some(SubscribePath::CanSubscribe(_)) = &peer.subscribe_path {
-                for ri in &fwd_subs {
-                    if let Some(mount_point) = &peer.mount_point
-                        && let Ok(Some((_local, remote))) =
-                            split_glob_on_match(ri.path(), mount_point)
-                        {
-                            log!(target: "Subscr", Level::Debug, "Schedule forward subscription: {}:{}:{:?}", remote, ri.method(), ri.signal());
-                            let ri =
-                                ShvRI::from_path_method_signal(remote, ri.method(), ri.signal())?;
-                            if let Some(val) = to_forward.get_mut(peer_id) {
-                                val.insert(ri);
-                            } else {
-                                let mut set1: HashSet<ShvRI> = Default::default();
-                                set1.insert(ri);
-                                to_forward.insert(*peer_id, set1);
-                            }
-                        }
-                }
-            }
-        }
-        for (peer_id, peer) in &mut self.peers {
-            if let Some(to_fwd_peer) = to_forward.get_mut(peer_id) {
-                // remove fwd subscritions not found in to_fwd_peer
-                peer.forwarded_subscriptions.retain_mut(|subs| {
-                    if to_fwd_peer.contains(&subs.param.ri) {
-                        to_fwd_peer.remove(&subs.param.ri);
-                        if let Some(subscribed) = &subs.subscribed
-                            && let Some(ttl) = subs.param.ttl {
-                                let expires = subscribed.add(Duration::from_secs(ttl as u64 - 10));
-                                if expires < Instant::now() {
-                                    // subscriptions near to expiration, schedule subscribe RPC call
-                                    subs.subscribed = None;
-                                }
-                            }
-                        true
-                    } else {
-                        false
-                    }
-                });
-                // add new fwd subscriptions
-                for ri in to_fwd_peer.iter() {
-                    peer.forwarded_subscriptions.push(ForwardedSubscription {
-                        param: SubscriptionParam {
-                            ri: ri.clone(),
-                            ttl: DEFAULT_TTL,
-                        },
-                        subscribed: None,
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
+
     pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {
         self.access.mounts.get(id)
     }
@@ -1133,6 +1251,33 @@ fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
         Ok(("", mount_point))
     }
 }
+
+async fn forward_subscriptions_task(
+    mut subscr_cmd_receiver: UnboundedReceiver<SubscriptionCommand>,
+    broker_command_sender: Sender<BrokerCommand>
+) -> shvrpc::Result<()>
+{
+    const TIMEOUT: u64 = 10;
+    while let Some(SubscriptionCommand { peer_id, api, param, action }) = subscr_cmd_receiver.next().await {
+        let subscribe_res = call_subscribe_or_unsubscribe(action, peer_id, api, param.clone(), &broker_command_sender)
+            .timeout(Duration::from_secs(TIMEOUT))
+            .await;
+        let method = action.method_name();
+        match subscribe_res {
+            Some(Ok(_)) => {
+                debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {param:?}");
+            }
+            Some(Err(e)) => {
+                error!(target: "Subscr", "call {method} error: {e}, peer_id: {peer_id}, subscription: {param:?}");
+            }
+            None => {
+                error!(target: "Subscr", "call {method} timeout after {TIMEOUT} sec, peer_id: {peer_id}, subscription: {param:?}");
+            }
+        }
+    }
+    Ok(())
+}
+
 impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
@@ -1140,7 +1285,9 @@ impl BrokerImpl {
         sql_connection: Option<rusqlite::Connection>,
     ) -> Self {
         let (command_sender, command_receiver) = unbounded();
-        let state = BrokerState::new(access, command_sender.clone());
+        let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
+        spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
+        let state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
         let mut broker = Self {
             state: Arc::new(RwLock::new(state)),
             nodes: Default::default(),
@@ -1614,28 +1761,43 @@ impl BrokerImpl {
         }
         Ok(())
     }
-    async fn on_device_mounted(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<()> {
-        let mount_point = state_reader(&state).mount_point(peer_id);
-        if mount_point.is_some() {
-            state_writer(&state).gc_subscriptions();
-            if let SubscribePath::CanSubscribe(_) = BrokerImpl::check_subscribe_path(state.clone(), peer_id).await? {
-                let _ = state_writer(&state).update_forwarded_subscriptions();
-                Self::renew_forwarded_subscriptions(state.clone()).await?;
-            }
+
+    async fn on_device_mounted(state: SharedBrokerState, new_peer_id: PeerId) -> shvrpc::Result<()> {
+        if state_reader(&state).mount_point(new_peer_id).is_none() {
+            return Ok(());
+        }
+        if Self::check_subscribe_api(state.clone(), new_peer_id).await?.is_none() {
+            return Ok(());
+        }
+        if state_reader(&state).peers.get(&new_peer_id).is_none_or(|new_peer| new_peer.is_parent_broker()) {
+            return Ok(());
+        }
+        let forwarded_ris = state_reader(&state)
+            .peers
+            .iter()
+            .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
+            .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
+            .collect::<Vec<_>>();
+
+        let subscr_cmd_sender = state_reader(&state).subscr_cmd_sender.clone();
+
+        if let Some(new_peer) = state_writer(&state).peers.get_mut(&new_peer_id) {
+            for ri in forwarded_ris {
+                new_peer
+                    .add_forwarded_subscription(&ri, &subscr_cmd_sender)
+                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
+                    .ok();
+                }
         }
         Ok(())
     }
-    async fn check_subscribe_path(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<SubscribePath> {
-        log!(target: "Subscr", Level::Debug, "check_subscribe_path, peer_id: {peer_id}");
-        if let Some(subpath) = state_reader(&state).subscribe_path(peer_id)? {
-            log!(target: "Subscr", Level::Debug, "Device subscribe path resolved already, peer_id: {peer_id}, path: {:?}", &subpath);
-            return Ok(subpath);
-        }
+
+    async fn check_subscribe_api(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
+        log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
         async fn check_path_with_timeout(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
             async fn check_path(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
                 let (response_sender, response_receiver) = unbounded();
                 let request = RpcMessage::new_request(path, METH_DIR, Some(METH_SUBSCRIBE.into()));
-                // let request = RpcMessage::new_request(".app", METH_DIR, Some("name".into()));
                 let cmd = BrokerCommand::RpcCall {
                     peer_id: client_id,
                     request,
@@ -1655,94 +1817,21 @@ impl BrokerImpl {
             }
         }
         let broker_command_sender = state_reader(&state).command_sender.clone();
-        let mut subscribe_path = SubscribePath::NotBroker;
-        for path in [".broker/currentClient", ".broker/app"] {
-            match check_path_with_timeout(peer_id, path, &broker_command_sender).await {
-                Ok(path) => {
-                    if let Some(path) = path {
-                        subscribe_path = SubscribePath::CanSubscribe(path.clone());
-                        break;
-                    }
-                }
+        let mut subscribe_api = None;
+        for api in [SubscribeApi::ApiV3, SubscribeApi::ApiV2] {
+            match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
+                Ok(val) => if val.is_some() {
+                    subscribe_api = Some(api);
+                    break;
+                },
                 Err(e) => {
-                    error!("Error checking subscribe path: {e}");
+                    error!("Error checking subscribe API: {e}");
                 }
             }
         }
-        log!(target: "Subscr", Level::Debug, "Device subscribe path found, peer_id: {peer_id}, path: {:?}", &subscribe_path);
-        state_writer(&state).set_subscribe_path(peer_id, subscribe_path.clone())?;
-        Ok(subscribe_path)
-    }
-    pub(crate) async fn renew_forwarded_subscriptions(state: SharedBrokerState) -> shvrpc::Result<()> {
-        let mut to_subscribe: HashMap<_, _> = Default::default();
-        for (peer_id, peer) in &mut state_writer(&state).peers {
-            if let Some(SubscribePath::CanSubscribe(subpath)) = &peer.subscribe_path {
-                let mut to_subscribe_peer: Vec<_> = Default::default();
-                for subscr in &mut peer.forwarded_subscriptions {
-                    if subscr.subscribed.is_none() {
-                        subscr.subscribed = Some(Instant::now());
-                        to_subscribe_peer.push(subscr.param.clone());
-                    }
-                }
-                to_subscribe.insert(*peer_id, (subpath.clone(), to_subscribe_peer));
-            }
-        }
-        for (peer_id, (subpath, to_subscribe)) in to_subscribe {
-            for subpar in to_subscribe {
-                match Self::call_subscribe_with_timeout(state.clone(), peer_id, &subpath, subpar)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Call subscribe error: {e}")
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-    async fn call_subscribe_with_timeout(state: SharedBrokerState, peer_id: PeerId, subscribe_path: &str, subscription: SubscriptionParam) -> shvrpc::Result<()> {
-        let broker_command_sender = state_reader(&state).command_sender.clone();
-        async fn call_subscribe1(peer_id: PeerId, subscribe_path: &str, subscription: SubscriptionParam, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<()> {
-            log!(target: "Subscr", Level::Debug, "call_subscribe, peer_id: {peer_id}, subscriptions: {:?}", &subscription);
-            let (response_sender, response_receiver) = unbounded();
-            let cmd = BrokerCommand::RpcCall {
-                peer_id,
-                request: RpcMessage::new_request(subscribe_path, METH_SUBSCRIBE, Some(subscription.to_rpcvalue())),
-                response_sender,
-            };
-            broker_command_sender.send(cmd).await?;
-            response_receiver.recv().await?.to_rpcmesage()?;
-            Ok(())
-        }
-        const TIMEOUT: u64 = 10;
-        match call_subscribe1(peer_id, subscribe_path, subscription.clone(), &broker_command_sender).timeout(Duration::from_secs(TIMEOUT)).await {
-            Some(r) => {
-                match r {
-                    Ok(_) => {
-                        log!(target: "Subscr", Level::Debug, "call_subscribe SUCCESS, peer_id: {peer_id}, subscriptions: {:?}", &subscription);
-                    }
-                    Err(e) => {
-                        log!(target: "Subscr", Level::Error, "call_subscribe error: {e}, peer_id: {peer_id}, subscriptions: {:?}", &subscription);
-                        // remove subscription error, it will be scheduled again on next update_forwarded_subscriptions() run
-                        if let Some(peer) = state_writer(&state).peers.get_mut(&peer_id) {
-                            peer.forwarded_subscriptions.retain(|subscr| {
-                                subscription.ri.as_str() != subscr.param.ri.as_str()
-                            });
-                        }
-                    }
-                }
-            }
-            None => {
-                log!(target: "Subscr", Level::Error, "call_subscribe timeout after {TIMEOUT} sec, peer_id: {peer_id}, subscriptions: {:?}", &subscription);
-                // remove subscription on timeout, it will be scheduled again on next update_forwarded_subscriptions() run
-                if let Some(peer) = state_writer(&state).peers.get_mut(&peer_id) {
-                    peer.forwarded_subscriptions
-                        .retain(|subscr| subscription.ri.as_str() != subscr.param.ri.as_str());
-                }
-            }
-        }
-        Ok(())
+        log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
+        state_writer(&state).set_subscribe_api(peer_id, subscribe_api)?;
+        Ok(subscribe_api)
     }
 }
 
@@ -1755,6 +1844,7 @@ pub(crate) struct NodeRequestContext {
 
 #[cfg(test)]
 mod test {
+    use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::brokerimpl::state_reader;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
@@ -1778,5 +1868,29 @@ mod test {
                 "browse"
             ]
         );
+    }
+
+    #[test]
+    fn test_shv_path_glob_to_prefix() {
+        for (glob, prefix) in [
+            ("**", ""),
+            ("*", ""),
+            ("**/", ""),
+            ("*/", ""),
+            ("a", "a"),
+            ("a/b", "a/b"),
+            ("*/b", ""),
+            ("a/*/c", "a"),
+            ("a/**/c", "a"),
+            ("a/b/c/**", "a/b/c"),
+            ("a/b/c/*", "a/b/c"),
+            ("a/b/c/**/d", "a/b/c"),
+            ("a/b/c/*/d", "a/b/c"),
+            ("a/b/c/foo*/d", "a/b/c"),
+            ("a/b/c/*foo/d", "a/b/c"),
+        ] {
+            let res = shv_path_glob_to_prefix(glob);
+            assert_eq!(res, prefix);
+        }
     }
 }
