@@ -8,6 +8,7 @@ use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::stream::FuturesUnordered;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
 use futures::select;
@@ -109,7 +110,7 @@ pub enum BrokerToPeerMessage {
 const SUBSCRIBE_PATH_API_V2: &str = ".broker/app";
 const SUBSCRIBE_PATH_API_V3: &str = ".broker/currentClient";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SubscribeApi {
     ApiV2,
     ApiV3,
@@ -276,46 +277,6 @@ fn shv_path_glob_to_prefix(path: &str) -> String {
         .take_while(|segment| !segment.contains('*'))
         .collect::<Vec<_>>()
         .join("/")
-}
-
-async fn call_subscribe_or_unsubscribe(
-    action: SubscriptionAction,
-    peer_id: PeerId,
-    subscribe_api: SubscribeApi,
-    subscription: SubscriptionParam,
-    broker_command_sender: &Sender<BrokerCommand>,
-) -> shvrpc::Result<()> {
-    let path = subscribe_api.path();
-    let method = action.method_name();
-    let param = match subscribe_api {
-        SubscribeApi::ApiV2 => {
-            let ri = &subscription.ri;
-            shvproto::make_map!(
-                "path" => shv_path_glob_to_prefix(ri.path()),
-                "method" => ri.method(),
-                "signal" => ri.signal().unwrap_or_default(),
-            ).into()
-        }
-        SubscribeApi::ApiV3 => match action {
-            SubscriptionAction::Subscribe => subscription.to_rpcvalue(),
-            SubscriptionAction::Unsubscribe => subscription.ri.to_string().into(),
-        },
-    };
-    debug!(target: "Subscr", "calling {method}, peer_id: {peer_id}, path: {path}, param: {param}");
-    let (response_sender, response_receiver) = unbounded();
-    let cmd = BrokerCommand::RpcCall {
-        peer_id,
-        request: RpcMessage::new_request(path, method, Some(param)),
-        response_sender,
-    };
-    broker_command_sender
-        .send(cmd)
-        .await?;
-    response_receiver
-        .recv()
-        .await?
-        .to_rpcmesage()?;
-    Ok(())
 }
 
 static G_PEER_COUNT: AtomicI64 = AtomicI64::new(0);
@@ -1242,6 +1203,7 @@ pub(crate) fn state_reader<'a>(state: &'a SharedBrokerState) -> RwLockReadGuard<
 pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard<'a, BrokerState> {
     state.write().unwrap()
 }
+
 fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
     if let Some(ix) = mount_point.rfind('/') {
         let dir = &mount_point[ix + 1..];
@@ -1254,27 +1216,182 @@ fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
 
 async fn forward_subscriptions_task(
     mut subscr_cmd_receiver: UnboundedReceiver<SubscriptionCommand>,
-    broker_command_sender: Sender<BrokerCommand>
+    broker_command_sender: Sender<BrokerCommand>,
 ) -> shvrpc::Result<()>
 {
-    const TIMEOUT: u64 = 10;
-    while let Some(SubscriptionCommand { peer_id, api, param, action }) = subscr_cmd_receiver.next().await {
-        let subscribe_res = call_subscribe_or_unsubscribe(action, peer_id, api, param.clone(), &broker_command_sender)
-            .timeout(Duration::from_secs(TIMEOUT))
-            .await;
+    const TIMEOUT: Duration = Duration::from_secs(10);
+    const RETRY_DELAY: Duration = Duration::from_secs(10);
+
+    #[derive(Debug)]
+    struct SubscriptionParamWrapper(SubscriptionParam);
+
+    impl PartialEq for SubscriptionParamWrapper {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.ri == other.0.ri
+        }
+    }
+
+    impl Eq for SubscriptionParamWrapper { }
+
+    impl std::hash::Hash for SubscriptionParamWrapper {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.0.ri.hash(state);
+        }
+    }
+
+    let mut scheduled_retries: HashMap<(PeerId, SubscribeApi, SubscriptionParamWrapper), Instant> = HashMap::new();
+
+    async fn call_subscribe_action(
+        action: SubscriptionAction,
+        peer_id: PeerId,
+        subscribe_api: SubscribeApi,
+        subscription: SubscriptionParam,
+        broker_command_sender: &Sender<BrokerCommand>,
+    ) -> shvrpc::Result<()> {
+        let path = subscribe_api.path();
         let method = action.method_name();
-        match subscribe_res {
+        let param = match subscribe_api {
+            SubscribeApi::ApiV2 => {
+                let ri = &subscription.ri;
+                shvproto::make_map!(
+                    "path" => shv_path_glob_to_prefix(ri.path()),
+                    "method" => ri.method(),
+                    "signal" => ri.signal().unwrap_or_default(),
+                ).into()
+            }
+            SubscribeApi::ApiV3 => match action {
+                SubscriptionAction::Subscribe => subscription.to_rpcvalue(),
+                SubscriptionAction::Unsubscribe => subscription.ri.to_string().into(),
+            },
+        };
+        debug!(target: "Subscr", "calling {method}, peer_id: {peer_id}, path: {path}, param: {param}");
+        let (response_sender, response_receiver) = unbounded();
+        let cmd = BrokerCommand::RpcCall {
+            peer_id,
+            request: RpcMessage::new_request(path, method, Some(param)),
+            response_sender,
+        };
+        broker_command_sender
+            .send(cmd)
+            .await?;
+        response_receiver
+            .recv()
+            .await?
+            .to_rpcmesage()?;
+        Ok(())
+    }
+
+    async fn call_subscribe_action_with_timeout(
+        action: SubscriptionAction,
+        peer_id: PeerId,
+        subscribe_api: SubscribeApi,
+        subscription: SubscriptionParam,
+        broker_command_sender: &Sender<BrokerCommand>,
+        timeout: Duration,
+    ) -> Result<(), ()> {
+        let method = action.method_name();
+        let res = call_subscribe_action(
+            action,
+            peer_id,
+            subscribe_api,
+            subscription.clone(),
+            broker_command_sender,
+        )
+        .timeout(timeout)
+        .await;
+
+        match res {
             Some(Ok(_)) => {
-                debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {param:?}");
+                debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {subscription:?}");
+                Ok(())
             }
             Some(Err(e)) => {
-                error!(target: "Subscr", "call {method} error: {e}, peer_id: {peer_id}, subscription: {param:?}");
+                error!(target: "Subscr", "call {method} error: {e}, peer_id: {peer_id}, subscription: {subscription:?}");
+                Err(())
             }
             None => {
-                error!(target: "Subscr", "call {method} timeout after {TIMEOUT} sec, peer_id: {peer_id}, subscription: {param:?}");
+                error!(target: "Subscr", "call {method} TIMEOUT after {timeout:?}, peer_id: {peer_id}, subscription: {subscription:?}");
+                Err(())
             }
         }
     }
+
+    loop {
+        let next_retry_time = scheduled_retries
+            .values()
+            .min()
+            .copied();
+        let now = Instant::now();
+        let next_delay = next_retry_time
+            .map(|t| t.saturating_duration_since(now));
+
+        let mut next_cmd_fut = subscr_cmd_receiver.next().fuse();
+        let mut sleep_fut = std::pin::pin!(FutureExt::fuse(
+                async move {
+                    if let Some(delay) = next_delay {
+                        smol::Timer::after(delay).await;
+                    } else {
+                        futures::future::pending::<()>().await;
+                    }
+                }
+        ));
+
+        debug!(target: "Subscr", "scheduled retries: {scheduled_retries:?}");
+
+        futures::select! {
+            maybe_cmd = next_cmd_fut => {
+                let Some(SubscriptionCommand { peer_id, api, param, action }) = maybe_cmd else {
+                    break
+                };
+
+                let key = (peer_id, api, SubscriptionParamWrapper(param.clone()));
+
+                match action {
+                    SubscriptionAction::Unsubscribe => {
+                        scheduled_retries.remove(&key);
+                        call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await.ok();
+                    }
+
+                    SubscriptionAction::Subscribe => {
+                        let result = call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await;
+
+                        if result.is_err() {
+                            scheduled_retries.insert(key, Instant::now() + RETRY_DELAY);
+                        } else {
+                            scheduled_retries.remove(&key);
+                        }
+                    }
+                }
+            }
+
+            _ = sleep_fut => {
+                let now = Instant::now();
+                let results = scheduled_retries
+                    .iter()
+                    .filter_map(|(key, time)| (*time <= now).then_some(key))
+                    .map(|(peer_id, api, SubscriptionParamWrapper(param))| {
+                        let (peer_id, api, param) = (*peer_id, *api, param.clone());
+                        let broker_command_sender = broker_command_sender.clone();
+                        async move {
+                            let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &broker_command_sender, TIMEOUT).await;
+                            ((peer_id, api, SubscriptionParamWrapper(param)), res)
+                        }
+                    })
+                    .collect::<FuturesUnordered<_>>()
+                    .collect::<Vec<_>>()
+                    .await;
+
+                for (key, res) in results {
+                    if res.is_err() {
+                        scheduled_retries.insert(key, Instant::now() + RETRY_DELAY);
+                    } else {
+                        scheduled_retries.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
