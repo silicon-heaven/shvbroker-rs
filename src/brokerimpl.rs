@@ -1886,7 +1886,7 @@ impl BrokerImpl {
         if Self::check_subscribe_api(state.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
-        if state_reader(&state).peers.get(&new_peer_id).is_none_or(|new_peer| new_peer.is_parent_broker()) {
+        if state_reader(&state).peers.get(&new_peer_id).is_none_or(Peer::is_parent_broker) {
             return Ok(());
         }
         let forwarded_ris = state_reader(&state)
