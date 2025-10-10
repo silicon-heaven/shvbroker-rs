@@ -112,15 +112,15 @@ const SUBSCRIBE_PATH_API_V3: &str = ".broker/currentClient";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SubscribeApi {
-    ApiV2,
-    ApiV3,
+    V2,
+    V3,
 }
 
 impl SubscribeApi {
     pub(crate) fn path(&self) -> &'static str {
         match self {
-            SubscribeApi::ApiV2 => SUBSCRIBE_PATH_API_V2,
-            SubscribeApi::ApiV3 => SUBSCRIBE_PATH_API_V3,
+            SubscribeApi::V2 => SUBSCRIBE_PATH_API_V2,
+            SubscribeApi::V3 => SUBSCRIBE_PATH_API_V3,
         }
     }
 }
@@ -1251,7 +1251,7 @@ async fn forward_subscriptions_task(
         let path = subscribe_api.path();
         let method = action.method_name();
         let param = match subscribe_api {
-            SubscribeApi::ApiV2 => {
+            SubscribeApi::V2 => {
                 let ri = &subscription.ri;
                 shvproto::make_map!(
                     "path" => shv_path_glob_to_prefix(ri.path()),
@@ -1259,7 +1259,7 @@ async fn forward_subscriptions_task(
                     "signal" => ri.signal().unwrap_or_default(),
                 ).into()
             }
-            SubscribeApi::ApiV3 => match action {
+            SubscribeApi::V3 => match action {
                 SubscriptionAction::Subscribe => subscription.to_rpcvalue(),
                 SubscriptionAction::Unsubscribe => subscription.ri.to_string().into(),
             },
@@ -1935,7 +1935,7 @@ impl BrokerImpl {
         }
         let broker_command_sender = state_reader(&state).command_sender.clone();
         let mut subscribe_api = None;
-        for api in [SubscribeApi::ApiV3, SubscribeApi::ApiV2] {
+        for api in [SubscribeApi::V3, SubscribeApi::V2] {
             match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
                 Ok(val) => if val.is_some() {
                     subscribe_api = Some(api);
