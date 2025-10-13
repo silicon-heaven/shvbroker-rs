@@ -1306,7 +1306,10 @@ async fn forward_subscriptions_task(
             }
             Some(Err(e)) => {
                 error!(target: "Subscr", "call {method} error: {e}, peer_id: {peer_id}, subscription: {subscription:?}");
-                Err(())
+                // Do not retry the subscribe on an RpcError unless it's timeout.
+                // We assume that the call would end up with the same error, so
+                // we rather return Ok here and just log the error.
+                Ok(())
             }
             None => {
                 error!(target: "Subscr", "call {method} TIMEOUT after {timeout:?}, peer_id: {peer_id}, subscription: {subscription:?}");
