@@ -229,7 +229,7 @@ impl Peer {
     }
 
     fn forwarded_subscription_params(&self, ri: &ShvRI) -> shvrpc::Result<Option<(SubscribeApi, ShvRI)>> {
-        if self.is_parent_broker() {
+        if self.is_connected_to_parent_broker() {
             return Ok(None);
         }
         let (mount_point, subscribe_api) = match (&self.mount_point, self.subscribe_api) {
@@ -243,7 +243,7 @@ impl Peer {
         Ok(Some((subscribe_api, forwarded_ri)))
     }
 
-    fn is_parent_broker(&self) -> bool {
+    fn is_connected_to_parent_broker(&self) -> bool {
         matches!(self.peer_kind, PeerKind::Broker(ConnectionKind::ToParentBroker { .. }))
     }
 }
@@ -1885,7 +1885,7 @@ impl BrokerImpl {
         if Self::check_subscribe_api(state.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
-        if state_reader(&state).peers.get(&new_peer_id).is_none_or(Peer::is_parent_broker) {
+        if state_reader(&state).peers.get(&new_peer_id).is_none_or(Peer::is_connected_to_parent_broker) {
             return Ok(());
         }
         let forwarded_ris = state_reader(&state)
