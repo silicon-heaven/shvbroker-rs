@@ -174,7 +174,6 @@ impl Peer {
             return Ok(false)
         };
         debug!(target: "Subscr", "  forwarded_ri: {forwarded_ri}");
-        // TODO: V2 subscriptions
         if let Some(subscr) = self.forwarded_subscriptions.iter_mut().find(|subscr| subscr.param.ri == forwarded_ri) {
             subscr.count += 1;
             debug!(target: "Subscr", "  refcount increased to: {refcount}", refcount = subscr.count);
