@@ -10,8 +10,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use shvrpc::util::strip_prefix_path;
 use crate::brokerimpl::{BrokerToPeerMessage};
-use crate::brokerimpl::{BrokerImpl, NodeRequestContext, SharedBrokerState, state_reader, state_writer};
-use crate::spawn::spawn_and_log_error;
+use crate::brokerimpl::{NodeRequestContext, SharedBrokerState, state_reader, state_writer};
 
 pub const METH_DIR: &str = "dir";
 pub const METH_LS: &str = "ls";
@@ -525,26 +524,14 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
 ];
 impl BrokerCurrentClientNode {
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {peer_id} - {subpar:?}");
-        if state_writer(state).subscribe(peer_id, subpar)? {
-            state_writer(state).gc_subscriptions();
-            state_writer(state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let res = state_writer(state).subscribe(peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        res
     }
     fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "New subscription for peer id: {peer_id} - {subpar:?}");
-        if state_writer(state).unsubscribe(peer_id, subpar)? {
-            state_writer(state).gc_subscriptions();
-            state_writer(state).update_forwarded_subscriptions()?;
-            spawn_and_log_error(BrokerImpl::renew_forwarded_subscriptions(state.clone()));
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let res = state_writer(state).unsubscribe(peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        res
     }
 
 }
