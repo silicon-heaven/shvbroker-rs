@@ -70,8 +70,7 @@ pub struct AccessConfig {
 pub struct Listen {
     pub url: Url,
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct User {
     pub password: Password,
     pub roles: Vec<String>,
@@ -103,8 +102,7 @@ impl TryFrom<&RpcValue> for User {
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Password {
     Plain(String),
     Sha1(String),
@@ -135,13 +133,27 @@ pub struct PasswordV2 {
     format: String,
     password: String,
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(PartialEq)]
+
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ProfileValue {
+    String(String),
+    Int(i64),
+    Bool(bool),
+    Map(BTreeMap<String, ProfileValue>),
+    List(Vec<ProfileValue>),
+    #[default]
+    Null,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Role {
     #[serde(default)]
     pub roles: Vec<String>,
     #[serde(default)]
     pub access: Vec<AccessRule>,
+    #[serde(default)]
+    pub profile: Option<ProfileValue>,
 }
 impl Role {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
@@ -156,8 +168,7 @@ impl TryFrom<&RpcValue> for Role {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[derive(PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AccessRule {
     #[serde(rename = "shvRI")]
     pub shv_ri: String,
@@ -251,10 +262,23 @@ impl Default for BrokerConfig {
                         access: vec![
                             AccessRule { shv_ri: "**:*".into(), grant: "su,dot-local".to_string() },
                         ],
+                        profile: None,
                     }),
-                    ("client".to_string(), Role { roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()], access: vec![] }),
-                    ("device".to_string(), Role { roles: vec!["client".to_string()], access: vec![] }),
-                    ("child-broker".to_string(), Role { roles: vec!["device".to_string()], access: vec![] }),
+                    ("client".to_string(), Role {
+                        roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()],
+                        access: vec![],
+                        profile: None,
+                    }),
+                    ("device".to_string(), Role {
+                        roles: vec!["client".to_string()],
+                        access: vec![],
+                        profile: None,
+                    }),
+                    ("child-broker".to_string(), Role {
+                        roles: vec!["device".to_string()],
+                        access: vec![],
+                        profile: None,
+                    }),
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
@@ -263,12 +287,14 @@ impl Default for BrokerConfig {
                             AccessRule { shv_ri: ".app/tunnel:dir".into(), grant: "su".to_string() },
                             AccessRule { shv_ri: "test/**:*".into(), grant: "cfg".to_string() },
                         ],
+                        profile: None,
                     }),
                     ("ping".to_string(), Role {
                         roles: vec![],
                         access: vec![
                             AccessRule { shv_ri: ".app:ping".into(), grant: "wr".to_string() },
                         ],
+                        profile: None,
                     }),
                     ("subscribe".to_string(), Role {
                         roles: vec![],
@@ -276,12 +302,14 @@ impl Default for BrokerConfig {
                             AccessRule { shv_ri: ".broker/currentClient:subscribe".into(), grant: "wr".to_string() },
                             AccessRule { shv_ri: ".broker/currentClient:unsubscribe".into(), grant: "wr".to_string() },
                         ],
+                        profile: None,
                     }),
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
                             AccessRule { shv_ri: "**:*".into(), grant: "bws".to_string() },
                         ],
+                        profile: None,
                     }),
                 ]),
                 mounts: BTreeMap::from([
