@@ -387,7 +387,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
 
         if let Some(server) = &cfg.server {
             if let Some(port) = server.port
-                && let Ok(url) = Url::parse(&format!("tcp://localhost:{port}")) {
+                && let Ok(url) = Url::parse(&format!("tcp://127.0.0.1:{port}")) {
                     listen.push(Listen { url });
             }
 
@@ -402,7 +402,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
 
             if let Some(ws) = &server.websocket {
                 if let Some(port) = ws.port
-                    && let Ok(url) = Url::parse(&format!("ws://localhost:{port}")) {
+                    && let Ok(url) = Url::parse(&format!("ws://127.0.0.1:{port}")) {
                         listen.push(Listen { url });
                 }
 
@@ -429,7 +429,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                     .server
                     .as_ref()
                     .map(|s| s.host.clone())
-                    .unwrap_or_else(|| "tcp://localhost".to_string());
+                    .unwrap_or_else(|| "tcp://127.0.0.1".to_string());
 
                 // Ensure the base_host has a scheme
                 let normalized_host = if base_host.contains("://") {
@@ -439,7 +439,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 };
 
                 let mut url = Url::parse(&normalized_host)
-                    .unwrap_or_else(|_| Url::parse("tcp://localhost").unwrap());
+                    .unwrap_or_else(|_| Url::parse("tcp://127.0.0.1").unwrap());
 
                 // Inject user and password
                 if let Some(login) = &mconn.login {
