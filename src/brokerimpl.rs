@@ -289,7 +289,7 @@ pub(crate) enum Mount {
     Node,
 }
 
-pub(crate) struct ParsedAccessRule {
+pub struct ParsedAccessRule {
     pub(crate) glob: shvrpc::rpc::Glob,
     // Needed in order to pass 'dot-local' in 'Access' meta-attribute
     // to support the dot-local hack on older brokers
@@ -312,7 +312,7 @@ impl ParsedAccessRule {
             access_level: grant
                 .split(',')
                 .find_map(AccessLevel::from_str)
-                .unwrap_or_else(|| panic!("Invalid access grant `{grant}`")),
+                .ok_or_else(|| format!("Invalid access grant `{grant}`"))?,
         })
     }
 }

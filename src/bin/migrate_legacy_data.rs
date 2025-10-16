@@ -113,8 +113,13 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
 
         let shv_ri = format!("{}:{}:*", if path.is_empty() { "**" } else { &path }, if method.is_empty() { "*" } else { &method });
         let grant = access_role.replace("dot_local", "dot-local");
+        let access_rule = AccessRule { shv_ri, grant };
 
-        Ok((role, AccessRule { shv_ri, grant }))
+        if let Err(err) = shvbroker::brokerimpl::ParsedAccessRule::try_from(&access_rule) {
+            panic!("Cannot parse AccessRule from acl_access table, row: {row:?} error: {err}");
+        }
+
+        Ok((role, access_rule))
     })?;
 
     for row in access_rows {
@@ -527,7 +532,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
 #[derive(clap::Parser, Debug)]
 #[command(
     name = "migrate_legacy_data",
-    about = "A tool for converting legacy C++ shvbroker config and access database to the format used by shvbroker-rs"
+    about = "A tool for converting legacy C++ shvbroker config file and access database to the format used by shvbroker-rs"
 )]
 struct Args {
     /// Path to the legacy config file
