@@ -541,7 +541,7 @@ struct Args {
 
     /// Path to the converted config file
     #[arg(long)]
-    result_config: String,
+    result_config: Option<String>,
 }
 
 fn main() -> shvrpc::Result<()> {
@@ -549,15 +549,15 @@ fn main() -> shvrpc::Result<()> {
 
     let legacy_config_cpon = std::fs::read_to_string(&args.legacy_config)?;
     let legacy_config: LegacyBrokerConfig = shvproto::from_rpcvalue(&RpcValue::from_cpon(legacy_config_cpon)?)?;
-    // println!("{:#?}", legacy_config);
 
     let legacy_sql_config = legacy_config.sqlconfig.clone();
     let mut broker_config: BrokerConfig = legacy_config.into();
 
     let config_dir = Path::new(&args.legacy_config).parent().unwrap_or_else(|| Path::new("."));
+    let result_config = args.result_config.map_or_else(|| Path::new(config_dir).join("shvbroker.yml"), |path| path.into());
 
-    println!("Migrating config file from: {from} to: {to}", from = args.legacy_config, to = args.result_config);
-    std::fs::write(args.result_config, serde_yaml::to_string(&broker_config)?)?;
+    println!("Migrating config file from: {from} to: {to}", from = args.legacy_config, to = result_config.to_str().unwrap_or_default());
+    std::fs::write(result_config, serde_yaml::to_string(&broker_config)?)?;
 
     if broker_config.use_access_db {
         // Determine the data directory from the config directory if it wasn't specified as an absolute path.
