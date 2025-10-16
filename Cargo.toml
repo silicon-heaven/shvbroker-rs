@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.10.0"
+version = "3.10.1"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -26,7 +26,7 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master" }
+shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", branch = "master", features = [ "serde" ] }
 shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", branch = "master", features = ["websocket", "can"] }
 smol = "2"
 smol-timeout = "0.6"
@@ -62,7 +62,7 @@ simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", bran
 name = "shvbroker"
 
 [[bin]]
-name = "convert_db"
+name = "shvbroker_migrate_legacy"
 
 [[test]]
 name = "test_broker"
