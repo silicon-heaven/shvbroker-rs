@@ -62,7 +62,7 @@ simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", bran
 name = "shvbroker"
 
 [[bin]]
-name = "migrate_legacy_data"
+name = "shvbroker_migrate_legacy"
 
 [[test]]
 name = "test_broker"
