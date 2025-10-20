@@ -281,31 +281,31 @@ pub const METH_SERIAL_NUMBER: &str = "serialNumber";
 
 
 pub struct AppNode {
-    pub app_name: &'static str,
     pub shv_version_major: i32,
     pub shv_version_minor: i32,
 }
 impl AppNode {
     pub(crate) fn new() -> Self {
         AppNode {
-            app_name: "",
             shv_version_major: 3,
             shv_version_minor: 0,
         }
     }
 }
 
-const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MAJOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MINOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MAJOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "i", signals: &[], description: "" };
+const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MINOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "i", signals: &[], description: "" };
+const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "s", signals: &[], description: "" };
+const META_METH_APP_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "s", signals: &[], description: "" };
+const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "n", signals: &[], description: "" };
 
-const APP_NODE_METHODS: &[&MetaMethod; 6] = &[
+const APP_NODE_METHODS: &[&MetaMethod; 7] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PUBLIC_LS,
     &META_METH_APP_SHV_VERSION_MAJOR,
     &META_METH_APP_SHV_VERSION_MINOR,
     &META_METH_APP_NAME,
+    &META_METH_APP_VERSION,
     &META_METH_APP_PING
 ];
 
@@ -325,7 +325,10 @@ impl ShvNode for AppNode {
     fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
-                Ok(ProcessRequestRetval::Retval(self.app_name.into()))
+                Ok(ProcessRequestRetval::Retval(env!("CARGO_PKG_NAME").into()))
+            }
+            METH_VERSION => {
+                Ok(ProcessRequestRetval::Retval(env!("CARGO_PKG_VERSION").into()))
             }
             METH_SHV_VERSION_MAJOR => {
                 Ok(ProcessRequestRetval::Retval(self.shv_version_major.into()))
@@ -401,6 +404,7 @@ pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 
+pub const DIR_SHV2_BROKER_APP: &str = ".broker/app";
 pub const DIR_SHV2_BROKER_ETC_ACL_USERS: &str = ".broker/etc/acl/users";
 pub const DIR_SHV2_BROKER_ETC_ACL_ROLES: &str = ".broker/etc/acl/roles";
 pub const DIR_SHV2_BROKER_ETC_ACL_ACCESS: &str = ".broker/etc/acl/access";
@@ -522,6 +526,7 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
     &META_METH_UNSUBSCRIBE,
     &META_METH_SUBSCRIPTIONS,
 ];
+
 impl BrokerCurrentClientNode {
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
         let res = state_writer(state).subscribe(peer_id, subpar);
@@ -535,6 +540,7 @@ impl BrokerCurrentClientNode {
     }
 
 }
+
 impl ShvNode for BrokerCurrentClientNode {
     fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
         BROKER_CURRENT_CLIENT_NODE_METHODS
@@ -712,6 +718,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 }
+
 pub(crate) struct BrokerAccessRolesNode {}
 impl crate::shvnode::BrokerAccessRolesNode {
     pub(crate) fn new() -> Self {
@@ -764,6 +771,67 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 state_writer(&ctx.state).set_access_role(key.as_str(), role).map(|_| ProcessRequestRetval::Retval(().into()))
+            }
+            _ => {
+                Ok(ProcessRequestRetval::MethodNotFound)
+            }
+        }
+    }
+}
+
+pub const SHV2_METH_APP_VERSION: &str = "appVersion";
+const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod { name: SHV2_METH_APP_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod; 7] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
+
+pub(crate) struct Shv2BrokerAppNode {}
+impl Shv2BrokerAppNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+    fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
+        let res = state_writer(state).subscribe(peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        res
+    }
+    fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
+        let res = state_writer(state).unsubscribe(peer_id, subpar);
+        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        res
+    }
+}
+
+impl ShvNode for Shv2BrokerAppNode {
+    fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
+        SHV2_BROKER_APP_NODE_METHODS
+    }
+
+    fn children(&self, _shv_path: &str, _broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        Some(vec![])
+    }
+
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+        match frame.method().unwrap_or_default() {
+            METH_PING => {
+                Ok(ProcessRequestRetval::Retval(().into()))
+            }
+            METH_NAME => {
+                Ok(ProcessRequestRetval::Retval(env!("CARGO_PKG_NAME").into()))
+            }
+            SHV2_METH_APP_VERSION => {
+                Ok(ProcessRequestRetval::Retval(env!("CARGO_PKG_VERSION").into()))
+            }
+            METH_SUBSCRIBE => {
+                let rq = &frame.to_rpcmesage()?;
+                let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
+                let subs_added = Self::subscribe(ctx.peer_id, &subscription, &ctx.state)?;
+                Ok(ProcessRequestRetval::Retval(subs_added.into()))
+            }
+            METH_UNSUBSCRIBE => {
+                let rq = &frame.to_rpcmesage()?;
+                let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
+                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, &ctx.state)?;
+                Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
