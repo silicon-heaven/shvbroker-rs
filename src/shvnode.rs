@@ -299,7 +299,7 @@ const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag
 const META_METH_APP_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "s", signals: &[], description: "" };
 const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "n", signals: &[], description: "" };
 
-const APP_NODE_METHODS: &[&MetaMethod; 7] = &[
+const APP_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PUBLIC_LS,
     &META_METH_APP_SHV_VERSION_MAJOR,
@@ -356,7 +356,7 @@ pub struct AppDeviceNode {
     pub serial_number: Option<String>,
 }
 
-const APP_DEVICE_NODE_METHODS: &[&MetaMethod; 5] = &[
+const APP_DEVICE_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PUBLIC_LS,
     &META_METH_NAME,
@@ -433,7 +433,7 @@ impl BrokerNode {
         }
     }
 }
-const BROKER_NODE_METHODS: &[&MetaMethod; 7] = &[
+const BROKER_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PUBLIC_LS,
     &META_METH_CLIENT_INFO,
@@ -518,7 +518,7 @@ impl BrokerCurrentClientNode {
     }
 }
 
-const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod; 6] = &[
+const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PUBLIC_LS,
     &META_METH_INFO,
@@ -589,8 +589,8 @@ pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "Map", signals: &[], description: "" };
 const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Write, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
-const ACCESS_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
-const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod; 3] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
+const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
+const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
     pub(crate) fn new() -> Self {
@@ -781,7 +781,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
 pub const SHV2_METH_APP_VERSION: &str = "appVersion";
 const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod { name: SHV2_METH_APP_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod; 7] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
+const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
 
 pub(crate) struct Shv2BrokerAppNode {}
 impl Shv2BrokerAppNode {

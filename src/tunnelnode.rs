@@ -71,12 +71,12 @@ const META_METH_CLOSE: MetaMethod = MetaMethod {
     description: "",
 };
 
-const TUNNEL_NODE_METHODS: &[&MetaMethod; 3] = &[
+const TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
     &META_METHOD_PRIVATE_LS,
     &META_METH_CREATE,
 ];
-const OPEN_TUNNEL_NODE_METHODS: &[&MetaMethod; 4] = &[
+const OPEN_TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PRIVATE_DIR,
     &META_METHOD_PRIVATE_LS,
     &META_METH_WRITE,
@@ -353,4 +353,3 @@ pub(crate) async fn tunnel_task(
         .await?;
     Ok(())
 }
-
