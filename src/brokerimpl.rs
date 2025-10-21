@@ -2,7 +2,7 @@ use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, BrokerConfig, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::peer::login_params_from_client_config;
 use crate::shvnode::{
-    find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, SIG_LSMOD
+    find_longest_prefix, process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, SIG_LSMOD
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
@@ -1444,6 +1444,10 @@ impl BrokerImpl {
             Box::new(BrokerAccessRolesNode::new()),
         );
         if config.shv2_compatibility {
+            add_node(
+                DIR_SHV2_BROKER_APP,
+                Box::new(Shv2BrokerAppNode::new()),
+            );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_MOUNTS,
                 Box::new(BrokerAccessMountsNode::new()),
