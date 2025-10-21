@@ -631,10 +631,27 @@ impl BrokerState {
             .get(&peer_id)
             .and_then(|peer| peer.mount_point.clone())
     }
+
     fn access_level_for_request(&self, peer_id: PeerId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
         log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
-        let shv_path = frame.shv_path().unwrap_or_default();
-        let method = frame.method().unwrap_or_default();
+        self.access_level_for_request_params(
+            peer_id,
+            frame.shv_path().unwrap_or_default(),
+            frame.method().unwrap_or_default(),
+            frame.tag(Tag::AccessLevel as _).map(RpcValue::as_i32),
+            frame.tag(Tag::Access as _).map(RpcValue::as_str)
+        )
+    }
+
+    pub(crate) fn access_level_for_request_params(
+        &self,
+        peer_id: PeerId,
+        shv_path: &str,
+        method: &str,
+        access_level: Option<i32>,
+        access: Option<&str>,
+    ) -> Result<(Option<i32>, Option<String>), RpcError>
+    {
         if method.is_empty() {
             return Err(RpcError::new(
                 RpcErrorCode::PermissionDenied,
@@ -688,13 +705,11 @@ impl BrokerState {
             if flatten_roles.iter().any(|s| s == "preserve_access") {
                 // upper broker can be connected as a client, if this broker should preserve access resolved
                 // by master, then upper login should have the role 'preserve_access'
-                let access = frame.tag(Tag::Access as i32);
-                let access_level = frame.tag(Tag::AccessLevel as i32);
                 if access_level.is_some() || access.is_some() {
                     log!(target: "Access", Level::Debug, "\tAccess granted by user role, access: {access:?}, access_level: {access_level:?}");
                     return Ok((
-                        access_level.map(RpcValue::as_i32),
-                        access.map(RpcValue::as_str).map(|s| s.to_string()),
+                        access_level,
+                        access.map(str::to_string)
                     ))
                 }
             }
@@ -706,13 +721,11 @@ impl BrokerState {
                     match connection_kind {
                         ConnectionKind::ToParentBroker { .. } => {
                             log!(target: "Access", Level::Debug, "ParentBroker: {peer_id}");
-                            let access = frame.tag(Tag::Access as i32);
-                            let access_level = frame.tag(Tag::AccessLevel as i32);
                             if access_level.is_some() || access.is_some() {
                                 log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
                                 Ok((
-                                    access_level.map(RpcValue::as_i32),
-                                    access.map(RpcValue::as_str).map(|s| s.to_string()),
+                                    access_level,
+                                    access.map(str::to_string)
                                 ))
                             } else {
                                 log!(target: "Access", Level::Debug, "\tPermissionDenied");

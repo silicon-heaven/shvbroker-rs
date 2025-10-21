@@ -424,6 +424,9 @@ const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod { name: METH_DISCONNE
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
+pub const METH_CHANGE_PASSWORD: &str = "changePassword";
+pub const METH_ACCESS_LEVEL_FOR_METHOD_CALL: &str = "accessLevelForMethodCall";
+pub const METH_USER_PROFILE: &str = "userProfile";
 
 
 pub(crate) struct BrokerNode {}
@@ -509,6 +512,9 @@ const META_METH_INFO: MetaMethod = MetaMethod { name: METH_INFO, flags: Flag::No
 const META_METH_SUBSCRIBE: MetaMethod = MetaMethod { name: METH_SUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
 const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod { name: METH_UNSUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
 const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTIONS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "void", result: "Map", signals: &[], description: "" };
+const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod { name: METH_CHANGE_PASSWORD, flags: Flag::None as u32, access: AccessLevel::Write, param: "List", result: "Bool", signals: &[], description: r#"(params: ["old_password", "new_password"], old and new passwords can be plain or SHA1)"# };
+const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod { name: METH_ACCESS_LEVEL_FOR_METHOD_CALL, flags: Flag::None as u32, access: AccessLevel::Read, param: "List", result: "Int", signals: &[], description: r#"(params: ["shv_path", "method"]"# };
+const META_METH_USER_PROFILE: MetaMethod = MetaMethod { name: METH_USER_PROFILE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "RpcValue", signals: &[], description: "" };
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
@@ -525,6 +531,9 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_SUBSCRIBE,
     &META_METH_UNSUBSCRIBE,
     &META_METH_SUBSCRIPTIONS,
+    &META_METH_CHANGE_PASSWORD,
+    &META_METH_ACCESS_LEVEL_FOR_METHOD_CALL,
+    &META_METH_USER_PROFILE,
 ];
 
 impl BrokerCurrentClientNode {
@@ -538,7 +547,6 @@ impl BrokerCurrentClientNode {
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
         res
     }
-
 }
 
 impl ShvNode for BrokerCurrentClientNode {
@@ -574,6 +582,53 @@ impl ShvNode for BrokerCurrentClientNode {
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(ProcessRequestRetval::Retval(info))
+            }
+            METH_CHANGE_PASSWORD => {
+                // let rq = &frame.to_rpcmesage()?;
+                let res = false;
+                // TODO
+                Ok(ProcessRequestRetval::Retval(res.into()))
+            }
+            METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
+                let rq = &frame.to_rpcmesage()?;
+                let mut params = rq
+                    .param()
+                    .ok_or_else(|| r#"Expected params format: ["shv_path", "method"]"#.to_string())
+                    .and_then(|rv| Vec::<String>::try_from(rv)
+                        .map_err(|e| format!(r#"Expected params format: ["shv_path", "method"]. Error: {e}"#))
+                    )?
+                    .into_iter();
+
+                let shv_path = match params.next() {
+                    Some(path) if !path.is_empty() => path,
+                    _ => return Err("SHV path not specified in the params.".into()),
+                };
+
+                let method = match params.next() {
+                    Some(method) if !method.is_empty() => method,
+                    _ => return Err("SHV method not specified in the params.".into()),
+                };
+
+                let access_level = state_reader(&ctx.state)
+                    .access_level_for_request_params(
+                        ctx.peer_id,
+                        &shv_path,
+                        &method,
+                        frame.tag(shvrpc::rpcmessage::Tag::AccessLevel as _).map(RpcValue::as_i32),
+                        frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
+                    )
+                    .map(|(access_level, _)| access_level.unwrap_or_default())
+                    .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied {
+                        Ok(0)
+                    } else {
+                        Err(rpc_err)
+                    })?;
+
+                Ok(ProcessRequestRetval::Retval(access_level.into()))
+            }
+            METH_USER_PROFILE => {
+                // TODO
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
