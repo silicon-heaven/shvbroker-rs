@@ -159,9 +159,11 @@ impl ProfileValue {
                     }
                 }
             }
-            // Replace in all other cases
+            // Replace in all other cases except the other value is not set (Null)
             (this, rhs) => {
-                *this = rhs;
+                if rhs != ProfileValue::Null {
+                    *this = rhs;
+                }
             }
         }
     }
