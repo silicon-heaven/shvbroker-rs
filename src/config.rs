@@ -146,6 +146,27 @@ pub enum ProfileValue {
     Null,
 }
 
+impl ProfileValue {
+    pub fn merge(&mut self, other: ProfileValue) {
+        match (self, other) {
+            (ProfileValue::Map(lhs_map), ProfileValue::Map(rhs_map)) => {
+                for (key, rhs_val) in rhs_map {
+                    match lhs_map.get_mut(&key) {
+                        Some(lhs_val) => lhs_val.merge(rhs_val),
+                        None => {
+                            lhs_map.insert(key, rhs_val);
+                        }
+                    }
+                }
+            }
+            // Replace in all other cases
+            (this, rhs) => {
+                *this = rhs;
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Role {
     #[serde(default)]

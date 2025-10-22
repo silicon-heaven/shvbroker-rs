@@ -674,8 +674,21 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(access_level.into()))
             }
             METH_USER_PROFILE => {
-                // TODO
-                Ok(ProcessRequestRetval::Retval(().into()))
+                let state = state_reader(&ctx.state);
+                let Some(user_name) = state.peer_user(ctx.peer_id).map(String::from) else {
+                    return Err("Undefined user".into());
+                };
+                let merged_profile = state
+                    .flatten_roles(&user_name)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|role| state.access_role(role))
+                    .filter_map(|role| role.profile.clone())
+                    .fold(crate::config::ProfileValue::Null, |mut res, profile| {
+                        res.merge(profile);
+                        res
+                    });
+                Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)

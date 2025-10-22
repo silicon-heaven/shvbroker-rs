@@ -746,7 +746,7 @@ impl BrokerState {
             }
         }
     }
-    fn flatten_roles(&self, user: &str) -> Option<Vec<String>> {
+    pub(crate) fn flatten_roles(&self, user: &str) -> Option<Vec<String>> {
         self.access
             .users
             .get(user)
