@@ -102,7 +102,7 @@ pub enum BrokerCommand {
 
 #[derive(Debug)]
 pub enum BrokerToPeerMessage {
-    PasswordSha1(Option<Vec<u8>>),
+    PasswordSha1(Option<String>),
     SendFrame(RpcFrame),
     DisconnectByBroker,
 }
@@ -873,12 +873,12 @@ impl BrokerState {
         }
         Ok(())
     }
-    fn sha_password(&self, user: &str) -> Option<Vec<u8>> {
+    fn sha_password(&self, user: &str) -> Option<String> {
         match self.access.users.get(user) {
             None => None,
             Some(user) => match &user.password {
                 Password::Plain(password) => Some(sha1_hash(password.as_bytes())),
-                Password::Sha1(password) => Some(password.as_bytes().into()),
+                Password::Sha1(password) => Some(password.clone()),
             },
         }
     }
@@ -1000,6 +1000,10 @@ impl BrokerState {
                 }
             );
         Ok(cnt != peer_subscr_len)
+    }
+
+    pub(crate) fn peer_user(&self, peer_id: PeerId) -> Option<&str> {
+        self.peers.get(&peer_id).and_then(Peer::user)
     }
 
     pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {

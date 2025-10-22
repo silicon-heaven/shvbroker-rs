@@ -335,12 +335,12 @@ pub(crate) async fn server_peer_loop(
                                             "SHA1" => {
                                                 if let Some(nonce) = &nonce {
                                                     let mut data = nonce.as_bytes().to_vec();
-                                                    data.extend_from_slice(&broker_shapass[..]);
+                                                    data.extend_from_slice(broker_shapass.as_bytes());
                                                     let broker_shapass = sha1_hash(&data);
                                                     //info!("nonce: {}", nonce);
                                                     //info!("client password: {}", password);
                                                     //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
-                                                    password.as_bytes() == broker_shapass
+                                                    password == broker_shapass
                                                 } else {
                                                     debug!("Client ID: {peer_id}, user tried SHA1 login without using `:hello`.");
                                                     false

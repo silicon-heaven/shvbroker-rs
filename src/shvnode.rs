@@ -584,10 +584,57 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CHANGE_PASSWORD => {
-                // let rq = &frame.to_rpcmesage()?;
-                let res = false;
-                // TODO
-                Ok(ProcessRequestRetval::Retval(res.into()))
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["old_password", "new_password"]"#;
+                if !ctx.sql_available {
+                    return Err("Cannot change password, access database is not available.".into());
+                }
+                let rq = &frame.to_rpcmesage()?;
+                let mut params = rq
+                    .param()
+                    .ok_or_else(|| WRONG_FORMAT_ERR.to_string())
+                    .and_then(|rv| Vec::<String>::try_from(rv)
+                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
+                    )?
+                    .into_iter();
+
+                let (old_password, new_password) = match (params.next(), params.next()) {
+                    (Some(old_password), Some(new_password)) => (old_password, new_password),
+                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                };
+
+                if old_password.is_empty() || new_password.is_empty() {
+                    return Err("Both old and new password mustn't be empty.".into());
+                }
+
+                let mut state = state_writer(&ctx.state);
+                let Some(user_name) = state.peer_user(ctx.peer_id).map(String::from) else {
+                    return Err("Undefined user".into());
+                };
+                if user_name.starts_with("ldap:") {
+                    return Err("Can't change password, because you are logged in over LDAP".into());
+                }
+                if user_name.starts_with("azure:") {
+                    return Err("Can't change password, because you are logged in over Azure".into());
+                }
+                let Some(mut user) = state.access_user(&user_name).cloned() else {
+                    return Err(format!("Invalid user: {user_name})").into());
+                };
+                let current_password_sha1 = match &user.password {
+                    crate::config::Password::Plain(password) => shvrpc::util::sha1_hash(password.as_bytes()),
+                    crate::config::Password::Sha1(password) => password.clone(),
+                };
+
+                let old_password_sha1 = shvrpc::util::sha1_hash(old_password.as_bytes());
+
+                if old_password_sha1 != current_password_sha1 {
+                    return Err("Old password does not match.".into());
+                }
+
+                let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
+                user.password = crate::config::Password::Sha1(new_password_sha1);
+                state.set_access_user(&user_name, Some(user));
+
+                Ok(ProcessRequestRetval::Retval(true.into()))
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 let rq = &frame.to_rpcmesage()?;
