@@ -584,7 +584,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CHANGE_PASSWORD => {
-                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["old_password", "new_password"]"#;
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
                 if !ctx.sql_available {
                     return Err("Cannot change password, access database is not available.".into());
                 }
@@ -637,23 +637,19 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(true.into()))
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
                 let rq = &frame.to_rpcmesage()?;
                 let mut params = rq
                     .param()
-                    .ok_or_else(|| r#"Expected params format: ["shv_path", "method"]"#.to_string())
+                    .ok_or_else(|| WRONG_FORMAT_ERR.into())
                     .and_then(|rv| Vec::<String>::try_from(rv)
-                        .map_err(|e| format!(r#"Expected params format: ["shv_path", "method"]. Error: {e}"#))
+                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
                     )?
                     .into_iter();
 
-                let shv_path = match params.next() {
-                    Some(path) if !path.is_empty() => path,
-                    _ => return Err("SHV path not specified in the params.".into()),
-                };
-
-                let method = match params.next() {
-                    Some(method) if !method.is_empty() => method,
-                    _ => return Err("SHV method not specified in the params.".into()),
+                let (shv_path, method) = match (params.next(), params.next()) {
+                    (Some(path), Some(method)) => (path, method),
+                    _ => return Err(WRONG_FORMAT_ERR.into()),
                 };
 
                 let access_level = state_reader(&ctx.state)
@@ -675,11 +671,11 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_PROFILE => {
                 let state = state_reader(&ctx.state);
-                let Some(user_name) = state.peer_user(ctx.peer_id).map(String::from) else {
+                let Some(user_name) = state.peer_user(ctx.peer_id) else {
                     return Err("Undefined user".into());
                 };
                 let merged_profile = state
-                    .flatten_roles(&user_name)
+                    .flatten_roles(user_name)
                     .unwrap_or_default()
                     .iter()
                     .filter_map(|role| state.access_role(role))
