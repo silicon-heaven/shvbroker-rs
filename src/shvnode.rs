@@ -424,6 +424,9 @@ const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod { name: METH_DISCONNE
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
+pub const METH_CHANGE_PASSWORD: &str = "changePassword";
+pub const METH_ACCESS_LEVEL_FOR_METHOD_CALL: &str = "accessLevelForMethodCall";
+pub const METH_USER_PROFILE: &str = "userProfile";
 
 
 pub(crate) struct BrokerNode {}
@@ -509,6 +512,9 @@ const META_METH_INFO: MetaMethod = MetaMethod { name: METH_INFO, flags: Flag::No
 const META_METH_SUBSCRIBE: MetaMethod = MetaMethod { name: METH_SUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
 const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod { name: METH_UNSUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
 const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTIONS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "void", result: "Map", signals: &[], description: "" };
+const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod { name: METH_CHANGE_PASSWORD, flags: Flag::None as u32, access: AccessLevel::Write, param: "List", result: "Bool", signals: &[], description: r#"(params: ["old_password", "new_password"], old and new passwords are in plain format)"# };
+const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod { name: METH_ACCESS_LEVEL_FOR_METHOD_CALL, flags: Flag::None as u32, access: AccessLevel::Read, param: "List", result: "Int", signals: &[], description: r#"(params: ["shv_path", "method"]"# };
+const META_METH_USER_PROFILE: MetaMethod = MetaMethod { name: METH_USER_PROFILE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "RpcValue", signals: &[], description: "" };
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
@@ -525,6 +531,9 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_SUBSCRIBE,
     &META_METH_UNSUBSCRIBE,
     &META_METH_SUBSCRIPTIONS,
+    &META_METH_CHANGE_PASSWORD,
+    &META_METH_ACCESS_LEVEL_FOR_METHOD_CALL,
+    &META_METH_USER_PROFILE,
 ];
 
 impl BrokerCurrentClientNode {
@@ -538,7 +547,6 @@ impl BrokerCurrentClientNode {
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
         res
     }
-
 }
 
 impl ShvNode for BrokerCurrentClientNode {
@@ -574,6 +582,109 @@ impl ShvNode for BrokerCurrentClientNode {
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(ProcessRequestRetval::Retval(info))
+            }
+            METH_CHANGE_PASSWORD => {
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
+                if !ctx.sql_available {
+                    return Err("Cannot change password, access database is not available.".into());
+                }
+                let rq = &frame.to_rpcmesage()?;
+                let mut params = rq
+                    .param()
+                    .ok_or_else(|| WRONG_FORMAT_ERR.to_string())
+                    .and_then(|rv| Vec::<String>::try_from(rv)
+                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
+                    )?
+                    .into_iter();
+
+                let (old_password, new_password) = match (params.next(), params.next()) {
+                    (Some(old_password), Some(new_password)) => (old_password, new_password),
+                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                };
+
+                if old_password.is_empty() || new_password.is_empty() {
+                    return Err("Both old and new password mustn't be empty.".into());
+                }
+
+                let mut state = state_writer(&ctx.state);
+                let Some(user_name) = state.peer_user(ctx.peer_id).map(String::from) else {
+                    return Err("Undefined user".into());
+                };
+                if user_name.starts_with("ldap:") {
+                    return Err("Can't change password, because you are logged in over LDAP".into());
+                }
+                if user_name.starts_with("azure:") {
+                    return Err("Can't change password, because you are logged in over Azure".into());
+                }
+                let Some(mut user) = state.access_user(&user_name).cloned() else {
+                    return Err(format!("Invalid user: {user_name})").into());
+                };
+                let current_password_sha1 = match &user.password {
+                    crate::config::Password::Plain(password) => shvrpc::util::sha1_hash(password.as_bytes()),
+                    crate::config::Password::Sha1(password) => password.clone(),
+                };
+
+                let old_password_sha1 = shvrpc::util::sha1_hash(old_password.as_bytes());
+
+                if old_password_sha1 != current_password_sha1 {
+                    return Err("Old password does not match.".into());
+                }
+
+                let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
+                user.password = crate::config::Password::Sha1(new_password_sha1);
+                state.set_access_user(&user_name, Some(user));
+
+                Ok(ProcessRequestRetval::Retval(true.into()))
+            }
+            METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
+                let rq = &frame.to_rpcmesage()?;
+                let mut params = rq
+                    .param()
+                    .ok_or_else(|| WRONG_FORMAT_ERR.into())
+                    .and_then(|rv| Vec::<String>::try_from(rv)
+                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
+                    )?
+                    .into_iter();
+
+                let (shv_path, method) = match (params.next(), params.next()) {
+                    (Some(path), Some(method)) => (path, method),
+                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                };
+
+                let access_level = state_reader(&ctx.state)
+                    .access_level_for_request_params(
+                        ctx.peer_id,
+                        &shv_path,
+                        &method,
+                        frame.tag(shvrpc::rpcmessage::Tag::AccessLevel as _).map(RpcValue::as_i32),
+                        frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
+                    )
+                    .map(|(access_level, _)| access_level.unwrap_or_default())
+                    .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied {
+                        Ok(0)
+                    } else {
+                        Err(rpc_err)
+                    })?;
+
+                Ok(ProcessRequestRetval::Retval(access_level.into()))
+            }
+            METH_USER_PROFILE => {
+                let state = state_reader(&ctx.state);
+                let Some(user_name) = state.peer_user(ctx.peer_id) else {
+                    return Err("Undefined user".into());
+                };
+                let merged_profile = state
+                    .flatten_roles(user_name)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|role| state.access_role(role))
+                    .filter_map(|role| role.profile.clone())
+                    .fold(crate::config::ProfileValue::Null, |mut res, profile| {
+                        res.merge(profile);
+                        res
+                    });
+                Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)

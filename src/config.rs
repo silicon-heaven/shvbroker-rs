@@ -146,6 +146,27 @@ pub enum ProfileValue {
     Null,
 }
 
+impl ProfileValue {
+    pub fn merge(&mut self, other: ProfileValue) {
+        match (self, other) {
+            (ProfileValue::Map(lhs_map), ProfileValue::Map(rhs_map)) => {
+                for (key, rhs_val) in rhs_map {
+                    match lhs_map.get_mut(&key) {
+                        Some(lhs_val) => lhs_val.merge(rhs_val),
+                        None => {
+                            lhs_map.insert(key, rhs_val);
+                        }
+                    }
+                }
+            }
+            // Replace in all other cases except the other value is not set (Null)
+            (this, rhs) => {
+                *this = rhs;
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Role {
     #[serde(default)]
@@ -319,6 +340,142 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod profile_value {
+        use super::super::*;
+
+        fn map(entries: impl IntoIterator<Item = (&'static str, ProfileValue)>) -> ProfileValue {
+            ProfileValue::Map(entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        }
+
+        #[test]
+        fn merge_simple_replacement() {
+            let mut a = ProfileValue::Int(10);
+            a.merge(ProfileValue::Int(20));
+            assert_eq!(a, ProfileValue::Int(20));
+        }
+
+        #[test]
+        fn merge_null_does_not_replace() {
+            let mut a = ProfileValue::String("Hello".into());
+            a.merge(ProfileValue::Null);
+            assert_eq!(a, ProfileValue::Null);
+        }
+
+        #[test]
+        fn merge_map_adds_new_keys() {
+            let mut a = map([
+                ("name", ProfileValue::String("Alice".into())),
+            ]);
+
+            let b = map([
+                ("age", ProfileValue::Int(30)),
+            ]);
+
+            a.merge(b);
+
+            assert_eq!(
+                a,
+                map([
+                    ("name", ProfileValue::String("Alice".into())),
+                    ("age", ProfileValue::Int(30)),
+                ])
+            );
+        }
+
+        #[test]
+        fn merge_map_replaces_non_map_values() {
+            let mut a = map([
+                ("name", ProfileValue::String("Alice".into())),
+            ]);
+
+            let b = map([
+                ("name", ProfileValue::String("Bob".into())),
+            ]);
+
+            a.merge(b);
+
+            assert_eq!(
+                a,
+                map([("name", ProfileValue::String("Bob".into()))])
+            );
+        }
+
+        #[test]
+        fn merge_map_merges_recursively() {
+            let mut a = map([
+                ("settings", map([
+                                 ("dark_mode", ProfileValue::Bool(false)),
+                                 ("volume", ProfileValue::Int(5)),
+                ])),
+            ]);
+
+            let b = map([
+                ("settings", map([
+                                 ("volume", ProfileValue::Int(10)),
+                                 ("notifications", ProfileValue::Bool(true)),
+                ])),
+            ]);
+
+            a.merge(b);
+
+            assert_eq!(
+                a,
+                map([(
+                        "settings",
+                        map([
+                            ("dark_mode", ProfileValue::Bool(false)),
+                            ("volume", ProfileValue::Int(10)),
+                            ("notifications", ProfileValue::Bool(true)),
+                        ])
+                )])
+            );
+        }
+
+        #[test]
+        fn merge_non_map_replaced_by_map() {
+            let mut a = ProfileValue::Int(5);
+            let b = map([("key", ProfileValue::Bool(true))]);
+            a.merge(b.clone());
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn merge_map_with_null_value() {
+            let mut a = map([
+                ("theme", ProfileValue::String("light".into())),
+            ]);
+
+            let b = map([
+                ("theme", ProfileValue::Null),
+            ]);
+
+            a.merge(b);
+
+            assert_eq!(
+                a,
+                map([("theme", ProfileValue::Null)])
+            );
+        }
+
+        #[test]
+        fn merge_list_replaces_entire_list() {
+            let mut a = ProfileValue::List(vec![ProfileValue::Int(1)]);
+            let b = ProfileValue::List(vec![ProfileValue::Int(2), ProfileValue::Int(3)]);
+            a.merge(b.clone());
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn merge_null_into_null_remains_null() {
+            let mut a = ProfileValue::Null;
+            a.merge(ProfileValue::Null);
+            assert_eq!(a, ProfileValue::Null);
         }
     }
 }
