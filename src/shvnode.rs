@@ -695,7 +695,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Undefined user".into());
                 };
 
-                let result = state.flatten_roles(user_name).ok_or_else(|| format!("No roles defined for {user_name}"))?;
+                let result = state.flatten_roles(user_name).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined"))?;
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             _ => {
