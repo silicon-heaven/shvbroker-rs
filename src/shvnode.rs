@@ -427,6 +427,7 @@ pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
 pub const METH_CHANGE_PASSWORD: &str = "changePassword";
 pub const METH_ACCESS_LEVEL_FOR_METHOD_CALL: &str = "accessLevelForMethodCall";
 pub const METH_USER_PROFILE: &str = "userProfile";
+pub const METH_USER_ROLES: &str = "userRoles";
 
 
 pub(crate) struct BrokerNode {}
@@ -515,6 +516,7 @@ const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTION
 const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod { name: METH_CHANGE_PASSWORD, flags: Flag::None as u32, access: AccessLevel::Write, param: "List", result: "Bool", signals: &[], description: r#"(params: ["old_password", "new_password"], old and new passwords are in plain format)"# };
 const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod { name: METH_ACCESS_LEVEL_FOR_METHOD_CALL, flags: Flag::None as u32, access: AccessLevel::Read, param: "List", result: "Int", signals: &[], description: r#"(params: ["shv_path", "method"]"# };
 const META_METH_USER_PROFILE: MetaMethod = MetaMethod { name: METH_USER_PROFILE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "RpcValue", signals: &[], description: "" };
+const META_METH_USER_ROLES: MetaMethod = MetaMethod { name: METH_USER_ROLES, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "List", signals: &[], description: "" };
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
@@ -534,6 +536,7 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_CHANGE_PASSWORD,
     &META_METH_ACCESS_LEVEL_FOR_METHOD_CALL,
     &META_METH_USER_PROFILE,
+    &META_METH_USER_ROLES,
 ];
 
 impl BrokerCurrentClientNode {
@@ -685,6 +688,15 @@ impl ShvNode for BrokerCurrentClientNode {
                         res
                     });
                 Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
+            }
+            METH_USER_ROLES => {
+                let state = state_reader(&ctx.state);
+                let Some(user_name) = state.peer_user(ctx.peer_id) else {
+                    return Err("Undefined user".into());
+                };
+
+                let result = state.flatten_roles(user_name).ok_or_else(|| format!("No roles defined for {user_name}"))?;
+                Ok(ProcessRequestRetval::Retval(result.into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
