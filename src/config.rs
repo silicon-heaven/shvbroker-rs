@@ -161,9 +161,7 @@ impl ProfileValue {
             }
             // Replace in all other cases except the other value is not set (Null)
             (this, rhs) => {
-                if rhs != ProfileValue::Null {
-                    *this = rhs;
-                }
+                *this = rhs;
             }
         }
     }
@@ -366,7 +364,7 @@ mod tests {
         fn merge_null_does_not_replace() {
             let mut a = ProfileValue::String("Hello".into());
             a.merge(ProfileValue::Null);
-            assert_eq!(a, ProfileValue::String("Hello".into()));
+            assert_eq!(a, ProfileValue::Null);
         }
 
         #[test]
@@ -448,7 +446,7 @@ mod tests {
         }
 
         #[test]
-        fn merge_map_with_null_value_keeps_existing() {
+        fn merge_map_with_null_value() {
             let mut a = map([
                 ("theme", ProfileValue::String("light".into())),
             ]);
@@ -461,7 +459,7 @@ mod tests {
 
             assert_eq!(
                 a,
-                map([("theme", ProfileValue::String("light".into()))])
+                map([("theme", ProfileValue::Null)])
             );
         }
 
