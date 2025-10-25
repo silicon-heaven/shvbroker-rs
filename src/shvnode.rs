@@ -542,12 +542,12 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
 impl BrokerCurrentClientNode {
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
         let res = state_writer(state).subscribe(peer_id, subpar);
-        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
     fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
         let res = state_writer(state).unsubscribe(peer_id, subpar);
-        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 }
@@ -914,12 +914,12 @@ impl Shv2BrokerAppNode {
     }
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
         let res = state_writer(state).subscribe(peer_id, subpar);
-        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
     fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
         let res = state_writer(state).unsubscribe(peer_id, subpar);
-        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar:?}, res: {res:?}");
+        log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 }

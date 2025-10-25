@@ -950,11 +950,11 @@ impl BrokerState {
             .iter_mut()
             .find(|sub| sub.param.ri == subpar.ri)
         {
-            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {peer_id} - {subpar:?}");
+            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {peer_id} - {subpar}");
             sub.param.ttl = subpar.ttl;
             Ok(false)
         } else {
-            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {peer_id} - {subpar:?}");
+            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {peer_id} - {subpar}");
             peer.subscriptions.push(Subscription::new(subpar)?);
 
             // Forward this subscription to all other peers - sub-brokers
@@ -975,7 +975,7 @@ impl BrokerState {
         }
     }
     pub(crate) fn unsubscribe(&mut self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {peer_id} - {subpar:?}");
+        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {peer_id} - {subpar}");
         let peer = self
             .peers
             .get_mut(&peer_id)
