@@ -1936,8 +1936,8 @@ impl BrokerImpl {
 
     async fn check_subscribe_api(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        async fn check_path_with_timeout(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
-            async fn check_path(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<Option<String>> {
+        async fn check_path_with_timeout(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<bool> {
+            async fn check_path(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<bool> {
                 let (response_sender, response_receiver) = unbounded();
                 let request = RpcMessage::new_request(path, METH_DIR, Some(METH_SUBSCRIBE.into()));
                 let cmd = BrokerCommand::RpcCall {
@@ -1947,11 +1947,21 @@ impl BrokerImpl {
                 };
                 broker_command_sender.send(cmd).await?;
                 let resp = response_receiver.recv().await?.to_rpcmesage()?;
-                if let Ok(Response::Success(val)) = resp.response()
-                    && !val.is_null() {
-                        return Ok(Some(path.to_string()));
+                match resp.response() {
+                    Ok(val) => {
+                        match val {
+                            Response::Success(rpc_value) => Ok(rpc_value.as_bool()),
+                            Response::Delay(_) => Err("Delay messages are not supported in SHV API version discovery.".into()),
+                        }
                     }
-                Ok(None)
+                    Err(err) => {
+                        if let RpcErrorCode::MethodNotFound = err.code {
+                            Ok(false)
+                        } else {
+                            Err(err.into())
+                        }
+                    }
+                }
             }
             match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
                 None => Err("Timeout".into()),
@@ -1962,7 +1972,7 @@ impl BrokerImpl {
         let mut subscribe_api = None;
         for api in [SubscribeApi::V3, SubscribeApi::V2] {
             match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
-                Ok(val) => if val.is_some() {
+                Ok(val) => if val {
                     subscribe_api = Some(api);
                     break;
                 },
