@@ -2515,7 +2515,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.13.0"
+version = "3.13.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2552,7 +2552,7 @@ dependencies = [
 [[package]]
 name = "shvclient"
 version = "0.13.1"
-source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?branch=ci-tag-versions#dd848dd44f6b3f0a1da74d2d22f750ec172ab7d7"
+source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?tag=0.13.1#ec0a710fe365d58e278f89d9f0c15aa93b443d77"
 dependencies = [
  "async-broadcast",
  "duration-str",
