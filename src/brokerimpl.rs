@@ -690,7 +690,7 @@ impl BrokerState {
                 None => Err(
                     RpcError::new(
                         RpcErrorCode::PermissionDenied,
-                        format!("Access denied for client: {}, user: {}", peer_id, peer.user().unwrap_or_default()),
+                        format!("Access denied for client: {}, user: '{}'", peer_id, peer.user().unwrap_or_default()),
                     )
                 ),
             }
