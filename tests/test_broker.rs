@@ -1,5 +1,5 @@
 use std::process::Command;
-use assert_cmd::prelude::*;
+use assert_cmd::cargo_bin;
 use shvrpc::rpcmessage::RpcErrorCode;
 use tempfile::NamedTempFile;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -21,8 +21,7 @@ mod common;
 
 #[test]
 fn test_broker() -> shvrpc::Result<()> {
-    let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
-        .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
+    let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
         .arg("-v").arg("=I")
         //.arg("-v").arg("Acc")
         .spawn()?);
@@ -52,8 +51,7 @@ fn test_broker() -> shvrpc::Result<()> {
         };
         let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
         fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
-        let mut process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
-            .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
+        let mut process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
             .arg("--config").arg(cfg_fn.as_ref())
             //.arg("-v").arg("Acc")
             .spawn()?);
@@ -306,8 +304,7 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
     };
     let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
     fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
-    let mut broker_process_guard = KillProcessGuard::new(Command::cargo_bin("shvbroker")
-        .unwrap_or_else(|err| panic!("Couldn't execute shvbroker: {err}"))
+    let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
         .arg("--config").arg(cfg_fn.as_ref())
         //.arg("-v").arg("Acc")
         .spawn()?);
