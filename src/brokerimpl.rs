@@ -291,8 +291,8 @@ pub(crate) enum Mount {
 
 pub struct ParsedAccessRule {
     pub(crate) glob: shvrpc::rpc::Glob,
-    // Needed in order to pass 'dot-local' in 'Access' meta-attribute
-    // to support the dot-local hack on older brokers
+    // Needed in order to pass 'dot_local' in 'Access' meta-attribute
+    // to support the dot_local hack on older brokers
     pub(crate) access: String,
     pub(crate) access_level: AccessLevel,
 }

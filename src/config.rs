@@ -281,7 +281,7 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".into(), grant: "su,dot-local".to_string() },
+                            AccessRule { shv_ri: "**:*".into(), grant: "su,dot_local".to_string() },
                         ],
                         profile: None,
                     }),

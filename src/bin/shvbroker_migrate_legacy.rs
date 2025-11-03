@@ -109,10 +109,9 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
         let role: String = row.get(0)?;
         let path = row.get(1).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
         let method = row.get(2).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
-        let access_role: String = row.get(3)?;
+        let grant: String = row.get(3)?;
 
         let shv_ri = format!("{}:{}", if path.is_empty() { "**" } else { &path }, if method.is_empty() { "*" } else { &method });
-        let grant = access_role.replace("dot_local", "dot-local");
         let access_rule = AccessRule { shv_ri, grant };
 
         if let Err(err) = shvbroker::brokerimpl::ParsedAccessRule::try_from(&access_rule) {
