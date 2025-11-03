@@ -687,10 +687,12 @@ impl BrokerState {
 
             match found_grant {
                 Some((access_level, access)) => Ok((Some(access_level), Some(access))),
-                None => Err(RpcError::new(
-                    RpcErrorCode::PermissionDenied,
-                    format!("Access denied for user: {}", &peer_id),
-                )),
+                None => Err(
+                    RpcError::new(
+                        RpcErrorCode::PermissionDenied,
+                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.user().unwrap_or_default()),
+                    )
+                ),
             }
         };
 
