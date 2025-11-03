@@ -1954,13 +1954,8 @@ impl BrokerImpl {
                             Response::Delay(_) => Err("Delay messages are not supported in SHV API version discovery.".into()),
                         }
                     }
-                    Err(err) => {
-                        if let RpcErrorCode::MethodNotFound = err.code {
-                            Ok(false)
-                        } else {
-                            Err(err.into())
-                        }
-                    }
+                    Err(err) if err.code == RpcErrorCode::MethodNotFound => Ok(false),
+                    Err(err) => Err(err.into()),
                 }
             }
             match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
