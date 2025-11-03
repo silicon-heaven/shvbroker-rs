@@ -1964,18 +1964,19 @@ impl BrokerImpl {
             }
         }
         let broker_command_sender = state_reader(&state).command_sender.clone();
-        let mut subscribe_api = None;
-        for api in [SubscribeApi::V3, SubscribeApi::V2] {
-            match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
-                Ok(val) => if val {
-                    subscribe_api = Some(api);
-                    break;
-                },
-                Err(e) => {
-                    error!("Error checking subscribe API: {e}");
+        let subscribe_api = 'api_discovery: {
+            for api in [SubscribeApi::V3, SubscribeApi::V2] {
+                match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
+                    Ok(path_exists) => if path_exists {
+                        break 'api_discovery Some(api)
+                    },
+                    Err(e) => error!("Error checking subscribe API: {e}"),
                 }
             }
-        }
+
+            None
+        };
+
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
         state_writer(&state).set_subscribe_api(peer_id, subscribe_api)?;
         Ok(subscribe_api)
