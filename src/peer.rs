@@ -228,6 +228,8 @@ pub(crate) async fn server_peer_loop(
                         }
                         #[cfg(feature = "entra-id")]
                         {
+                            use std::collections::HashSet;
+
                             const AZURE_TOKEN_PREFIX: &str = "oauth2-azure:";
                             let access_token = if login_type == "AZURE" {
                                 password
@@ -285,14 +287,15 @@ pub(crate) async fn server_peer_loop(
                             let groups_from_azure = groups_response.value
                                 .into_iter()
                                 .filter(|group| group.value_type == "#microsoft.graph.group")
-                                .map(|group| group.id);
+                                .map(|group| group.id)
+                                .collect::<HashSet<_>>();
 
-                            let mut mapped_groups = groups_from_azure
-                                .flat_map(|azure_group| azure_config.group_mapping
-                                    .get(&azure_group)
-                                    .cloned()
-                                    .unwrap_or_default())
+                            let mut mapped_groups = azure_config.group_mapping
+                                .iter()
+                                .filter_map(|(native_group, shv_groups)| groups_from_azure.contains(native_group).then_some(shv_groups.clone()))
+                                .flatten()
                                 .collect::<Vec<_>>();
+
 
                             if mapped_groups.is_empty() {
                                 warn!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");

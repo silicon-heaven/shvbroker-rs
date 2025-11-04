@@ -18,7 +18,7 @@ struct CliOpts {
     /// Print current config to stdout
     #[arg(long)]
     print_config: bool,
-    /// RW directory location, where access database will bee stored
+    /// RW directory location, where access database will be stored
     #[arg(short, long)]
     data_directory: Option<String>,
     /// Allow writing to access database
