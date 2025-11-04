@@ -695,7 +695,6 @@ impl BrokerState {
                 ),
             }
         };
-
         if let Some(roles) = self.azure_user_groups.get(&peer_id) {
             let flatten_roles = self.impl_flatten_roles(roles);
             log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
@@ -716,7 +715,6 @@ impl BrokerState {
                 }
             }
             grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
-
         } else {
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {

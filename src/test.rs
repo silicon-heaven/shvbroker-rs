@@ -11,7 +11,7 @@ use smol::channel;
 use smol::channel::{Receiver, Sender};
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
-use crate::shvnode::{METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
+use crate::shvnode::{METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx<'a> {
     writer: &'a Sender<BrokerCommand>,
@@ -63,10 +63,95 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
 }
 
 #[test]
-fn test_broker_loop() {
-    smol::block_on(test_broker_loop_async())
+fn test_broker_loop_as_user() {
+    smol::block_on(test_broker_loop_as_user_async())
 }
-async fn test_broker_loop_async() {
+async fn test_broker_loop_as_user_async() {
+    let config = SharedBrokerConfig::new(BrokerConfig::default());
+    let access = config.access.clone();
+    let sql = Connection::open_in_memory().unwrap();
+    let broker = BrokerImpl::new(config, access, Some(sql));
+    let broker_sender = broker.command_sender.clone();
+    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
+
+    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+    let client_id = 2;
+
+    let call_ctx = CallCtx {
+        writer: &broker_sender,
+        reader: &peer_reader,
+        client_id,
+    };
+
+    // login
+    let user = "user";
+    //let password = "admin";
+    broker_sender.send(BrokerCommand::NewPeer {
+        peer_id: client_id,
+        peer_kind: PeerKind::Device{
+            user: user.to_string(),
+            device_id: None,
+            mount_point: None,
+        },
+        sender: peer_writer.clone() }).await.unwrap();
+
+    let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
+    assert_eq!(resp, RpcValue::from(true));
+    let resp = call(".broker/access/users", "ls", None, &call_ctx).await;
+    // viewer cannot list users
+    assert!(resp.is_err());
+
+    // test current client info
+    let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
+    let m = resp.as_map();
+    assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
+    assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from(""));
+    assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
+    assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
+
+    // subscriptions
+    let subs_ri = "shv/**:*";
+    let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
+    {
+        // subscribe
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        assert!(result.as_bool());
+        // cannot subscribe the same twice
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        assert!(!result.as_bool());
+        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await.unwrap();
+        let subs_map = resp.as_map();
+        // let s = format!("{:?}", subs_map);
+        assert_eq!(subs_map.len(), 1);
+        assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
+    }
+    {
+        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
+        let subs = resp.as_map().get("subscriptions").unwrap();
+        let subs_map = subs.as_map();
+        assert_eq!(subs_map.len(), 0);
+    }
+    {
+        // change password success
+        let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
+        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await.unwrap();
+        assert!(resp.as_bool());
+
+        // change password wrong password
+        let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
+        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await;
+        assert!(resp.is_err());
+    }
+
+    broker_task.cancel().await;
+}
+
+#[test]
+fn test_broker_loop_as_admin() {
+    smol::block_on(test_broker_loop_as_admin_async())
+}
+async fn test_broker_loop_as_admin_async() {
     let config = SharedBrokerConfig::new(BrokerConfig::default());
     let access = config.access.clone();
     let sql = Connection::open_in_memory().unwrap();
@@ -128,30 +213,6 @@ async fn test_broker_loop_async() {
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
     assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
-
-    // subscriptions
-    let subs_ri = "shv/**:*";
-    let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
-    {
-        // subscribe
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-        assert!(result.as_bool());
-        // cannot subscribe the same twice
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-        assert!(!result.as_bool());
-        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await.unwrap();
-        let subs_map = resp.as_map();
-        // let s = format!("{:?}", subs_map);
-        assert_eq!(subs_map.len(), 1);
-        assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
-    }
-    {
-        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-        let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
-        let subs = resp.as_map().get("subscriptions").unwrap();
-        let subs_map = subs.as_map();
-        assert_eq!(subs_map.len(), 0);
-    }
 
     let config = BrokerConfig::default();
     let users: Vec<_> = config.access.users.keys().map(|k| k.to_string()).collect();
