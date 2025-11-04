@@ -695,12 +695,7 @@ impl BrokerState {
                 ),
             }
         };
-        if shv_path == DIR_BROKER_CURRENT_CLIENT {
-            // Every user can call any method on the .broker/currentClient node
-            const CURRENT_CLIENT_ACCESS_LEVEL: AccessLevel = AccessLevel::Write;
-            log!(target: "Access", Level::Debug, "user: {peer_id} access to {DIR_BROKER_CURRENT_CLIENT} granted as {}", CURRENT_CLIENT_ACCESS_LEVEL.as_str());
-            Ok((Some(CURRENT_CLIENT_ACCESS_LEVEL as i32), Some(CURRENT_CLIENT_ACCESS_LEVEL.as_str().to_owned())))
-        } else if let Some(roles) = self.azure_user_groups.get(&peer_id) {
+        if let Some(roles) = self.azure_user_groups.get(&peer_id) {
             let flatten_roles = self.impl_flatten_roles(roles);
             log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
             grant_from_flatten_roles(flatten_roles)

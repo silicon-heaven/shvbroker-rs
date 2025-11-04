@@ -63,10 +63,10 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallC
 }
 
 #[test]
-fn test_broker_loop_as_viewer() {
-    smol::block_on(test_broker_loop_as_viewer_async())
+fn test_broker_loop_as_user() {
+    smol::block_on(test_broker_loop_as_user_async())
 }
-async fn test_broker_loop_as_viewer_async() {
+async fn test_broker_loop_as_user_async() {
     let config = SharedBrokerConfig::new(BrokerConfig::default());
     let access = config.access.clone();
     let sql = Connection::open_in_memory().unwrap();
@@ -84,7 +84,7 @@ async fn test_broker_loop_as_viewer_async() {
     };
 
     // login
-    let user = "viewer";
+    let user = "user";
     //let password = "admin";
     broker_sender.send(BrokerCommand::NewPeer {
         peer_id: client_id,
@@ -133,10 +133,15 @@ async fn test_broker_loop_as_viewer_async() {
         assert_eq!(subs_map.len(), 0);
     }
     {
-        // change password
-        let param: RpcValue = vec![RpcValue::from("viewer"), "good_password".into()].into();
+        // change password success
+        let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
         let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await.unwrap();
         assert!(resp.as_bool());
+
+        // change password wrong password
+        let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
+        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await;
+        assert!(resp.is_err());
     }
 
     broker_task.cancel().await;

@@ -287,7 +287,9 @@ impl Default for BrokerConfig {
                     }),
                     ("client".to_string(), Role {
                         roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()],
-                        access: vec![],
+                        access: vec![
+                            AccessRule { shv_ri: ".broker/currentClient:*".into(), grant: "wr".to_string() },
+                        ],
                         profile: None,
                     }),
                     ("device".to_string(), Role {
