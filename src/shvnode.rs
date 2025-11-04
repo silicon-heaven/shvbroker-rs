@@ -913,7 +913,20 @@ impl Shv2BrokerAppNode {
         }
     }
     fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        let res = state_writer(state).subscribe(peer_id, subpar);
+        let ri_to_shv2_compat = |ri: &shvrpc::rpc::ShvRI| {
+            let path = if !ri.path().ends_with("/**") {
+                format!("{path}/**", path = ri.path())
+            } else {
+                ri.path().into()
+            };
+            shvrpc::rpc::ShvRI::from_path_method_signal(&path, ri.method(), ri.signal())
+        };
+        let subpar = SubscriptionParam {
+            ri: ri_to_shv2_compat(&subpar.ri)
+                .map_err(|err| format!("Cannot convert RI '{ri}' to shv2 compatible equivalent: {err}", ri = subpar.ri.as_str()))?,
+            ttl: subpar.ttl,
+        };
+        let res = state_writer(state).subscribe(peer_id, &subpar);
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
