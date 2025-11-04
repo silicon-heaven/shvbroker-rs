@@ -487,12 +487,8 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 .group_mapping
                 .unwrap_or_default()
                 .into_iter()
-                .fold(BTreeMap::<_, Vec<_>>::new(), |mut map, [k, v]| {
-                    map.entry(k)
-                        .or_default()
-                        .push(v);
-                    map
-                });
+                .map(|[native_group, shv_group]| (native_group, vec![shv_group]))
+                .collect::<Vec<_>>();
 
             BrokerAzureConfig {
                 group_mapping,

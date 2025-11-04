@@ -29,7 +29,7 @@ pub struct BrokerConfig {
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
-    pub group_mapping: BTreeMap<String, Vec<String>>,
+    pub group_mapping: Vec<(String, Vec<String>)>,
     pub client_id: String,
     pub authorize_url: String,
     pub token_url: String,
