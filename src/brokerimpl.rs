@@ -1661,7 +1661,7 @@ impl BrokerImpl {
             }
             let ri = ShvRI::from_path_method_signal(
                 &shv_path,
-                signal_frame.source().unwrap_or_default(),
+                signal_frame.source().unwrap_or("get"),
                 signal_frame.method(),
             )?;
             state
