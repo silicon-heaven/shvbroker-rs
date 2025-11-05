@@ -151,13 +151,7 @@ pub(crate) struct Peer {
 
 impl Peer {
     pub(crate) fn is_signal_subscribed(&self, signal: &ShvRI) -> bool {
-        for subs in self.subscriptions.iter() {
-            //println!("{signal} matches {} -> {}", subs.glob.as_str(), subs.match_shv_ri(signal));
-            if subs.match_shv_ri(signal) {
-                return true;
-            }
-        }
-        false
+        self.subscriptions.iter().any(|subscr| subscr.match_shv_ri(signal))
     }
 
     fn user(&self) -> Option<&str> {
