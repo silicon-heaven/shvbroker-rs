@@ -15,6 +15,7 @@ use futures::io::BufWriter;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
+use rand::Rng;
 use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
@@ -185,7 +186,12 @@ pub(crate) async fn server_peer_loop(
             match method {
                 "hello" => {
                     debug!("Client ID: {peer_id}, hello received.");
-                    let nonce: &String = nonce.get_or_insert_with(|| Alphanumeric.sample_string(&mut rand::rng(), 16));
+                    let shv2_compat = broker_config.shv2_compatibility;
+                    let nonce: &String = nonce.get_or_insert_with(|| if shv2_compat {
+                        format!("{}", rand::rng().random_range(0..=2000000000))
+                    } else {
+                        Alphanumeric.sample_string(&mut rand::rng(), 16)
+                    });
                     let mut result = shvproto::Map::new();
                     result.insert("nonce".into(), RpcValue::from(nonce));
                     frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
