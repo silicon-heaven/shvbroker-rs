@@ -864,15 +864,7 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                     match maybe_frame {
                         Ok(frame) => {
                             match frame {
-                                socketcan::CanAnyFrame::Normal(_) | socketcan::CanAnyFrame::Fd(_)  => {
-                                    // Handle classic 2.0 frames and FD frames the same way
-                                    let fd_frame: CanFdFrame = match frame.try_into() {
-                                        Ok(fd_frame) => fd_frame,
-                                        Err(err) => {
-                                            error!("Normal or FD frame should be convertible to FD frame: {err}, frame: {frame:?}");
-                                            continue
-                                        }
-                                    };
+                                socketcan::CanAnyFrame::Fd(fd_frame)  => {
                                     let Ok(shvcan_frame) = ShvCanFrame::try_from(&fd_frame) else {
                                         continue
                                     };
@@ -922,6 +914,10 @@ pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig,
                                             reader_ack_tx.clone()
                                         );
                                     }
+                                }
+                                socketcan::CanAnyFrame::Normal(can_normal_frame) => {
+                                    // Ignore non-FD frames
+                                    debug!("CAN 2.0 frame received on {can_iface}: {can_normal_frame:?}");
                                 }
                                 socketcan::CanAnyFrame::Remote(can_remote_frame) => {
                                     // Ignore remote frames
