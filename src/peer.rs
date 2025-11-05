@@ -395,7 +395,7 @@ pub(crate) async fn server_peer_loop(
         }
         let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
         let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
-        info!("Client ID: {peer_id} login success (username: '{user}'");
+        info!("Client ID: {peer_id} login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}')");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),

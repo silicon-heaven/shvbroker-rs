@@ -8,7 +8,6 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use shvrpc::util::strip_prefix_path;
 use crate::brokerimpl::{BrokerToPeerMessage};
 use crate::brokerimpl::{NodeRequestContext, SharedBrokerState, state_reader, state_writer};
 
@@ -169,14 +168,15 @@ fn ls_children_to_result(children: Option<Vec<String>>, param: LsParam) -> Resul
 pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<Vec<String>> {
     let mut dirs: Vec<String> = Vec::new();
     let mut unique_dirs: HashSet<String> = HashSet::new();
-    let mut dir_exists = false;
-    for (key, _) in mounts.range(path.to_string()..) {
-        if let Some(key_rest) = strip_prefix_path(key, path) {
-            dir_exists = true;
-            if !key_rest.is_empty() {
-                let mut updirs = key_rest.split('/');
+    let mut dir_exists = mounts.contains_key(path);
+    for (key, _) in mounts.range(path.to_owned()..) {
+        if key.starts_with(path) {
+            if path.is_empty() || (key.len() > path.len() && key.as_bytes()[path.len()] == (b'/')) {
+                dir_exists = true;
+                let dir_rest_start = if path.is_empty() { 0 } else { path.len() + 1 };
+                let mut updirs = key[dir_rest_start..].split('/');
                 if let Some(dir) = updirs.next()
-                    && !unique_dirs.contains(dir) {
+                    && !dir.is_empty() && !unique_dirs.contains(dir) {
                         dirs.push(dir.to_string());
                         unique_dirs.insert(dir.to_string());
                     }
@@ -988,6 +988,8 @@ mod tests {
         mounts.insert(".broker/client/2".into(), ());
         mounts.insert(".broker/currentClient".into(), ());
         mounts.insert("test/device".into(), ());
+        mounts.insert("test/demo-device/x".into(), ());
+        mounts.insert("test/demo/y".into(), ());
 
         assert_eq!(super::find_longest_prefix(&mounts, ".broker/client"), Some((".broker", "client")));
         assert_eq!(super::find_longest_prefix(&mounts, "test"), None);
@@ -997,10 +999,13 @@ mod tests {
         assert_eq!(super::children_on_path(&mounts, ""), Some(vec![".broker", "test"].into_iter().map(|s| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, ".broker"), Some(vec!["client", "currentClient"].into_iter().map(|s| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, ".broker/client"), Some(vec!["1", "2"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, "test"), Some(vec!["device"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, "test"), Some(vec!["demo-device", "demo", "device"].into_iter().map(|s| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, ".broker/currentClient"), Some(vec![].into_iter().map(|s: &str/* Type */| s.to_string()).collect()));
         assert_eq!(super::children_on_path(&mounts, "test/device/1"), None);
         assert_eq!(super::children_on_path(&mounts, "test1"), None);
         assert_eq!(super::children_on_path(&mounts, "test/devic"), None);
+
+        assert_eq!(super::children_on_path(&mounts, "test/demo-device"), Some(vec!["x"].into_iter().map(|s| s.to_string()).collect()));
+        assert_eq!(super::children_on_path(&mounts, "test/demo"), Some(vec!["y"].into_iter().map(|s| s.to_string()).collect()));
     }
 }
