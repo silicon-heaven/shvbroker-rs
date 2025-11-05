@@ -184,7 +184,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
     const TEXT_MOUNT: &str = "state/text";
     const OVERSIZED_MOUNT: &str = "state/oversized";
 
-    let client_config = ClientConfig {
+    let client_config = shvclient::shvrpc::client::ClientConfig {
         url,
         mount: Some(mount_point.into()),
         ..Default::default()
@@ -200,7 +200,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
             "set" [IsSetter, Write, "Int", "Null"] (param: i32) => {
                 if app_state.number.load(Ordering::SeqCst) != param {
                     app_state.number.store(param, Ordering::SeqCst);
-                    let sigchng = RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
+                    let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
                     let _ = client_cmd_tx.send_message(sigchng);
                 }
                 Some(Ok(().into()))
@@ -217,7 +217,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
                 if *app_state.text.read().await != param {
                     let mut writer = app_state.text.write().await;
                     *writer = param.clone();
-                    let sigchng = RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
+                    let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
                     let _ = client_cmd_tx.send_message(sigchng);
                 }
                 Some(Ok(().into()))
