@@ -49,7 +49,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
 async fn start_client() -> Option<(ClientCommandSender<()>, ClientEventsReceiver)> {
     let (tx, rx) = futures::channel::oneshot::channel();
     smol::spawn(async {
-        let client_config = ClientConfig {
+        let client_config = shvclient::shvrpc::client::ClientConfig {
             url: Url::parse(PARENT_BROKER_CONNNECT_URL).unwrap(),
             device_id: None,
             mount: None,
