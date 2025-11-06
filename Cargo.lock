@@ -2515,7 +2515,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.14.10"
+version = "3.14.11"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2540,7 +2540,7 @@ dependencies = [
  "serialport",
  "shvclient",
  "shvproto",
- "shvrpc 3.12.1",
+ "shvrpc",
  "simple_logger",
  "smol 2.0.2",
  "smol-timeout",
@@ -2551,8 +2551,8 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.13.3"
-source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?tag=0.13.3#cf3e79077c60b22de69aed28f7de39521ab14373"
+version = "0.14.0"
+source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?tag=0.14.0#12905cd43ba1d599c054538f7d793e15b8351652"
 dependencies = [
  "async-broadcast",
  "duration-str",
@@ -2564,7 +2564,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-platform-verifier",
  "shvproto",
- "shvrpc 3.12.0",
+ "shvrpc",
  "smol 2.0.2",
  "url",
 ]
@@ -2584,29 +2584,8 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "3.12.0"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=3.12.0#3eeac8ac6f90746b44482908a214f7ebb5afa264"
-dependencies = [
- "anyhow",
- "async-trait",
- "crc",
- "duration-str",
- "futures",
- "futures-time",
- "glob",
- "hex",
- "log",
- "serde",
- "serde_yaml",
- "sha1",
- "shvproto",
- "url",
-]
-
-[[package]]
-name = "shvrpc"
-version = "3.12.1"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=3.12.1#7a8ce41c858daecebc05374737e415fd35371640"
+version = "3.12.2"
+source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=3.12.2#bce43074b597db7ec57379254057b7aa524c3dc5"
 dependencies = [
  "anyhow",
  "async-trait",

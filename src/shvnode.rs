@@ -1,7 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::format;
 use log::{Level, log};
 use shvrpc::metamethod::{Flag, MetaMethod};
+use shvrpc::util::{children_on_path, find_longest_path_prefix};
 use shvrpc::{metamethod, RpcMessageMetaTags};
 use shvproto::{List, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
@@ -110,7 +111,7 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
             children
         }
     });
-    let mount_pair = find_longest_prefix(mounts, shv_path);
+    let mount_pair = find_longest_path_prefix(mounts, shv_path);
     if mount_pair.is_none() && children.is_none() {
         // path doesn't exist
         return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {shv_path}"))))
@@ -164,52 +165,6 @@ fn ls_children_to_result(children: Option<Vec<String>>, param: LsParam) -> Resul
             }
         }
     }
-}
-pub fn children_on_path<V>(mounts: &BTreeMap<String, V>, path: &str) -> Option<Vec<String>> {
-    let mut dirs: Vec<String> = Vec::new();
-    let mut unique_dirs: HashSet<String> = HashSet::new();
-    let mut dir_exists = mounts.contains_key(path);
-    for (key, _) in mounts.range(path.to_owned()..) {
-        if key.starts_with(path) {
-            if path.is_empty() || (key.len() > path.len() && key.as_bytes()[path.len()] == (b'/')) {
-                dir_exists = true;
-                let dir_rest_start = if path.is_empty() { 0 } else { path.len() + 1 };
-                let mut updirs = key[dir_rest_start..].split('/');
-                if let Some(dir) = updirs.next()
-                    && !dir.is_empty() && !unique_dirs.contains(dir) {
-                        dirs.push(dir.to_string());
-                        unique_dirs.insert(dir.to_string());
-                    }
-            }
-        } else {
-            break;
-        }
-    }
-    if dir_exists {
-        Some(dirs)
-    } else {
-        None
-    }
-}
-pub fn find_longest_prefix<'a, V>(map: &BTreeMap<String, V>, shv_path: &'a str) -> Option<(&'a str, &'a str)> {
-    let mut path = shv_path;
-    let mut rest = "";
-    loop {
-        if map.contains_key(path) {
-            return Some((path, rest))
-        }
-        if path.is_empty() {
-            break;
-        }
-        if let Some(slash_ix) = path.rfind('/') {
-            path = &shv_path[..slash_ix];
-            rest = &shv_path[(slash_ix + 1)..];
-        } else {
-            path = "";
-            rest = shv_path;
-        };
-    }
-    None
 }
 pub(crate) enum ProcessRequestRetval {
     MethodNotFound,
@@ -973,39 +928,5 @@ impl ShvNode for Shv2BrokerAppNode {
                 Ok(ProcessRequestRetval::MethodNotFound)
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ls_mounts() {
-        let mut mounts = BTreeMap::new();
-        mounts.insert(".broker".into(), ());
-        mounts.insert(".broker/client/1".into(), ());
-        mounts.insert(".broker/client/2".into(), ());
-        mounts.insert(".broker/currentClient".into(), ());
-        mounts.insert("test/device".into(), ());
-        mounts.insert("test/demo-device/x".into(), ());
-        mounts.insert("test/demo/y".into(), ());
-
-        assert_eq!(super::find_longest_prefix(&mounts, ".broker/client"), Some((".broker", "client")));
-        assert_eq!(super::find_longest_prefix(&mounts, "test"), None);
-        assert_eq!(super::find_longest_prefix(&mounts, "test/device"), Some(("test/device", "")));
-        assert_eq!(super::find_longest_prefix(&mounts, "test/devic"), None);
-
-        assert_eq!(super::children_on_path(&mounts, ""), Some(vec![".broker", "test"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, ".broker"), Some(vec!["client", "currentClient"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, ".broker/client"), Some(vec!["1", "2"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, "test"), Some(vec!["demo-device", "demo", "device"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, ".broker/currentClient"), Some(vec![].into_iter().map(|s: &str/* Type */| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, "test/device/1"), None);
-        assert_eq!(super::children_on_path(&mounts, "test1"), None);
-        assert_eq!(super::children_on_path(&mounts, "test/devic"), None);
-
-        assert_eq!(super::children_on_path(&mounts, "test/demo-device"), Some(vec!["x"].into_iter().map(|s| s.to_string()).collect()));
-        assert_eq!(super::children_on_path(&mounts, "test/demo"), Some(vec!["y"].into_iter().map(|s| s.to_string()).collect()));
     }
 }
