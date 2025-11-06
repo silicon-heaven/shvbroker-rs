@@ -142,7 +142,26 @@ pub(crate) async fn server_peer_loop(
     mut frame_writer: impl FrameWriter + Send + 'static,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    debug!("Entering peer loop client ID: {peer_id}.");
+    macro_rules! peer_log {
+        // level + target
+        ($level:ident, target: $target:expr, $fmt:expr $(, $args:tt)* ) => {
+            $level!(
+                target: $target,
+                "peer_id({peer_id}): {msg}",
+                msg = ::core::format_args!($fmt $(, $args)*)
+            );
+        };
+
+        // level only
+        ($level:ident, $fmt:expr $(, $args:tt)* ) => {
+            $level!(
+                "peer_id({peer_id}): {msg}",
+                msg = ::core::format_args!($fmt $(, $args)*)
+            );
+        };
+    }
+
+    peer_log!(debug, "entering peer loop");
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
 
@@ -185,7 +204,7 @@ pub(crate) async fn server_peer_loop(
             let method = rpcmsg.method().unwrap_or("");
             match method {
                 "hello" => {
-                    debug!("Client ID: {peer_id}, hello received.");
+                    peer_log!(debug, "hello received");
                     let shv2_compat = broker_config.shv2_compatibility;
                     let nonce: &String = nonce.get_or_insert_with(|| if shv2_compat {
                         format!("{}", rand::rng().random_range(0..=2000000000))
@@ -197,7 +216,7 @@ pub(crate) async fn server_peer_loop(
                     frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
                 },
                 "workflows" => {
-                    debug!("Client ID: {peer_id}, workflows received.");
+                    peer_log!(debug, "workflows received");
                     #[cfg_attr(not(feature = "entra-id"), allow(unused_mut))]
                     let mut workflows = make_list!(
                         "PLAIN",
@@ -220,7 +239,7 @@ pub(crate) async fn server_peer_loop(
                     frame_writer.send_result(resp_meta, workflows.into()).or(frame_write_timeout()).await?;
                 },
                 "login" => {
-                    debug!("Client ID: {peer_id}, login received.");
+                    peer_log!(debug, "login received");
                     let params = rpcmsg.param().ok_or("No login params")?.as_map();
                     let login = params.get("login").ok_or("Invalid login params")?.as_map();
                     let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
@@ -304,12 +323,12 @@ pub(crate) async fn server_peer_loop(
 
 
                             if mapped_groups.is_empty() {
-                                warn!(target: "Azure", "Client ID: {peer_id}, no relevant groups in Azure.");
+                                peer_log!(warn, target: "Azure", "no relevant groups in Azure");
                                 frame_writer.send_error(resp_meta, "No relevant Azure groups found.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
 
-                            debug!(target: "Azure", "Client ID: {peer_id} (azure), groups: {mapped_groups:?}");
+                            peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
@@ -346,17 +365,17 @@ pub(crate) async fn server_peer_loop(
                                                     let mut data = nonce.as_bytes().to_vec();
                                                     data.extend_from_slice(broker_shapass.as_bytes());
                                                     let broker_shapass = sha1_hash(&data);
-                                                    //info!("nonce: {}", nonce);
-                                                    //info!("client password: {}", password);
-                                                    //info!("broker password: {}", std::str::from_utf8(&broker_shapass).unwrap());
+                                                    //peer_log!(info, "nonce: {nonce}");
+                                                    //peer_log!(info, "client password: {password}");
+                                                    //peer_log!(info, "broker password: {broker_password}", broker_password = std::str::from_utf8(&broker_shapass).unwrap());
                                                     password == broker_shapass
                                                 } else {
-                                                    debug!("Client ID: {peer_id}, user tried SHA1 login without using `:hello`.");
+                                                    peer_log!(debug, "user tried SHA1 login without using `:hello`");
                                                     false
                                                 }
                                             },
                                             _ => {
-                                                debug!("Client ID: {peer_id}, unknown login type '{login_type}'.");
+                                                peer_log!(debug, "unknown login type '{login_type}'");
                                                 false
                                             }
                                         }
@@ -364,7 +383,7 @@ pub(crate) async fn server_peer_loop(
                                 }
                             };
                             if chkpwd() {
-                                debug!("Client ID: {peer_id}, password OK.");
+                                peer_log!(debug, "password OK");
                                 let mut result = shvproto::Map::new();
                                 result.insert("clientId".into(), RpcValue::from(peer_id));
                                 frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
@@ -378,7 +397,7 @@ pub(crate) async fn server_peer_loop(
                                 }
                                 break 'login_loop;
                             } else {
-                                warn!("Peer: {peer_id}, invalid login credentials, user: {user}");
+                                peer_log!(warn, "invalid login credentials, user: {user}");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
@@ -395,7 +414,7 @@ pub(crate) async fn server_peer_loop(
         }
         let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
         let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
-        info!("Client ID: {peer_id} login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}')");
+        peer_log!(info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}')");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),
@@ -416,7 +435,7 @@ pub(crate) async fn server_peer_loop(
         let frame_writer_task = smol::spawn(async move {
             while let Some(frame) = frames_rx.next().await {
                 if let Err(e) = frame_writer.send_frame(frame).or(frame_write_timeout()).await {
-                    log::error!("RpcFrame send failed: {}", e);
+                    peer_log!(error, "RpcFrame send failed: {e}");
                     return Err((e, frame_writer));
                 }
             }
@@ -468,7 +487,7 @@ pub(crate) async fn server_peer_loop(
                                     (meta, RpcError::new(RpcErrorCode::MethodCallException, reason))
                                 }
                                 _ => {
-                                    debug!("Peer receive frame error: {err}");
+                                    peer_log!(debug, "Peer receive frame error: {err}");
                                     drop(frames_tx);
                                     frame_writer_task.await.ok();
                                     break 'session_loop;
@@ -484,7 +503,7 @@ pub(crate) async fn server_peer_loop(
                                 rpc_msg.set_error(rpc_error);
                                 broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
                             } else {
-                                debug!("Peer receive frame error: {err}");
+                                peer_log!(debug, "Peer receive frame error: {err}");
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
                                 break 'session_loop;
@@ -496,7 +515,7 @@ pub(crate) async fn server_peer_loop(
                 }
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
-                        debug!("Broker to Peer channel closed: {e}");
+                        peer_log!(debug, "Broker to Peer channel closed: {e}");
                         drop(frames_tx);
                         frame_writer_task.await.ok();
                         break 'session_loop;
@@ -507,7 +526,7 @@ pub(crate) async fn server_peer_loop(
                                 panic!("PasswordSha1 cannot be received here")
                             }
                             BrokerToPeerMessage::DisconnectByBroker => {
-                                info!("Disconnected by broker, client ID: {peer_id}");
+                                peer_log!(info, "disconnected by broker");
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
                                 break 'session_loop;
@@ -523,7 +542,7 @@ pub(crate) async fn server_peer_loop(
         }
     }
 
-    info!("Client ID: {peer_id} gone.");
+    peer_log!(info, "peer gone");
     Ok(())
 }
 
