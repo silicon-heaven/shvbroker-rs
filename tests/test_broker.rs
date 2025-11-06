@@ -88,7 +88,7 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_child(".broker", "ls", r#""client""#)?, RpcValue::from(true));
     {
         println!("---broker---: .app:dir()");
-        let expected_methods = vec![
+        let expected_methods = [
             MetaMethod { name: METH_DIR, param: "DirParam", result: "DirResult", ..Default::default() },
             MetaMethod { name: METH_LS, param: "LsParam", result: "LsResult", ..Default::default() },
             MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32,  ..Default::default() },
