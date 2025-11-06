@@ -1,6 +1,6 @@
 [package]
 name = "shvbroker"
-version = "3.14.10"
+version = "3.14.11"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ entra-id = ["dep:async-compat", "dep:reqwest"]
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.0"
-shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", tag = "0.13.3", features = ["smol"] }
+shvclient = { git = "https://github.com/silicon-heaven/libshvclient-rs.git", tag = "0.14.0", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.35"
 anyhow = "1.0.100"
@@ -27,7 +27,7 @@ panic = "abort"
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", tag = "3.6.2", features = [ "serde" ] }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "3.12.1", features = ["websocket", "can"] }
+shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "3.12.2", features = ["websocket", "can"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
