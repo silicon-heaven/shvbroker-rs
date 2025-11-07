@@ -1,12 +1,9 @@
-use std::collections::HashMap;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use duration_str::HumanFormat;
-use futures::channel::mpsc::UnboundedSender;
 use futures::select;
-use futures::stream::FuturesUnordered;
 use futures::AsyncRead;
 use futures::AsyncReadExt;
 use futures::AsyncWrite;
@@ -19,8 +16,6 @@ use rand::Rng;
 use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
-use shvrpc::canrw::CanFrameReader;
-use shvrpc::canrw::CanFrameWriter;
 use shvrpc::client::ClientConfig;
 use shvrpc::framerw::ReceiveFrameError;
 use shvrpc::metamethod::AccessLevel;
@@ -30,15 +25,11 @@ use shvrpc::rpcmessage::{PeerId, Tag};
 use shvrpc::{client, RpcMessage, RpcMessageMetaTags};
 use shvrpc::client::LoginParams;
 use shvrpc::rpcframe::{Protocol, RpcFrame};
-use smol::Task;
 use smol::Timer;
 use smol::future::FutureExt as _;
-use socketcan::CanFdFrame;
+
 use crate::brokerimpl::load_certs;
-use crate::brokerimpl::next_peer_id;
 use crate::brokerimpl::AsyncReadWriteBox;
-use crate::brokerimpl::CanConnectionConfig;
-use crate::brokerimpl::CanInterfaceConfig;
 use crate::brokerimpl::ServerMode;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
 use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
@@ -735,13 +726,25 @@ pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> L
     }
 }
 
-pub(crate) async fn can_interface_task(can_interface_config: CanInterfaceConfig, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
+
+#[cfg(feature = "can")]
+pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::CanInterfaceConfig, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let can_iface = &can_interface_config.interface;
+
+    use std::collections::HashMap;
+    use futures::channel::mpsc::UnboundedSender;
+    use futures::stream::FuturesUnordered;
+    use socketcan::CanFdFrame;
+    use smol::Task;
+    use crate::brokerimpl::next_peer_id;
+    use crate::brokerimpl::CanConnectionConfig;
 
     use shvrpc::canrw::{
         ShvCanFrame,
         AckFrame as ShvCanAckFrame,
         DataFrame as ShvCanDataFrame,
+        CanFrameReader,
+        CanFrameWriter,
         TerminateFrame as ShvCanTerminateFrame,
     };
 
