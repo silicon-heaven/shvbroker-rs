@@ -1,6 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, AccessRule, BrokerConfig, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
-use crate::peer::login_params_from_client_config;
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
     process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, SIG_LSMOD
 };
@@ -16,7 +15,6 @@ use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
 use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
-use shvrpc::client::LoginParams;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -475,7 +473,7 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
         }
         let scheme = peer_config.client.url.scheme();
         if !["tcp", "ssl", "serial"].contains(&scheme) {
-            if scheme != "can" {
+            if !cfg!(feature = "can") || scheme != "can" {
                 // CAN connections are handled below
                 error!("URL scheme {scheme} is not supported for a broker connection");
             }
@@ -485,6 +483,7 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
         spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
     }
 
+    #[cfg(feature = "can")]
     for can_interface_config in can_interfaces_config(&broker_config) {
         spawn_and_log_error(peer::can_interface_task(can_interface_config, broker_sender.clone(), broker_config.clone()));
     }
@@ -494,15 +493,17 @@ pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "can")]
 #[derive(Clone,Debug)]
 pub(crate) struct CanConnectionConfig {
     pub local_address: u8,
     pub peer_address: u8,
-    pub login_params: LoginParams,
+    pub login_params: shvrpc::client::LoginParams,
     pub connection_kind: ConnectionKind,
     pub reconnect_interval: Duration,
 }
 
+#[cfg(feature = "can")]
 #[derive(Debug,Default)]
 pub(crate) struct CanInterfaceConfig {
     pub interface: String,
@@ -510,7 +511,8 @@ pub(crate) struct CanInterfaceConfig {
     pub connections: Vec<CanConnectionConfig>,
 }
 
-fn can_interfaces_config(broker_config: &BrokerConfig) -> Vec<CanInterfaceConfig> {
+#[cfg(feature = "can")]
+fn can_interfaces_config(broker_config: &crate::config::BrokerConfig) -> Vec<CanInterfaceConfig> {
     let mut interfaces: HashMap<String, CanInterfaceConfig> = HashMap::new();
 
     for Listen { url } in &broker_config.listen {
@@ -568,7 +570,7 @@ fn can_interfaces_config(broker_config: &BrokerConfig) -> Vec<CanInterfaceConfig
             continue
         };
 
-        let login_params = login_params_from_client_config(client_config);
+        let login_params = crate::peer::login_params_from_client_config(client_config);
         let connection_kind = connection_config.connection_kind.clone();
 
         let reconnect_interval = connection_config.client.reconnect_interval.unwrap_or_else(|| {

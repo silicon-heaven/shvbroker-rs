@@ -1,12 +1,13 @@
 [package]
 name = "shvbroker"
-version = "3.14.12"
+version = "3.14.13"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
 entra-id = ["dep:async-compat", "dep:reqwest"]
+can = ["dep:socketcan", "shvrpc/can"]
 
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
@@ -27,7 +28,7 @@ panic = "abort"
 
 [dependencies]
 shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", tag = "3.6.2", features = [ "serde" ] }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "3.12.2", features = ["websocket", "can"] }
+shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "3.12.2", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
@@ -45,7 +46,7 @@ reqwest = { version = "0.12.20", features = ["json", "http2", "rustls-tls"], def
 serialport = "4.7.1"
 async-tungstenite = "0.29.1"
 async-compat = { version = "0.2.4", optional = true }
-socketcan = { version = "3.5.0", features = ["smol"] }
+socketcan = { version = "3.5.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.1"
