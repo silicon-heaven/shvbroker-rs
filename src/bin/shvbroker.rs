@@ -3,7 +3,7 @@ use std::path::Path;
 use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
-use clap::{Args, Command, FromArgMatches, Parser};
+use clap::{Parser};
 use rusqlite::Connection;
 use shvbroker::{brokerimpl::BrokerImpl, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}};
 
@@ -23,13 +23,13 @@ struct CliOpts {
     data_directory: Option<String>,
     /// Allow writing to access database
     #[arg(short = 'b', long)]
-    use_access_db: bool,
+    use_access_db: Option<bool>,
     /// Enable broker tunneling feature
     #[arg(long)]
-    tunneling: bool,
+    tunneling: Option<bool>,
     /// SHV2 compatibility mode
     #[arg(long = "shv2")]
-    shv2_compatibility: bool,
+    shv2_compatibility: Option<bool>,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -39,21 +39,16 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     const SMOL_THREADS: &str = "SMOL_THREADS";
     if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
         && let Ok(num_threads) = std::thread::available_parallelism() {
-            unsafe {
-                std::env::set_var(SMOL_THREADS, num_threads.to_string());
-            }
+        unsafe {
+            std::env::set_var(SMOL_THREADS, num_threads.to_string());
         }
-    let cli = Command::new("CLI");//.arg(arg!(-b - -built).action(clap::ArgAction::SetTrue));
-    let cli = CliOpts::augment_args(cli);
-    let cli_matches = cli.get_matches();
-    let cli_use_access_db_set = cli_matches.try_get_one::<bool>("use_access_db").is_ok();
-    let cli_tunneling_set = cli_matches.try_get_one::<bool>("tunneling").is_ok();
-    let cli_shv2_set = cli_matches.try_get_one::<bool>("shv2_compatibility").is_ok();
-    let cli_opts = CliOpts::from_arg_matches(&cli_matches).map_err(|err| err.exit()).unwrap();
+    }
+
+    let cli_opts = CliOpts::parse();
 
     if cli_opts.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
-        return Ok(());   
+        return Ok(());
     }
 
     let mut logger = SimpleLogger::new();
@@ -72,13 +67,6 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     info!("=====================================================");
     info!("{} ver. {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     info!("=====================================================");
-    //trace!("trace message");
-    //debug!("debug message");
-    //info!("info message");
-    //warn!("warn message");
-    //error!("error message");
-    //log!(target: "RpcMsg", Level::Debug, "RPC message");
-    //log!(target: "Access", Level::Debug, "Access control message");
 
     let mut config = if let Some(config_file) = &cli_opts.config {
         info!("Loading config file {config_file}");
@@ -92,21 +80,23 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Using default config");
         BrokerConfig::default()
     };
-    if cli_tunneling_set {
-        config.tunnelling.enabled = cli_opts.tunneling;
+    if cli_opts.data_directory.is_some() {
+        config.data_directory = cli_opts.data_directory;
     }
-    if config.tunnelling.enabled {
-        info!("Tunneling enabled");
+    if let Some(use_access_db) = cli_opts.use_access_db {
+        config.use_access_db = use_access_db;
     }
-    if cli_shv2_set {
-        config.shv2_compatibility = cli_opts.shv2_compatibility;
+    if let Some(tunneling) = cli_opts.tunneling {
+        config.tunnelling.enabled = tunneling;
+    }
+    if let Some(shv2_compatibility) = cli_opts.shv2_compatibility {
+        config.shv2_compatibility = shv2_compatibility;
     }
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
-    let data_dir = cli_opts.data_directory.or(config.data_directory.clone()).unwrap_or("/tmp/shvbroker/data".to_owned());
-    let use_access_db = (cli_use_access_db_set && cli_opts.use_access_db) || config.use_access_db;
-    let (access, sql_connection) = if use_access_db {
+    let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
+    let (access, sql_connection) = if config.use_access_db {
         let config_file = Path::new(&data_dir).join("shvbroker.sqlite");
         if let Some(path) = config_file.parent() {
             fs::create_dir_all(path)?;
