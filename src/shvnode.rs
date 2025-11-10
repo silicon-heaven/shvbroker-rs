@@ -436,7 +436,12 @@ impl ShvNode for BrokerNode {
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = state_reader(&ctx.state).peers.keys().map(|id| RpcValue::from(*id)).collect();
+                let mut clients = state_reader(&ctx.state)
+                    .peers
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>();
+                clients.sort();
                 Ok(ProcessRequestRetval::Retval(clients.into()))
             }
             METH_MOUNTS => {
