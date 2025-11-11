@@ -619,7 +619,7 @@ impl ShvNode for BrokerCurrentClientNode {
                         frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
                     )
                     .map(|(access_level, _)| access_level.unwrap_or_default())
-                    .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied {
+                    .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied.into() {
                         Ok(0)
                     } else {
                         Err(rpc_err)
