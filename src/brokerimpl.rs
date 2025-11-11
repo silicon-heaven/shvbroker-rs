@@ -1,7 +1,11 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
-    process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, SIG_LSMOD
+    process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
+    BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode,
+    DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
+    DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE,
+    METH_UNSUBSCRIBE, SIG_LSMOD
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
@@ -664,7 +668,7 @@ impl BrokerState {
         };
         log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
-        let grant_from_flatten_roles = |flatten_roles| {
+        let access_level_from_flatten_roles = |flatten_roles| {
             let found_grant = (|| {
                 for role_name in flatten_roles {
                     if let Some(rules) = self.role_access_rules.get(&role_name) {
@@ -693,25 +697,26 @@ impl BrokerState {
         };
         if let Some(roles) = self.azure_user_groups.get(&peer_id) {
             let flatten_roles = self.impl_flatten_roles(roles);
-            log!(target: "Access", Level::Debug, "user: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
-            grant_from_flatten_roles(flatten_roles)
+            log!(target: "Access", Level::Debug, "User: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
+            access_level_from_flatten_roles(flatten_roles)
         } else if let Some(user) = peer.user() {
-            // connection to the parent broker has no user logged in, since it is outgoing
-            log!(target: "Access", Level::Debug, "Peer: {peer_id}");
+            // request from logged-in user,
+            // it can be client, device, child broker or parent broker as client
             let flatten_roles = self.flatten_roles(user).unwrap_or_default();
-            if flatten_roles.iter().any(|s| s == "preserve_access") {
-                // upper broker can be connected as a client, if this broker should preserve access resolved
-                // by master, then upper login should have the role 'preserve_access'
-                if access_level.is_some() || access.is_some() {
-                    log!(target: "Access", Level::Debug, "\tAccess granted by user role, access: {access:?}, access_level: {access_level:?}");
-                    return Ok((
-                        access_level,
-                        access.map(str::to_string)
-                    ))
-                }
-            }
-            grant_from_flatten_roles(self.flatten_roles(user).unwrap_or_default())
+            log!(target: "Access", Level::Debug, "User: {user}, flatten roles: {:?}", flatten_roles);
+            // client (especially parent broker) can set access level for its request
+            // cap it to the maximum level allowed by its access rights configured in the broker
+            let mut max_level = access_level_from_flatten_roles(flatten_roles);
+            if let Ok((Some(max_level), _access)) = &mut max_level
+                && let Some(access_level) = access_level
+                    && *max_level > access_level {
+                        log!(target: "Access", Level::Debug, "\tAccess level requested by client: {access_level} capped to: {max_level}");
+                        *max_level = access_level;
+                    }
+            max_level
         } else {
+            // connection has no user logged in, since it is outgoing, initiated by broker
+            // it can be client connection to parent broker or client connection to child broker
             match &peer.peer_kind {
                 PeerKind::Broker(connection_kind) => {
                     match connection_kind {
@@ -730,7 +735,7 @@ impl BrokerState {
                         }
                         ConnectionKind::ToChildBroker { .. } => {
                             // requests from child broker should not be allowed
-                            log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                            log!(target: "Access", Level::Debug, "Child broker cannot request parent one, PermissionDenied");
                             Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
                         }
                     }
