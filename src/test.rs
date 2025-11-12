@@ -331,7 +331,7 @@ async fn test_tunnel_loop_async() {
     let param = Map::from([("host".to_string(), "localhost:54321".into())]);
     let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await;
     // service not running
-    assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException);
+    assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException.into());
 
     // echo loop
     const ECHO_LOOP_ADDRESS: &str = "localhost:8888";

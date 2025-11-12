@@ -169,7 +169,7 @@ fn test_broker() -> shvrpc::Result<()> {
 
     const OVERSIZED_FRAME_SIZE: usize = 60 << 20;
     let resp = shv_call_parent_get_response("test/child-broker/device/state/oversized", "get", &OVERSIZED_FRAME_SIZE.to_string())?;
-    assert_eq!(resp.response().unwrap_err().code, RpcErrorCode::MethodCallException);
+    assert_eq!(resp.response().unwrap_err().code, RpcErrorCode::MethodCallException.into());
 
     Ok(())
 }

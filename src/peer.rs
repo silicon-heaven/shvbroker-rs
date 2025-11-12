@@ -1113,6 +1113,15 @@ async fn broker_as_client_peer_loop(
             },
             res_frame = frames_stream.select_next_some() => match res_frame {
                 Ok(frame) => {
+                    if frame.is_error()
+                        && let Ok(msg) = frame.to_rpcmesage()
+                        && msg.error().is_some_and(|err| err.code == RpcErrorCode::LoginRequired.into())
+                    {
+                        // With connectionless transport protocols (CAN, serial) the
+                        // LoginRequired error means that the session is no longer alive on
+                        // the peer side and we need to reset the session on ours.
+                        return Err("The peer sent 'Login required' error message".into());
+                    }
                     process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
                 }
                 Err(err) => {

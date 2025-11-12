@@ -227,10 +227,7 @@ pub(crate) async fn tunnel_task(
                 .send(BrokerCommand::SendResponse {
                     peer_id,
                     meta: response_meta.clone(),
-                    result: Err(RpcError {
-                        code: RpcErrorCode::MethodCallException,
-                        message: e.to_string(),
-                    }),
+                    result: Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string())),
                 })
                 .await?;
             return Err(e.to_string().into());
