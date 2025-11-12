@@ -1115,7 +1115,7 @@ async fn broker_as_client_peer_loop(
                 Ok(frame) => {
                     if frame.is_error()
                         && let Ok(msg) = frame.to_rpcmesage()
-                            && msg.error().is_some_and(|err| err.code == RpcErrorCode::LoginRequired.into())
+                        && msg.error().is_some_and(|err| err.code == RpcErrorCode::LoginRequired.into())
                     {
                         // With connectionless transport protocols (CAN, serial) the
                         // LoginRequired error means that the session is no longer alive on
