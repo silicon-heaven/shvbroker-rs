@@ -880,7 +880,16 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
             Some((frame_res, sock))
         }));
 
+        let time_broadcast_interval: std::pin::Pin<Box<dyn futures::Stream<Item = ()> + Send>>  = if broker_config.time_broadcast {
+            Box::pin(futures::StreamExt::map(Timer::interval(Duration::from_secs(60)), |_| ()))
+        } else {
+            Box::pin(futures::stream::empty())
+        };
+        let mut time_broadcast_interval = time_broadcast_interval.fuse();
+
         loop {
+            use socketcan::id::FdFlags;
+
             futures::select! {
                 maybe_frame = frames.select_next_some() => {
                     match maybe_frame {
@@ -955,6 +964,33 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                             continue 'init_iface;
                         }
                     }
+                }
+                _ = time_broadcast_interval.select_next_some() => {
+                    static CAN_ID_UTC_TIME: std::sync::LazyLock<socketcan::CanId> = std::sync::LazyLock::new(|| socketcan::CanId::standard(0x04).expect("Time broadcast CAN ID should be valid"));
+
+                    fn to_string<E: std::fmt::Display>(e: E) -> String {
+                        e.to_string()
+                    }
+                    let system_time_ms = match std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(to_string)
+                        .and_then(|d| u64::try_from(d.as_millis()).map_err(to_string))
+                    {
+                        Ok(ms) => ms,
+                        Err(err) => {
+                            error!("Invalid system time, CAN time broadcast will not be sent: {err}");
+                            continue
+                        }
+                    };
+
+                    let Some(frame) = socketcan::CanFdFrame::with_flags(*CAN_ID_UTC_TIME, &system_time_ms.to_be_bytes(), FdFlags::BRS | FdFlags::FDF) else {
+                        error!("Cannot create time broadcast CAN frame");
+                        continue;
+                    };
+                    debug!(target: "shvcan", "{can_iface} SEND time broadcast: {frame:?}");
+                    socket.write_frame(&frame)
+                        .await
+                        .unwrap_or_else(|e| warn!("Cannot send time broadcast CAN frame: {e}, frame: {frame:?}"));
                 }
                 data_frame = writer_frames_rx.select_next_some() => {
                     let fd_frame = match CanFdFrame::try_from(&data_frame) {
