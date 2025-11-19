@@ -1780,7 +1780,7 @@ impl BrokerImpl {
                         METH_LS,
                         Some(Map::from([(dir.to_string(), true.into())]).into()),
                     );
-                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?)
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
@@ -1797,7 +1797,7 @@ impl BrokerImpl {
                         METH_LS,
                         Some(Map::from([(dir.to_string(), false.into())]).into()),
                     );
-                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?)
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
