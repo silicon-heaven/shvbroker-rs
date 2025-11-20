@@ -5,7 +5,7 @@ use crate::shvnode::{
     BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode,
     DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
     DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE,
-    METH_UNSUBSCRIBE, SIG_LSMOD
+    METH_UNSUBSCRIBE, SIG_LSMOD, SIG_MNTMOD
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
@@ -1782,6 +1782,14 @@ impl BrokerImpl {
                     );
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
+
+                    let msg = RpcMessage::new_signal(
+                        &mount_point,
+                        SIG_MNTMOD,
+                        Some(true.into()),
+                    );
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                        .await?;
                 }
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
             }
@@ -1804,6 +1812,14 @@ impl BrokerImpl {
                         SIG_LSMOD,
                         METH_LS,
                         Some(Map::from([(lsmod_value.to_string(), false.into())]).into()),
+                    );
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                        .await?;
+
+                    let msg = RpcMessage::new_signal(
+                        &mount_point,
+                        SIG_MNTMOD,
+                        Some(false.into()),
                     );
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
