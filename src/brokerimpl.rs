@@ -5,7 +5,7 @@ use crate::shvnode::{
     BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode,
     DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
     DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE,
-    METH_UNSUBSCRIBE, SIG_LSMOD
+    METH_UNSUBSCRIBE, SIG_LSMOD, SIG_MNTMOD
 };
 use crate::spawn::spawn_and_log_error;
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
@@ -857,21 +857,31 @@ impl BrokerState {
                 None
             }
         };
+
+        if let Some(mount_point) = effective_mount_point.as_ref() {
+            if let Some(mount) = self.mounts.get(mount_point) {
+                sender.close();
+                return Err(format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
+                    Mount::Peer(id) => format!("peer_id({id})"),
+                    Mount::Node => "internal-node".to_string(),
+                }).into());
+            }
+            info!("Mounting peer: {peer_id} at: {mount_point}");
+            self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
+        }
+
+        self.mounts.insert(client_path, Mount::Peer(peer_id));
+
         let peer = Peer {
             peer_id,
             peer_kind,
             sender,
-            mount_point: effective_mount_point.clone(),
+            mount_point: effective_mount_point,
             subscribe_api: None,
             subscriptions: vec![],
             forwarded_subscriptions: vec![],
         };
         self.peers.insert(peer_id, peer);
-        self.mounts.insert(client_path, Mount::Peer(peer_id));
-        if let Some(mount_point) = effective_mount_point {
-            info!("Mounting peer: {peer_id} at: {mount_point}");
-            self.mounts.insert(mount_point, Mount::Peer(peer_id));
-        }
         Ok(())
     }
     fn sha_password(&self, user: &str) -> Option<String> {
@@ -1221,13 +1231,13 @@ pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard
     state.write().unwrap()
 }
 
-fn split_mount_point(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
+fn split_last_fragment(mount_point: &str) -> (&str, &str) {
     if let Some(ix) = mount_point.rfind('/') {
         let dir = &mount_point[ix + 1..];
         let prefix = &mount_point[..ix];
-        Ok((prefix, dir))
+        (prefix, dir)
     } else {
-        Ok(("", mount_point))
+        ("", mount_point)
     }
 }
 
@@ -1773,14 +1783,22 @@ impl BrokerImpl {
                 state_writer(&self.state).add_peer(peer_id, peer_kind, sender)?;
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
-                    let (shv_path, dir) = split_mount_point(&mount_point)?;
+                    let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(
                         shv_path,
                         SIG_LSMOD,
                         METH_LS,
                         Some(Map::from([(dir.to_string(), true.into())]).into()),
                     );
-                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?)
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                        .await?;
+
+                    let msg = RpcMessage::new_signal(
+                        &mount_point,
+                        SIG_MNTMOD,
+                        Some(true.into()),
+                    );
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
                 spawn_and_log_error(Self::on_device_mounted(self.state.clone(), peer_id));
@@ -1789,15 +1807,31 @@ impl BrokerImpl {
                 debug!("Peer gone, id: {peer_id}.");
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
+                    let mut lsmod_path = mount_point.as_ref();
+                    let mut lsmod_value = "";
+                    while !mount_point.is_empty() {
+                        (lsmod_path, lsmod_value) = split_last_fragment(lsmod_path);
+                        if state_reader(&self.state).mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
+                            break;
+                        }
+                    }
+
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
-                    let (shv_path, dir) = split_mount_point(&mount_point)?;
                     let msg = RpcMessage::new_signal_with_source(
-                        shv_path,
+                        lsmod_path,
                         SIG_LSMOD,
                         METH_LS,
-                        Some(Map::from([(dir.to_string(), false.into())]).into()),
+                        Some(Map::from([(lsmod_value.to_string(), false.into())]).into()),
                     );
-                    self.emit_rpc_signal_frame(peer_id, &msg.to_frame()?)
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                        .await?;
+
+                    let msg = RpcMessage::new_signal(
+                        &mount_point,
+                        SIG_MNTMOD,
+                        Some(false.into()),
+                    );
+                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
