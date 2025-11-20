@@ -17,6 +17,8 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub shv2_compatibility: bool,
     #[serde(default)]
+    pub time_broadcast: bool,
+    #[serde(default)]
     pub data_directory: Option<String>,
     #[serde(default)]
     pub connections: Vec<BrokerConnectionConfig>,
@@ -258,6 +260,7 @@ impl Default for BrokerConfig {
             listen: vec![Listen { url: Url::parse("tcp://localhost:3755").expect("TCP default URL should be valid") }],
             use_access_db: false,
             shv2_compatibility: false,
+            time_broadcast: false,
             data_directory: None,
             connections: vec![
                 BrokerConnectionConfig {

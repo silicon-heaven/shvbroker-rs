@@ -514,6 +514,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             listen,
             use_access_db: cfg.sqlconfig.as_ref().is_some_and(|s| s.enabled),
             shv2_compatibility: false,
+            time_broadcast: false,
             data_directory,
             connections,
             access: shvbroker::config::AccessConfig::default(),
