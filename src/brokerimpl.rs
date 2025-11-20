@@ -857,21 +857,31 @@ impl BrokerState {
                 None
             }
         };
+
+        if let Some(mount_point) = effective_mount_point.as_ref() {
+            if let Some(mount) = self.mounts.get(mount_point) {
+                sender.close();
+                return Err(format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
+                    Mount::Peer(id) => format!("peer_id({id})"),
+                    Mount::Node => "internal-node".to_string(),
+                }).into());
+            }
+            info!("Mounting peer: {peer_id} at: {mount_point}");
+            self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
+        }
+
+        self.mounts.insert(client_path, Mount::Peer(peer_id));
+
         let peer = Peer {
             peer_id,
             peer_kind,
             sender,
-            mount_point: effective_mount_point.clone(),
+            mount_point: effective_mount_point,
             subscribe_api: None,
             subscriptions: vec![],
             forwarded_subscriptions: vec![],
         };
         self.peers.insert(peer_id, peer);
-        self.mounts.insert(client_path, Mount::Peer(peer_id));
-        if let Some(mount_point) = effective_mount_point {
-            info!("Mounting peer: {peer_id} at: {mount_point}");
-            self.mounts.insert(mount_point, Mount::Peer(peer_id));
-        }
         Ok(())
     }
     fn sha_password(&self, user: &str) -> Option<String> {
