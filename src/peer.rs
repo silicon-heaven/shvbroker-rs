@@ -886,6 +886,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
             Box::pin(futures::stream::empty())
         };
         let mut time_broadcast_interval = time_broadcast_interval.fuse();
+        let mut time_broadcast_error = false;
 
         loop {
             use socketcan::id::FdFlags;
@@ -976,9 +977,18 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                         .map_err(to_string)
                         .and_then(|d| u64::try_from(d.as_millis()).map_err(to_string))
                     {
-                        Ok(ms) => ms,
+                        Ok(ms) => {
+                            if time_broadcast_error {
+                                info!("System time has been fixed, resuming CAN time broadcast on {can_iface}");
+                                time_broadcast_error = false;
+                            }
+                            ms
+                        }
                         Err(err) => {
-                            error!("Invalid system time, CAN time broadcast will not be sent: {err}");
+                            if !time_broadcast_error {
+                                error!("Invalid system time, CAN time broadcast will not be sent on {can_iface}: {err}");
+                                time_broadcast_error = true;
+                            }
                             continue
                         }
                     };
