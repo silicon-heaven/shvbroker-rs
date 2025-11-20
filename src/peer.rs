@@ -505,7 +505,8 @@ pub(crate) async fn server_peer_loop(
                 }
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
-                        peer_log!(debug, "Broker to Peer channel closed: {e}");
+                        // Broker should always disconnect us via DisconnectByBroker.
+                        peer_log!(error, "BrokerToPeer channel closed unexpectedly: {e}");
                         drop(frames_tx);
                         frame_writer_task.await.ok();
                         break 'session_loop;
@@ -515,10 +516,14 @@ pub(crate) async fn server_peer_loop(
                             BrokerToPeerMessage::PasswordSha1(_) => {
                                 panic!("PasswordSha1 cannot be received here")
                             }
-                            BrokerToPeerMessage::DisconnectByBroker => {
+                            BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
+                                if let Some(reason) = reason {
+                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker", Some(reason.into())).to_frame().unwrap())?
+                                }
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
+                                Timer::after(Duration::from_secs(1)).await;
                                 break 'session_loop;
                             }
                             BrokerToPeerMessage::SendFrame(frame) => {
@@ -1206,8 +1211,8 @@ async fn broker_as_client_peer_loop(
                         BrokerToPeerMessage::PasswordSha1(_) => {
                             panic!("PasswordSha1 cannot be received here")
                         }
-                        BrokerToPeerMessage::DisconnectByBroker => {
-                            info!("Disconnected by parent broker, client ID: {peer_id}");
+                        BrokerToPeerMessage::DisconnectByBroker {reason} => {
+                            info!("Disconnected by parent broker, client ID: {peer_id}, reason: {reason:?}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
