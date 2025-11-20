@@ -1789,13 +1789,21 @@ impl BrokerImpl {
                 debug!("Peer gone, id: {peer_id}.");
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
+                    let mut lsmod_path = mount_point.as_ref();
+                    let mut lsmod_value = "";
+                    while !mount_point.is_empty() {
+                        (lsmod_path, lsmod_value) = split_last_fragment(lsmod_path);
+                        if state_reader(&self.state).mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
+                            break;
+                        }
+                    }
+
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
-                    let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(
-                        shv_path,
+                        lsmod_path,
                         SIG_LSMOD,
                         METH_LS,
-                        Some(Map::from([(dir.to_string(), false.into())]).into()),
+                        Some(Map::from([(lsmod_value.to_string(), false.into())]).into()),
                     );
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
