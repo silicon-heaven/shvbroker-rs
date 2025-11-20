@@ -1221,13 +1221,13 @@ pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard
     state.write().unwrap()
 }
 
-fn split_last_fragment(mount_point: &str) -> shvrpc::Result<(&str, &str)> {
+fn split_last_fragment(mount_point: &str) -> (&str, &str) {
     if let Some(ix) = mount_point.rfind('/') {
         let dir = &mount_point[ix + 1..];
         let prefix = &mount_point[..ix];
-        Ok((prefix, dir))
+        (prefix, dir)
     } else {
-        Ok(("", mount_point))
+        ("", mount_point)
     }
 }
 
@@ -1773,7 +1773,7 @@ impl BrokerImpl {
                 state_writer(&self.state).add_peer(peer_id, peer_kind, sender)?;
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
-                    let (shv_path, dir) = split_last_fragment(&mount_point)?;
+                    let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(
                         shv_path,
                         SIG_LSMOD,
@@ -1790,7 +1790,7 @@ impl BrokerImpl {
                 let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
-                    let (shv_path, dir) = split_last_fragment(&mount_point)?;
+                    let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(
                         shv_path,
                         SIG_LSMOD,
