@@ -154,9 +154,8 @@ pub(crate) async fn server_peer_loop(
 
     peer_log!(debug, "entering peer loop");
 
-    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
-
     'session_loop: loop {
+        let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
         let mut device_options = RpcValue::null();
         let mut idle_watchdog_timeout = Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT);
         let mut user;
@@ -419,7 +418,7 @@ pub(crate) async fn server_peer_loop(
             BrokerCommand::NewPeer {
                 peer_id,
                 peer_kind,
-                sender: peer_writer.clone()
+                sender: peer_writer
             }).await?;
 
         let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
