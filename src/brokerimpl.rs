@@ -18,7 +18,7 @@ use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{Map, MetaMap, RpcValue, rpcvalue};
+use shvproto::{rpcvalue, Map, MetaMap, RpcValue, Value};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -1983,7 +1983,13 @@ impl BrokerImpl {
                 match resp.response() {
                     Ok(val) => {
                         match val {
-                            Response::Success(rpc_value) => Ok(rpc_value.as_bool()),
+                            Response::Success(rpc_value) => match rpc_value.value {
+                                // `false` or `null` means that the method doesn't exist, any other
+                                // value means that it exists.
+                                // https://silicon-heaven.github.io/shv-doc/rpcmethods/discovery.html#dir
+                                Value::Bool(false) | Value::Null => Ok(false),
+                                _ => Ok(true),
+                            },
                             Response::Delay(_) => Err("Delay messages are not supported in SHV API version discovery.".into()),
                         }
                     }
