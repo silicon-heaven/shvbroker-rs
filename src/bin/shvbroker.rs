@@ -18,7 +18,7 @@ struct CliOpts {
     /// Print current config to stdout
     #[arg(long)]
     print_config: bool,
-    /// RW directory location, where access database will be stored
+    /// Runtime data directory, for storing the access database
     #[arg(short, long)]
     data_directory: Option<String>,
     /// Enable saving runtime data to an SQL database
@@ -39,7 +39,8 @@ struct CliOpts {
     /// Disable SHV2 compatibility mode, takes precedence over --shv2
     #[arg(long = "no-shv2")]
     no_shv2_compatibility: bool,
-    /// Verbose mode (module, .)
+    /// Specify log level for modules, `.` is the default log level (.=<verbosity>,<module>=<verbosity>,...),
+    /// E: error, W: warn, I: info, D: debug, O: off
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
 }
