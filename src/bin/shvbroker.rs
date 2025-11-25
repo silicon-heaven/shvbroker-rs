@@ -23,10 +23,16 @@ struct CliOpts {
     data_directory: Option<String>,
     /// Enable saving runtime data to an SQL database
     #[arg(short = 'b', long)]
-    use_access_db: Option<bool>,
+    use_access_db: bool,
+    /// Disable saving runtime data to an SQL database, takes precedence over --use-access-db
+    #[arg(long)]
+    no_use_access_db: bool,
     /// Enable broker tunneling feature
     #[arg(long)]
-    tunneling: Option<bool>,
+    tunneling: bool,
+    /// Disable broker tunneling feature, takes precedence over --tunneling
+    #[arg(long)]
+    no_tunneling: bool,
     /// SHV2 compatibility mode
     #[arg(long = "shv2")]
     shv2_compatibility: bool,
@@ -86,15 +92,12 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if cli_opts.data_directory.is_some() {
         config.data_directory = cli_opts.data_directory;
     }
-    if let Some(use_access_db) = cli_opts.use_access_db {
-        config.use_access_db = use_access_db;
-    }
-    if let Some(tunneling) = cli_opts.tunneling {
-        config.tunnelling.enabled = tunneling;
-    }
-
     config.shv2_compatibility |= cli_opts.shv2_compatibility;
     config.shv2_compatibility &= !cli_opts.no_shv2_compatibility;
+    config.tunnelling.enabled |= cli_opts.tunneling;
+    config.tunnelling.enabled &= !cli_opts.no_tunneling;
+    config.use_access_db |= cli_opts.use_access_db;
+    config.use_access_db &= !cli_opts.no_use_access_db;
 
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
