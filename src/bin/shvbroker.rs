@@ -30,6 +30,9 @@ struct CliOpts {
     /// SHV2 compatibility mode
     #[arg(long = "shv2")]
     shv2_compatibility: bool,
+    /// Disable SHV2 compatibility mode, takes precedence over --shv2
+    #[arg(long = "no-shv2")]
+    no_shv2_compatibility: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -91,6 +94,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     }
 
     config.shv2_compatibility |= cli_opts.shv2_compatibility;
+    config.shv2_compatibility &= !cli_opts.no_shv2_compatibility;
 
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
