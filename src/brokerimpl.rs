@@ -106,7 +106,9 @@ pub enum BrokerCommand {
 pub enum BrokerToPeerMessage {
     PasswordSha1(Option<String>),
     SendFrame(RpcFrame),
-    DisconnectByBroker,
+    DisconnectByBroker {
+        reason: Option<String>,
+    },
 }
 
 const SUBSCRIBE_PATH_API_V2: &str = ".broker/app";
@@ -610,6 +612,12 @@ pub struct BrokerState {
     active_tunnels: BTreeMap<TunnelId, ActiveTunnel>,
     next_tunnel_number: TunnelId,
 }
+
+struct DisconnectPeerReason {
+    msg: String,
+    msg_for_peer: Option<String>,
+}
+
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
     pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
@@ -807,7 +815,8 @@ impl BrokerState {
         peer.subscribe_api = subscribe_api;
         Ok(())
     }
-    fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> shvrpc::Result<()> {
+
+    fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: Sender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
         if self.peers.contains_key(&peer_id) {
             // this might happen when connection to parent broker is restored
             // after parent broker reset
@@ -839,10 +848,11 @@ impl BrokerState {
                 if let Some(device_id) = &device_id {
                     match self.access.mounts.get(device_id) {
                         None => {
-                            return Err(format!(
-                                "Cannot find mount-point for device ID: {device_id}"
-                            )
-                            .into());
+                            let msg = format!("Cannot find mount point for device ID: '{device_id}'");
+                            return Err(DisconnectPeerReason {
+                                msg_for_peer: Some(msg.clone()),
+                                msg,
+                            });
                         }
                         Some(mount) => {
                             let mount_point = mount.mount_point.clone();
@@ -860,11 +870,13 @@ impl BrokerState {
 
         if let Some(mount_point) = effective_mount_point.as_ref() {
             if let Some(mount) = self.mounts.get(mount_point) {
-                sender.close();
-                return Err(format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
-                    Mount::Peer(id) => format!("peer_id({id})"),
-                    Mount::Node => "internal-node".to_string(),
-                }).into());
+                return Err(DisconnectPeerReason {
+                    msg: format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
+                        Mount::Peer(id) => format!("peer_id({id})"),
+                        Mount::Node => "internal-node".to_string(),
+                    }),
+                    msg_for_peer: Some(format!("Can't mount on {mount_point}, because it is already mounted")),
+                });
             }
             info!("Mounting peer: {peer_id} at: {mount_point}");
             self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
@@ -1780,7 +1792,12 @@ impl BrokerImpl {
                 sender,
             } => {
                 debug!("New peer, id: {peer_id}.");
-                state_writer(&self.state).add_peer(peer_id, peer_kind, sender)?;
+                let peer_add_result = state_writer(&self.state).add_peer(peer_id, peer_kind, sender.clone());
+                if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
+                    sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer}).await?;
+                    return Err(msg.into());
+                };
+
                 let mount_point = state_reader(&self.state).mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
