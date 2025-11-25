@@ -103,6 +103,11 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         }
         let create_db = !Path::new(&config_file).exists();
         let sql_connection = Connection::open(&config_file)?;
+
+        if sql_connection.is_readonly(sql_connection.db_name(0)?.as_str())? {
+            return Err("Couldn't open SQLite database as read-write".into());
+        }
+
         let config = if create_db {
             info!("Creating SQLite access db: {}", config_file.to_str().expect("Invalid path"));
             create_access_sqlite(&sql_connection, &config.access)?;
