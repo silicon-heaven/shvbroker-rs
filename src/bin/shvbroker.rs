@@ -29,7 +29,7 @@ struct CliOpts {
     tunneling: Option<bool>,
     /// SHV2 compatibility mode
     #[arg(long = "shv2")]
-    shv2_compatibility: Option<bool>,
+    shv2_compatibility: bool,
     /// Verbose mode (module, .)
     #[arg(short = 'v', long = "verbose")]
     verbose: Option<String>,
@@ -89,9 +89,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if let Some(tunneling) = cli_opts.tunneling {
         config.tunnelling.enabled = tunneling;
     }
-    if let Some(shv2_compatibility) = cli_opts.shv2_compatibility {
-        config.shv2_compatibility = shv2_compatibility;
-    }
+
+    config.shv2_compatibility |= cli_opts.shv2_compatibility;
+
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
