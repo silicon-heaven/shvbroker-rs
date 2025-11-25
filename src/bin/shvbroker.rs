@@ -21,7 +21,7 @@ struct CliOpts {
     /// RW directory location, where access database will be stored
     #[arg(short, long)]
     data_directory: Option<String>,
-    /// Allow writing to access database
+    /// Enable saving runtime data to an SQL database
     #[arg(short = 'b', long)]
     use_access_db: Option<bool>,
     /// Enable broker tunneling feature
