@@ -591,9 +591,9 @@ impl ShvNode for BrokerCurrentClientNode {
 
                 let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
                 user.password = crate::config::Password::Sha1(new_password_sha1);
-                state.set_access_user(&user_name, Some(user));
-
-                Ok(ProcessRequestRetval::Retval(true.into()))
+                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                state.set_access_user(response_meta, &user_name, Some(user));
+                Ok(ProcessRequestRetval::RetvalDeferred)
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
@@ -723,8 +723,9 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.state).set_access_mount(key.as_str(), mount);
-                Ok(ProcessRequestRetval::Retval(().into()))
+                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                state_writer(&ctx.state).set_access_mount(response_meta, key.as_str(), mount);
+                Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -788,8 +789,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                state_writer(&ctx.state).set_access_user(key.as_str(), user);
-                Ok(ProcessRequestRetval::Retval(().into()))
+                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                state_writer(&ctx.state).set_access_user(response_meta, key.as_str(), user);
+                Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -849,7 +851,9 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                state_writer(&ctx.state).set_access_role(key.as_str(), role).map(|_| ProcessRequestRetval::Retval(().into()))
+                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                state_writer(&ctx.state).set_access_role(response_meta, key.as_str(), role)?;
+                Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
