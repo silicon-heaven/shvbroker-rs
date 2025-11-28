@@ -97,6 +97,7 @@ pub enum BrokerCommand {
     },
     ExecSql {
         query: String,
+        response_sender: Sender<Result<(), String>>,
     },
     TunnelActive(TunnelId),
     TunnelClosed(TunnelId),
@@ -1032,7 +1033,7 @@ impl BrokerState {
     pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {
         self.access.mounts.get(id)
     }
-    pub(crate) fn set_access_mount(&mut self, id: &str, mount: Option<crate::config::Mount>) {
+    pub(crate) fn set_access_mount(&mut self, response_meta: MetaMap, id: &str, mount: Option<crate::config::Mount>) {
         let sqlop = if let Some(mount) = mount {
             let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
                 error!("Generate SQL statement error: {e}");
@@ -1049,12 +1050,12 @@ impl BrokerState {
             self.access.mounts.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql("mounts", sqlop);
+        self.uddate_sql(response_meta, "mounts", sqlop);
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
     }
-    pub(crate) fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>) {
+    pub(crate) fn set_access_user(&mut self, response_meta: MetaMap, id: &str, user: Option<crate::config::User>) {
         let sqlop = if let Some(user) = user {
             let json = serde_json::to_string(&user).unwrap_or_else(|e| {
                 error!("Generate SQL statement error: {e}");
@@ -1071,12 +1072,12 @@ impl BrokerState {
             self.access.users.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql("users", sqlop);
+        self.uddate_sql(response_meta, "users", sqlop);
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
     }
-    pub(crate) fn set_access_role(&mut self, role_name: &str, role: Option<Role>) -> shvrpc::Result<()> {
+    pub(crate) fn set_access_role(&mut self, response_meta: MetaMap, role_name: &str, role: Option<Role>) -> shvrpc::Result<()> {
         let sqlop = if let Some(role) = role {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             let json = serde_json::to_string(&role).expect("JSON should be generated");
@@ -1093,10 +1094,10 @@ impl BrokerState {
             self.role_access_rules.remove(role_name);
             UpdateSqlOperation::Delete { id: role_name }
         };
-        self.uddate_sql("roles", sqlop);
+        self.uddate_sql(response_meta, "roles", sqlop);
         Ok(())
     }
-    fn uddate_sql(&self, table: &str, oper: UpdateSqlOperation) {
+    fn uddate_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
             UpdateSqlOperation::Insert { id, json } => {
                 format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
@@ -1109,8 +1110,29 @@ impl BrokerState {
             }
         };
         let sender = self.command_sender.clone();
+        let (sql_response_sender, sql_response_receiver) = unbounded();
         smol::spawn(async move {
-            let _ = sender.send(ExecSql { query }).await;
+            let sender2 = sender.clone();
+            let exec_sql = async move {
+                sender.send(ExecSql { query, response_sender: sql_response_sender }).await.map_err(|e| e.to_string())?;
+                let sql_resp = sql_response_receiver.recv().await.map_err(|e| e.to_string())?;
+                match sql_resp {
+                    Ok(_) => Ok(RpcValue::null()),
+                    Err(err) => Err(format!("Failed to execute SQL query: {}", err)),
+                }
+            };
+            let result = match exec_sql.await {
+                Ok(v) => Ok(v),
+                Err(err) => Err(RpcError::new(RpcErrorCode::MethodCallException, err.to_string())),
+            };
+            let mut meta = response_meta;
+            let Some(peer_id) = meta.pop_caller_id() else {
+                error!("Failed to pop caller ID from metadata");
+                return;
+            };
+            if let Err(e) = sender2.send(BrokerCommand::SendResponse { peer_id, meta, result }).await {
+                error!("Failed to send response: {}", e);
+            }
         })
         .detach();
     }
@@ -1900,14 +1922,15 @@ impl BrokerImpl {
                 )
                 .await?
             }
-            BrokerCommand::ExecSql { query } => {
+            BrokerCommand::ExecSql { query, response_sender } => {
                 if let Some(connection) = &self.sql_connection {
-                    connection.execute(&query, ()).unwrap_or_else(|e| {
-                        error!("SQL exec error: {e}");
-                        0
-                    });
+                    let resp = match connection.execute(&query, ()) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(format!("SQL exec error: {e}")),
+                    };
+                    response_sender.send(resp).await?;
                 } else {
-                    error!("SQL config is disabled, use --use-access-db CLI switch.")
+                    response_sender.send(Err("SQL config is disabled, use --use-access-db CLI switch.".into())).await?;
                 }
             }
             BrokerCommand::TunnelActive(tunnel_id) => {
