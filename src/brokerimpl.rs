@@ -97,7 +97,7 @@ pub enum BrokerCommand {
     },
     ExecSql {
         query: String,
-        response_sender: Sender<Result<(), String>>,
+        response_sender: Sender<Result<usize, String>>,
     },
     TunnelActive(TunnelId),
     TunnelClosed(TunnelId),
@@ -1116,12 +1116,12 @@ impl BrokerState {
                 sender.send(ExecSql { query, response_sender: sql_response_sender }).await.map_err(|e| e.to_string())?;
                 let sql_resp = sql_response_receiver.recv().await.map_err(|e| e.to_string())?;
                 match sql_resp {
-                    Ok(_) => Ok(RpcValue::null()),
+                    Ok(rows_affected) => Ok(rows_affected),
                     Err(err) => Err(format!("Failed to execute SQL query: {}", err)),
                 }
             };
             let result = match exec_sql.await {
-                Ok(v) => Ok(v),
+                Ok(v) => Ok(RpcValue::from(v as i64)),
                 Err(err) => Err(RpcError::new(RpcErrorCode::MethodCallException, err.to_string())),
             };
             let mut meta = response_meta;
@@ -1924,7 +1924,7 @@ impl BrokerImpl {
             BrokerCommand::ExecSql { query, response_sender } => {
                 if let Some(connection) = &self.sql_connection {
                     let resp = match connection.execute(&query, ()) {
-                        Ok(_) => Ok(()),
+                        Ok(rows_affected) => Ok(rows_affected),
                         Err(e) => Err(format!("SQL exec error: {e}")),
                     };
                     response_sender.send(resp).await?;

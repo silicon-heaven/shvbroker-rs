@@ -1,11 +1,9 @@
-use std::fs;
 use std::path::Path;
 use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
-use rusqlite::Connection;
-use shvbroker::{brokerimpl::BrokerImpl, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}};
+use shvbroker::{brokerimpl::BrokerImpl, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -105,26 +103,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     }
     let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
     let (access, sql_connection) = if config.use_access_db {
-        let config_file = Path::new(&data_dir).join("shvbroker.sqlite");
-        if let Some(path) = config_file.parent() {
-            fs::create_dir_all(path)?;
-        }
-        let create_db = !Path::new(&config_file).exists();
-        let sql_connection = Connection::open(&config_file)?;
-
-        if sql_connection.is_readonly(sql_connection.db_name(0)?.as_str())? {
-            return Err("Couldn't open SQLite database as read-write".into());
-        }
-
-        let config = if create_db {
-            info!("Creating SQLite access db: {}", config_file.to_str().expect("Invalid path"));
-            create_access_sqlite(&sql_connection, &config.access)?;
-            config.access.clone()
-        } else {
-            info!("Loading SQLite access db: {}", config_file.to_str().expect("Invalid path"));
-            load_access_sqlite(&sql_connection)?
-        };
-        (config, Some(sql_connection))
+        let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
+        let (sql_connection, access_config) = sql::migrate_sqlite_connection(&sql_config_file, &config.access)?;
+        (access_config, Some(sql_connection))
     } else {
         (config.access.clone(), None)
     };
@@ -146,75 +127,4 @@ fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<
     config.access = access.clone();
     println!("{}", &serde_yaml::to_string(&config)?);
     Ok(())
-}
-
-const TBL_MOUNTS: &str = "mounts";
-const TBL_USERS: &str = "users";
-const TBL_ROLES: &str = "roles";
-fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc::Result<()> {
-
-    for tbl_name in [TBL_MOUNTS, TBL_USERS, TBL_ROLES] {
-        sql_conn.execute(&format!(r#"
-            CREATE TABLE {tbl_name} (
-                id character varying PRIMARY KEY,
-                def character varying
-            );
-        "#), [])?;
-    }
-    for (id, def) in &access.mounts {
-        debug!("Inserting mount: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_MOUNTS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.users {
-        debug!("Inserting user: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_USERS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.roles {
-        debug!("Inserting role: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_ROLES} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    Ok(())
-}
-
-fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
-    let mut access = AccessConfig {
-        users: Default::default(),
-        roles: Default::default(),
-        mounts: Default::default(),
-    };
-
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_USERS}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.users.insert(id, user);
-    }
-
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_ROLES}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.roles.insert(id, user);
-    }
-
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.mounts.insert(id, user);
-    }
-
-    Ok(access)
 }
