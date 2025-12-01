@@ -2,11 +2,12 @@ pub mod config;
 pub mod shvnode;
 pub mod brokerimpl;
 mod peer;
+mod tunnelnode;
+mod serial;
+pub mod sql;
 
 #[cfg(test)]
 mod test;
-mod tunnelnode;
-mod serial;
 
 pub mod spawn {
     use log::error;

@@ -1,6 +1,9 @@
+use std::path::Path;
+
 use crate::brokerimpl::BrokerImpl;
+use crate::sql;
+
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
-use rusqlite::Connection;
 use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
@@ -67,10 +70,10 @@ fn test_broker_loop_as_user() {
     smol::block_on(test_broker_loop_as_user_async())
 }
 async fn test_broker_loop_as_user_async() {
-    let config = SharedBrokerConfig::new(BrokerConfig::default());
-    let access = config.access.clone();
-    let sql = Connection::open_in_memory().unwrap();
-    let broker = BrokerImpl::new(config, access, Some(sql));
+    let config = BrokerConfig { use_access_db: true, ..Default::default() };
+    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let config = SharedBrokerConfig::new(config);
+    let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -136,7 +139,7 @@ async fn test_broker_loop_as_user_async() {
         // change password success
         let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
         let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await.unwrap();
-        assert!(resp.as_bool());
+        assert_eq!(resp.as_int(), 1);
 
         // change password wrong password
         let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
@@ -152,10 +155,10 @@ fn test_broker_loop_as_admin() {
     smol::block_on(test_broker_loop_as_admin_async())
 }
 async fn test_broker_loop_as_admin_async() {
-    let config = SharedBrokerConfig::new(BrokerConfig::default());
-    let access = config.access.clone();
-    let sql = Connection::open_in_memory().unwrap();
-    let broker = BrokerImpl::new(config, access, Some(sql));
+    let config = BrokerConfig { use_access_db: true, ..Default::default() };
+    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let config = SharedBrokerConfig::new(config);
+    let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
