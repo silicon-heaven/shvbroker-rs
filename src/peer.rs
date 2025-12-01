@@ -404,7 +404,7 @@ pub(crate) async fn server_peer_loop(
         }
         let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
         let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
-        peer_log!(info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}')");
+        peer_log!(info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?})");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),
@@ -466,32 +466,35 @@ pub(crate) async fn server_peer_loop(
                             broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
                         }
                         Err(err) => {
-                            let (meta, rpc_error) = match &err {
+                            let meta_rpc_error = match &err {
                                 ReceiveFrameError::Timeout(Some(meta)) if meta.is_request() => {
-                                    (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Request receive timeout"))
+                                    Some((meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Request receive timeout")))
                                 }
                                 ReceiveFrameError::Timeout(Some(meta)) if meta.is_response() => {
-                                    (meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Response receive timeout"))
+                                    Some((meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Response receive timeout")))
+                                }
+                                ReceiveFrameError::Timeout(None) => {
+                                    peer_log!(info, "Peer receive frame idle timeout expired after {idle_watchdog_timeout:?}");
+                                    None
                                 }
                                 ReceiveFrameError::FrameTooLarge(reason, Some(meta)) => {
-                                    (meta, RpcError::new(RpcErrorCode::MethodCallException, reason))
+                                    Some((meta, RpcError::new(RpcErrorCode::MethodCallException, reason)))
                                 }
                                 _ => {
-                                    peer_log!(debug, "Peer receive frame error: {err}");
-                                    drop(frames_tx);
-                                    frame_writer_task.await.ok();
-                                    break 'session_loop;
+                                    None
                                 }
                             };
-                            if meta.is_request() && let Ok(mut rpc_msg) = RpcMessage::prepare_response_from_meta(meta) {
-                                // Send an error response back to the caller
-                                rpc_msg.set_error(rpc_error);
-                                frames_tx.unbounded_send(rpc_msg.to_frame()?)?;
-                            } else if meta.is_response() {
-                                // Forward the error response to the request caller
-                                let mut rpc_msg = RpcMessage::from_meta(meta.clone());
-                                rpc_msg.set_error(rpc_error);
-                                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
+                            if let Some((meta, rpc_error)) = meta_rpc_error {
+                                if meta.is_request() && let Ok(mut rpc_msg) = RpcMessage::prepare_response_from_meta(meta) {
+                                    // Send an error response back to the caller
+                                    rpc_msg.set_error(rpc_error);
+                                    frames_tx.unbounded_send(rpc_msg.to_frame()?)?;
+                                } else if meta.is_response() {
+                                    // Forward the error response to the request caller
+                                    let mut rpc_msg = RpcMessage::from_meta(meta.clone());
+                                    rpc_msg.set_error(rpc_error);
+                                    broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
+                                }
                             } else {
                                 peer_log!(debug, "Peer receive frame error: {err}");
                                 drop(frames_tx);
