@@ -1112,8 +1112,7 @@ impl BrokerState {
         let sender = self.command_sender.clone();
         let (sql_response_sender, sql_response_receiver) = unbounded();
         smol::spawn(async move {
-            let sender2 = sender.clone();
-            let exec_sql = async move {
+            let exec_sql = async {
                 sender.send(ExecSql { query, response_sender: sql_response_sender }).await.map_err(|e| e.to_string())?;
                 let sql_resp = sql_response_receiver.recv().await.map_err(|e| e.to_string())?;
                 match sql_resp {
@@ -1130,7 +1129,7 @@ impl BrokerState {
                 error!("Failed to pop caller ID from metadata");
                 return;
             };
-            if let Err(e) = sender2.send(BrokerCommand::SendResponse { peer_id, meta, result }).await {
+            if let Err(e) = sender.send(BrokerCommand::SendResponse { peer_id, meta, result }).await {
                 error!("Failed to send response: {}", e);
             }
         })
