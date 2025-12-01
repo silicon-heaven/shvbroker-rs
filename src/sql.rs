@@ -10,7 +10,8 @@ const TBL_USERS: &str = "users";
 const TBL_ROLES: &str = "roles";
 
 pub fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Connection, AccessConfig)> {
-let (sql_connection, db_is_empty) = if sql_config_file == ":memory:" {
+    info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
+    let (sql_connection, db_is_empty) = if sql_config_file == ":memory:" {
         (Connection::open_in_memory()?, true)
     } else {
         if let Some(path) = sql_config_file.parent() {
@@ -18,7 +19,7 @@ let (sql_connection, db_is_empty) = if sql_config_file == ":memory:" {
         }
         let db_file_exists = Path::new(&sql_config_file).exists();
         if !db_file_exists {
-            info!("Creating SQLite access db file: {}", sql_config_file.to_str().expect("Invalid path"));
+            info!("Creating new db file: {}", sql_config_file.to_str().expect("Valid path"));
         }
         let sql_connection = Connection::open(sql_config_file)?;
 
