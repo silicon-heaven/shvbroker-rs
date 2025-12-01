@@ -616,7 +616,7 @@ impl ShvNode for BrokerCurrentClientNode {
                         ctx.peer_id,
                         &shv_path,
                         &method,
-                        frame.tag(shvrpc::rpcmessage::Tag::AccessLevel as _).map(RpcValue::as_i32),
+                        None,
                         frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
                     )
                     .map(|(access_level, _)| access_level.unwrap_or_default())
