@@ -1317,7 +1317,8 @@ async fn forward_subscriptions_task(
                 let ri = &subscription.ri;
                 shvproto::make_map!(
                     "path" => shv_path_glob_to_prefix(ri.path()),
-                    "method" => ri.method(),
+                    "source" => if ri.method() == "*" { "" } else { ri.method() },
+                    "method" => ri.signal().unwrap_or_default(),
                     "signal" => ri.signal().unwrap_or_default(),
                 ).into()
             }
