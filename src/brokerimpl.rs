@@ -1113,17 +1113,19 @@ impl BrokerState {
         let (sql_response_sender, sql_response_receiver) = unbounded();
         smol::spawn(async move {
             let exec_sql = async {
-                sender.send(ExecSql { query, response_sender: sql_response_sender }).await.map_err(|e| e.to_string())?;
-                let sql_resp = sql_response_receiver.recv().await.map_err(|e| e.to_string())?;
-                match sql_resp {
-                    Ok(rows_affected) => Ok(rows_affected),
-                    Err(err) => Err(format!("Failed to execute SQL query: {}", err)),
-                }
+                sender
+                    .send(ExecSql { query, response_sender: sql_response_sender })
+                    .await
+                    .map_err(|send_err|send_err.to_string())?;
+                sql_response_receiver
+                    .recv()
+                    .await
+                    .map_err(|recv_err| recv_err.to_string())?
+                    .map_err(|sql_err| format!("Failed to execute SQL query: {sql_err}"))
             };
-            let result = match exec_sql.await {
-                Ok(v) => Ok(RpcValue::from(v as i64)),
-                Err(err) => Err(RpcError::new(RpcErrorCode::MethodCallException, err.to_string())),
-            };
+            let result = exec_sql.await
+                .map(|v| RpcValue::from(v as i64))
+                .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()));
             let mut meta = response_meta;
             let Some(peer_id) = meta.pop_caller_id() else {
                 error!("Failed to pop caller ID from metadata");
@@ -1923,10 +1925,9 @@ impl BrokerImpl {
             }
             BrokerCommand::ExecSql { query, response_sender } => {
                 if let Some(connection) = &self.sql_connection {
-                    let resp = match connection.execute(&query, ()) {
-                        Ok(rows_affected) => Ok(rows_affected),
-                        Err(e) => Err(format!("SQL exec error: {e}")),
-                    };
+                    let resp = connection
+                        .execute(&query, ())
+                        .map_err(|sql_err| format!("SQL exec error: {sql_err}"));
                     response_sender.send(resp).await?;
                 } else {
                     response_sender.send(Err("SQL config is disabled, use --use-access-db CLI switch.".into())).await?;
