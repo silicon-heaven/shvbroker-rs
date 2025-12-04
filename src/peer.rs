@@ -276,7 +276,7 @@ pub(crate) async fn server_peer_loop(
                                 .json::<MeResponse>()
                                 .await?;
 
-                            user = me_response.mail;
+                            user = format!("azure:{email}", email = me_response.mail);
 
                             #[derive(serde::Deserialize)]
                             struct TransitiveMemberOfValue {
