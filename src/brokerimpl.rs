@@ -393,8 +393,7 @@ async fn server_accept_loop(
         None
     };
 
-    let mut incoming = listener.incoming();
-    while let Some(stream) = incoming.next().await {
+    while let Some(stream) = listener.incoming().next().await {
         let stream = match stream {
             Ok(stream) => stream,
             Err(err) => {
@@ -775,8 +774,7 @@ impl BrokerState {
             enqueue(&mut queue, role);
         }
         let mut flatten_roles = Vec::new();
-        while !queue.is_empty() {
-            let role_name = queue.pop_front().unwrap();
+        while let Some(role_name) = queue.pop_front() {
             if let Some(role) = self.access.roles.get(&role_name) {
                 for role in role.roles.iter() {
                     enqueue(&mut queue, role);
@@ -1050,7 +1048,7 @@ impl BrokerState {
             self.access.mounts.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "mounts", sqlop);
+        self.update_sql(response_meta, "mounts", sqlop);
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
@@ -1072,7 +1070,7 @@ impl BrokerState {
             self.access.users.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "users", sqlop);
+        self.update_sql(response_meta, "users", sqlop);
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
@@ -1094,10 +1092,10 @@ impl BrokerState {
             self.role_access_rules.remove(role_name);
             UpdateSqlOperation::Delete { id: role_name }
         };
-        self.uddate_sql(response_meta, "roles", sqlop);
+        self.update_sql(response_meta, "roles", sqlop);
         Ok(())
     }
-    fn uddate_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
+    fn update_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
             UpdateSqlOperation::Insert { id, json } => {
                 format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
@@ -1761,15 +1759,14 @@ impl BrokerImpl {
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;
-        let mut pending_call_ix = None;
-        for (ix, pc) in self.pending_rpc_calls.iter().enumerate() {
-            let request_id = pc.request_meta.request_id().unwrap_or_default();
-            if request_id == rqid && pc.peer_id == client_id {
-                pending_call_ix = Some(ix);
-                break;
-            }
-        }
-        if let Some(ix) = pending_call_ix {
+        let pending_call_ix = self.pending_rpc_calls
+            .iter()
+            .enumerate()
+            .find(|(_, pc)| {
+                let request_id = pc.request_meta.request_id().unwrap_or_default();
+                request_id == rqid && pc.peer_id == client_id
+            });
+        if let Some((ix, _)) = pending_call_ix {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.send(response_frame).await?;
         }

@@ -215,8 +215,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
             }
             "set" [IsSetter, Write, "Null", "String"] (param: String) => {
                 if *app_state.text.read().await != param {
-                    let mut writer = app_state.text.write().await;
-                    *writer = param.clone();
+                    *app_state.text.write().await = param.clone();
                     let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
                     let _ = client_cmd_tx.send_message(sigchng);
                 }

@@ -1,4 +1,4 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
 
 use log::{debug, info};
 use rusqlite::Connection;
@@ -45,69 +45,51 @@ fn init_access_db(sql_connection: &Connection, db_is_empty: bool, access: &Acces
 }
 
 fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc::Result<()> {
-    info!("Creating SQLite access db");
-    for tbl_name in [TBL_MOUNTS, TBL_USERS, TBL_ROLES] {
+    fn save_table<TableElementType: serde::Serialize>(sql_conn: &rusqlite::Connection, tbl_name: &str, items: &BTreeMap<String, TableElementType>) -> shvrpc::Result<()> {
         sql_conn.execute(&format!(r#"
             CREATE TABLE {tbl_name} (
                 id character varying PRIMARY KEY,
                 def character varying
             );
         "#), [])?;
+        let query = format!(r#"INSERT INTO {tbl_name} (id, def) VALUES (?1, ?2);"#);
+        let mut stmt = sql_conn.prepare(&query)?;
+        for (id, def) in items {
+            debug!("Inserting {id} into {tbl_name}");
+            stmt.execute((id, serde_json::to_string(def)?))?;
+        }
+        Ok(())
     }
-    for (id, def) in &access.mounts {
-        debug!("Inserting mount: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_MOUNTS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.users {
-        debug!("Inserting user: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_USERS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.roles {
-        debug!("Inserting role: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_ROLES} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
+
+    info!("Creating SQLite access db");
+    save_table(sql_conn, TBL_MOUNTS, &access.mounts)?;
+    save_table(sql_conn, TBL_USERS, &access.users)?;
+    save_table(sql_conn, TBL_ROLES, &access.roles)?;
+
     Ok(())
 }
 
 fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
-    let mut access = AccessConfig {
-        users: Default::default(),
-        roles: Default::default(),
-        mounts: Default::default(),
-    };
+    fn load_table<TableElementType: for <'a> serde::Deserialize<'a>>(sql_conn: &Connection, table_name: &str) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
+        let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {table_name}"))?;
+        let rows = stmt.query([])?;
+        let first_two_columns = rows.mapped(|row| {
+            let id: String = row.get(0)?;
+            let def: String = row.get(1)?;
+            Ok((id, def))
+        }).collect::<Result<Vec<_>,_>>()?;
 
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_USERS}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.users.insert(id, user);
+        let parsed_rows = first_two_columns
+            .into_iter()
+            .map(|(id, def)| serde_json::from_str(&def).map(|parsed| (id, parsed)))
+            .collect::<Result<BTreeMap<_,_>,_>>()?;
+
+        Ok(parsed_rows)
     }
 
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_ROLES}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.roles.insert(id, user);
-    }
-
-    let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.mounts.insert(id, user);
-    }
-
-    Ok(access)
+    Ok(AccessConfig {
+        users: load_table(sql_conn, TBL_USERS)?,
+        roles: load_table(sql_conn, TBL_ROLES)?,
+        mounts: load_table(sql_conn, TBL_MOUNTS)?,
+    })
 }

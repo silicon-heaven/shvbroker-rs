@@ -39,62 +39,36 @@ pub enum DirParam {
 impl From<Option<&RpcValue>> for DirParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    DirParam::MethodExists(rpcval.as_str().into())
-                } else if rpcval.as_bool() {
-                    DirParam::Full
-                } else {
-                    DirParam::Brief
-                }
-            }
-            None => {
-                DirParam::Brief
-            }
+            Some(rpcval) if rpcval.is_string() => DirParam::MethodExists(rpcval.as_str().into()),
+            Some(rpcval) if rpcval.as_bool() => DirParam::Full,
+            Some(_) | None => DirParam::Brief,
         }
     }
 }
 
 pub fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
-    if let DirParam::MethodExists(ref method_name) = param {
-        return methods.any(|mm| mm.name == method_name).into()
-    }
-    let mut lst = rpcvalue::List::new();
-    for mm in methods {
-        match param {
-            DirParam::Brief => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::IMap));
-            }
-            DirParam::Full => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::Map));
-            }
-            _ => {}
-        }
-    }
-    lst.into()
+    let serializer = match param {
+        DirParam::MethodExists(method_name) => return methods.any(|mm| mm.name == method_name).into(),
+        DirParam::Brief => metamethod::DirFormat::IMap,
+        DirParam::Full => metamethod::DirFormat::Map,
+    };
+
+    methods.map(|mm| mm.to_rpcvalue(serializer)).collect::<Vec<_>>().into()
 }
 
 pub enum LsParam {
     List,
     Exists(String),
 }
+
 impl From<Option<&RpcValue>> for LsParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    LsParam::Exists(rpcval.as_str().into())
-                } else {
-                    LsParam::List
-                }
-            }
-            None => {
-                LsParam::List
-            }
+            Some(rpcval) if rpcval.is_string() => LsParam::Exists(rpcval.as_str().into()),
+            Some(_) | None => LsParam::List
         }
     }
 }
-
 
 pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -> Option<Result<RpcValue, RpcError>> {
     let method = frame.method().unwrap_or_default();
