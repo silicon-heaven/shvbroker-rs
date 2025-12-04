@@ -1050,7 +1050,7 @@ impl BrokerState {
             self.access.mounts.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "mounts", sqlop);
+        self.update_sql(response_meta, "mounts", sqlop);
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
@@ -1072,7 +1072,7 @@ impl BrokerState {
             self.access.users.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "users", sqlop);
+        self.update_sql(response_meta, "users", sqlop);
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
@@ -1094,10 +1094,10 @@ impl BrokerState {
             self.role_access_rules.remove(role_name);
             UpdateSqlOperation::Delete { id: role_name }
         };
-        self.uddate_sql(response_meta, "roles", sqlop);
+        self.update_sql(response_meta, "roles", sqlop);
         Ok(())
     }
-    fn uddate_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
+    fn update_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
             UpdateSqlOperation::Insert { id, json } => {
                 format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
