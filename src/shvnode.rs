@@ -60,23 +60,15 @@ pub enum LsParam {
     List,
     Exists(String),
 }
+
 impl From<Option<&RpcValue>> for LsParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    LsParam::Exists(rpcval.as_str().into())
-                } else {
-                    LsParam::List
-                }
-            }
-            None => {
-                LsParam::List
-            }
+            Some(rpcval) if rpcval.is_string() => LsParam::Exists(rpcval.as_str().into()),
+            Some(_) | None => LsParam::List
         }
     }
 }
-
 
 pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -> Option<Result<RpcValue, RpcError>> {
     let method = frame.method().unwrap_or_default();
