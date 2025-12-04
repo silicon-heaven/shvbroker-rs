@@ -48,16 +48,17 @@ pub fn bytes_from_output(output: Output) -> shvrpc::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 pub fn text_from_output(output: Output) -> shvrpc::Result<String> {
-    let bytes = bytes_from_output(output)?;
-    Ok(String::from_utf8(bytes)?)
+    bytes_from_output(output)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(Into::into))
 }
 pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
-    let bytes = text_from_output(output)?;
-    let mut values = Vec::new();
-    for cpon in bytes.split('\n').filter(|line| !line.is_empty()) {
-        values.push(cpon.trim().to_owned());
-    }
-    Ok(values)
+    text_from_output(output)
+        .map(|text| text
+            .split('\n')
+            .filter(|line| !line.is_empty())
+            .map(|cpon| cpon.trim().to_owned())
+            .collect::<Vec<_>>()
+        )
 }
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
