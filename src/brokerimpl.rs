@@ -775,8 +775,7 @@ impl BrokerState {
             enqueue(&mut queue, role);
         }
         let mut flatten_roles = Vec::new();
-        while !queue.is_empty() {
-            let role_name = queue.pop_front().unwrap();
+        while let Some(role_name) = queue.pop_front() {
             if let Some(role) = self.access.roles.get(&role_name) {
                 for role in role.roles.iter() {
                     enqueue(&mut queue, role);
