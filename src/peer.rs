@@ -165,7 +165,7 @@ pub(crate) async fn server_peer_loop(
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
             } else {
-                idle_watchdog_timeout
+                Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT)
             };
             let frame = match frame_reader.receive_frame().or(frame_read_timeout(login_phase_timeout)).await {
                 Ok(frame) => frame,
