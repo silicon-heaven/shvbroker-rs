@@ -393,8 +393,7 @@ async fn server_accept_loop(
         None
     };
 
-    let mut incoming = listener.incoming();
-    while let Some(stream) = incoming.next().await {
+    while let Some(stream) = listener.incoming().next().await {
         let stream = match stream {
             Ok(stream) => stream,
             Err(err) => {
