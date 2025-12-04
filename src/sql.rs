@@ -96,8 +96,8 @@ fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
         let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.roles.insert(id, user);
+        let role = serde_json::from_str(&def)?;
+        access.roles.insert(id, role);
     }
 
     let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {TBL_MOUNTS}"))?;
@@ -105,8 +105,8 @@ fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
         let def: String = row.get(1)?;
-        let user = serde_json::from_str(&def)?;
-        access.mounts.insert(id, user);
+        let mount = serde_json::from_str(&def)?;
+        access.mounts.insert(id, mount);
     }
 
     Ok(access)
