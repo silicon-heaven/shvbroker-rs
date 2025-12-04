@@ -45,33 +45,27 @@ fn init_access_db(sql_connection: &Connection, db_is_empty: bool, access: &Acces
 }
 
 fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc::Result<()> {
-    info!("Creating SQLite access db");
-    for tbl_name in [TBL_MOUNTS, TBL_USERS, TBL_ROLES] {
+    fn save_table<TableElementType: serde::Serialize>(sql_conn: &rusqlite::Connection, tbl_name: &str, items: &BTreeMap<String, TableElementType>) -> shvrpc::Result<()> {
         sql_conn.execute(&format!(r#"
             CREATE TABLE {tbl_name} (
                 id character varying PRIMARY KEY,
                 def character varying
             );
         "#), [])?;
+        let query = format!(r#"INSERT INTO {tbl_name} (id, def) VALUES (?1, ?2);"#);
+        let mut stmt = sql_conn.prepare(&query)?;
+        for (id, def) in items {
+            debug!("Inserting {id} into {tbl_name}");
+            stmt.execute((id, serde_json::to_string(def)?))?;
+        }
+        Ok(())
     }
-    for (id, def) in &access.mounts {
-        debug!("Inserting mount: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_MOUNTS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.users {
-        debug!("Inserting user: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_USERS} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
-    for (id, def) in &access.roles {
-        debug!("Inserting role: {id}");
-        sql_conn.execute(&format!(r#"
-            INSERT INTO {TBL_ROLES} (id, def) VALUES (?1, ?2);
-        "#), (&id, serde_json::to_string(&def)?))?;
-    }
+
+    info!("Creating SQLite access db");
+    save_table(sql_conn, TBL_MOUNTS, &access.mounts)?;
+    save_table(sql_conn, TBL_USERS, &access.users)?;
+    save_table(sql_conn, TBL_ROLES, &access.roles)?;
+
     Ok(())
 }
 
