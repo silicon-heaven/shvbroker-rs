@@ -156,16 +156,13 @@ pub(crate) async fn server_peer_loop(
 
     'session_loop: loop {
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
-        let mut device_options = RpcValue::null();
-        let mut idle_watchdog_timeout = Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT);
-        let mut user;
         let mut nonce = None;
-        'login_loop: loop {
+        let (user, options) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
             } else {
-                idle_watchdog_timeout
+                Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT)
             };
             let frame = match frame_reader.receive_frame().or(frame_read_timeout(login_phase_timeout)).await {
                 Ok(frame) => frame,
@@ -276,8 +273,6 @@ pub(crate) async fn server_peer_loop(
                                 .json::<MeResponse>()
                                 .await?;
 
-                            user = format!("azure:{email}", email = me_response.mail);
-
                             #[derive(serde::Deserialize)]
                             struct TransitiveMemberOfValue {
                                 #[serde(rename = "@odata.type")]
@@ -322,21 +317,14 @@ pub(crate) async fn server_peer_loop(
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
-                            if let Some(options) = params.get("options") {
-                                if let Some(idle_timeout)  = options.as_map().get("idleWatchDogTimeOut").map(RpcValue::as_u64) && idle_timeout > 0 {
-                                    idle_watchdog_timeout = Duration::from_secs(idle_timeout);
-                                }
-                                if let Some(device) = options.as_map().get("device") {
-                                    device_options = device.clone();
-                                }
-                            }
+                            let user = format!("azure:{email}", email = me_response.mail);
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
-                            break 'login_loop;
+                            break 'login_loop (user, params.get("options").cloned());
                         }
                     }
 
-                    user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
+                    let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
                     broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await?;
                     match peer_reader.recv().await? {
@@ -377,15 +365,7 @@ pub(crate) async fn server_peer_loop(
                                 let mut result = shvproto::Map::new();
                                 result.insert("clientId".into(), RpcValue::from(peer_id));
                                 frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
-                                if let Some(options) = params.get("options") {
-                                    if let Some(idle_timeout)  = options.as_map().get("idleWatchDogTimeOut").map(RpcValue::as_u64) && idle_timeout > 0 {
-                                        idle_watchdog_timeout = Duration::from_secs(idle_timeout);
-                                    }
-                                    if let Some(device) = options.as_map().get("device") {
-                                        device_options = device.clone();
-                                    }
-                                }
-                                break 'login_loop;
+                                break 'login_loop (user, params.get("options").cloned());
                             } else {
                                 peer_log!(warn, "invalid login credentials, user: {user}");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
@@ -401,9 +381,20 @@ pub(crate) async fn server_peer_loop(
                     frame_writer.send_error(resp_meta, "Invalid login message.").or(frame_write_timeout()).await?;
                 }
             }
-        }
-        let device_id = device_options.as_map().get("deviceId").map(|v| v.as_str().to_string());
-        let mount_point = device_options.as_map().get("mountPoint").map(|v| v.as_str().to_string());
+        };
+
+        let options = options.as_ref().map(RpcValue::as_map);
+
+        let device_options = options.and_then(|map| map.get("device"));
+        let idle_watchdog_timeout = options
+            .and_then(|options| options.get("idleWatchDogTimeOut"))
+            .map(RpcValue::as_u64)
+            .filter(|idle_timeout| *idle_timeout > 0)
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT));
+
+        let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
+        let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
         peer_log!(info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?})");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
