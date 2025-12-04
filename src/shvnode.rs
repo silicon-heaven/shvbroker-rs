@@ -56,22 +56,13 @@ impl From<Option<&RpcValue>> for DirParam {
 }
 
 pub fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
-    if let DirParam::MethodExists(ref method_name) = param {
-        return methods.any(|mm| mm.name == method_name).into()
-    }
-    let mut lst = rpcvalue::List::new();
-    for mm in methods {
-        match param {
-            DirParam::Brief => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::IMap));
-            }
-            DirParam::Full => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::Map));
-            }
-            _ => {}
-        }
-    }
-    lst.into()
+    let serializer = match param {
+        DirParam::MethodExists(method_name) => return methods.any(|mm| mm.name == method_name).into(),
+        DirParam::Brief => metamethod::DirFormat::IMap,
+        DirParam::Full => metamethod::DirFormat::Map,
+    };
+
+    methods.map(|mm| mm.to_rpcvalue(serializer)).collect::<Vec<_>>().into()
 }
 
 pub enum LsParam {
