@@ -1760,14 +1760,10 @@ impl BrokerImpl {
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;
-        let mut pending_call_ix = None;
-        for (ix, pc) in self.pending_rpc_calls.iter().enumerate() {
+        let pending_call_ix = self.pending_rpc_calls.iter().position(|pc| {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
-            if request_id == rqid && pc.peer_id == client_id {
-                pending_call_ix = Some(ix);
-                break;
-            }
-        }
+            request_id == rqid && pc.peer_id == client_id
+        });
         if let Some(ix) = pending_call_ix {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.send(response_frame).await?;
