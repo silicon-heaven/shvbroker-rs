@@ -39,18 +39,9 @@ pub enum DirParam {
 impl From<Option<&RpcValue>> for DirParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    DirParam::MethodExists(rpcval.as_str().into())
-                } else if rpcval.as_bool() {
-                    DirParam::Full
-                } else {
-                    DirParam::Brief
-                }
-            }
-            None => {
-                DirParam::Brief
-            }
+            Some(rpcval) if rpcval.is_string() => DirParam::MethodExists(rpcval.as_str().into()),
+            Some(rpcval) if rpcval.as_bool() => DirParam::Full,
+            Some(_) | None => DirParam::Brief,
         }
     }
 }
