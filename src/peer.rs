@@ -156,9 +156,8 @@ pub(crate) async fn server_peer_loop(
 
     'session_loop: loop {
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
-        let mut user;
         let mut nonce = None;
-        let options = 'login_loop: loop {
+        let (user, options) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
@@ -274,8 +273,6 @@ pub(crate) async fn server_peer_loop(
                                 .json::<MeResponse>()
                                 .await?;
 
-                            user = format!("azure:{email}", email = me_response.mail);
-
                             #[derive(serde::Deserialize)]
                             struct TransitiveMemberOfValue {
                                 #[serde(rename = "@odata.type")]
@@ -320,13 +317,14 @@ pub(crate) async fn server_peer_loop(
                             let mut result = shvproto::Map::new();
                             result.insert("clientId".into(), RpcValue::from(peer_id));
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
+                            let user = format!("azure:{email}", email = me_response.mail);
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
-                            break 'login_loop params.get("options").cloned();
+                            break 'login_loop (user, params.get("options").cloned());
                         }
                     }
 
-                    user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
+                    let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
                     broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await?;
                     match peer_reader.recv().await? {
@@ -367,7 +365,7 @@ pub(crate) async fn server_peer_loop(
                                 let mut result = shvproto::Map::new();
                                 result.insert("clientId".into(), RpcValue::from(peer_id));
                                 frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
-                                break 'login_loop params.get("options").cloned();
+                                break 'login_loop (user, params.get("options").cloned());
                             } else {
                                 peer_log!(warn, "invalid login credentials, user: {user}");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
