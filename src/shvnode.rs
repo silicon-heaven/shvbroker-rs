@@ -636,8 +636,8 @@ const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Fl
 
 pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
-const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "Map", signals: &[], description: "" };
-const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Write, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
+const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "void", result: "Map", signals: &[], description: "" };
+const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
 const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 pub(crate) struct BrokerAccessMountsNode {}
