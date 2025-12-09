@@ -1775,7 +1775,7 @@ impl BrokerImpl {
         let now = Instant::now();
         const TIMEOUT: Duration = Duration::from_secs(60);
         // unfortunately `extract_if()` is not stabilized yet
-        let mut timeouted = vec![];
+        let mut timed_out = vec![];
         self.pending_rpc_calls.retain(|pending_call| {
             if now.duration_since(pending_call.started) > TIMEOUT {
                 let mut msg = RpcMessage::from_meta(pending_call.request_meta.clone());
@@ -1783,13 +1783,13 @@ impl BrokerImpl {
                     RpcErrorCode::MethodCallTimeout,
                     "Method call timeout",
                 ));
-                timeouted.push((msg, pending_call.response_sender.clone()));
+                timed_out.push((msg, pending_call.response_sender.clone()));
                 false
             } else {
                 true
             }
         });
-        for (msg, sender) in timeouted {
+        for (msg, sender) in timed_out {
             sender.send(msg.to_frame()?).await?;
         }
         Ok(())
