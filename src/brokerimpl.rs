@@ -1774,23 +1774,15 @@ impl BrokerImpl {
     async fn gc_pending_rpc_calls(&mut self) -> shvrpc::Result<()> {
         let now = Instant::now();
         const TIMEOUT: Duration = Duration::from_secs(60);
-        // unfortunately `extract_if()` is not stabilized yet
-        let mut timed_out = vec![];
-        self.pending_rpc_calls.retain(|pending_call| {
-            if now.duration_since(pending_call.started) > TIMEOUT {
-                let mut msg = RpcMessage::from_meta(pending_call.request_meta.clone());
-                msg.set_error(RpcError::new(
+        let timed_out = self.pending_rpc_calls
+            .extract_if(.., |pending_call| now.duration_since(pending_call.started) > TIMEOUT);
+        for timed_out_pending_call in timed_out {
+            let mut msg = RpcMessage::from_meta(timed_out_pending_call.request_meta.clone());
+            msg.set_error(RpcError::new(
                     RpcErrorCode::MethodCallTimeout,
                     "Method call timeout",
-                ));
-                timed_out.push((msg, pending_call.response_sender.clone()));
-                false
-            } else {
-                true
-            }
-        });
-        for (msg, sender) in timed_out {
-            sender.send(msg.to_frame()?).await?;
+            ));
+            timed_out_pending_call.response_sender.send(msg.to_frame()?).await?;
         }
         Ok(())
     }
