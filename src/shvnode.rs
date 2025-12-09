@@ -636,10 +636,15 @@ const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Fl
 
 pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
+pub const METH_DEACTIVATE: &str = "deactivate";
+pub const METH_ACTIVATE: &str = "activate";
 const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "void", result: "Map", signals: &[], description: "" };
 const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
+const META_METH_DEACTIVATE: MetaMethod = MetaMethod { name: METH_DEACTIVATE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "Null", result: "void", signals: &[], description: "" };
+const META_METH_ACTIVATE: MetaMethod = MetaMethod { name: METH_ACTIVATE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "Null", result: "void", signals: &[], description: "" };
 const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
+const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
     pub(crate) fn new() -> Self {
@@ -717,7 +722,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         if shv_path.is_empty() {
             ACCESS_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            USER_ACCESS_VALUE_NODE_METHODS
         }
     }
 
@@ -730,6 +735,28 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
     }
 
     fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+        const DEACTIVATE: bool = true;
+        const ACTIVATE: bool = false;
+        let process_activation_change = |new_deactivated| {
+            let user = state_reader(&ctx.state).access_user(&ctx.node_path).cloned();
+            match user {
+                None => {
+                    Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                }
+                Some(user) => {
+                    let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                    if user.deactivated == new_deactivated {
+                        return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
+                    }
+                    state_writer(&ctx.state).set_access_user(response_meta, &ctx.node_path, Some(crate::config::User{
+                        deactivated: new_deactivated,
+                        ..user.clone()
+                    }));
+                    Ok(ProcessRequestRetval::RetvalDeferred)
+                }
+            }
+        };
+
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match state_reader(&ctx.state).access_user(&ctx.node_path) {
@@ -741,6 +768,8 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     }
                 }
             }
+            METH_DEACTIVATE => process_activation_change(DEACTIVATE),
+            METH_ACTIVATE => process_activation_change(ACTIVATE),
             METH_SET_VALUE => {
                 if !ctx.sql_available {
                     return Err(make_access_ro_error().into())
