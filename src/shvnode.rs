@@ -522,17 +522,15 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Cannot change password, access database is not available.".into());
                 }
                 let rq = &frame.to_rpcmesage()?;
-                let mut params = rq
+                let params = rq
                     .param()
                     .ok_or_else(|| WRONG_FORMAT_ERR.to_string())
                     .and_then(|rv| Vec::<String>::try_from(rv)
                         .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?
-                    .into_iter();
+                    )?;
 
-                let (old_password, new_password) = match (params.next(), params.next()) {
-                    (Some(old_password), Some(new_password)) => (old_password, new_password),
-                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                let [old_password, new_password] = params.as_slice() else {
+                    return Err(WRONG_FORMAT_ERR.into());
                 };
 
                 if old_password.is_empty() || new_password.is_empty() {
@@ -572,24 +570,22 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
                 let rq = &frame.to_rpcmesage()?;
-                let mut params = rq
+                let params = rq
                     .param()
                     .ok_or_else(|| WRONG_FORMAT_ERR.into())
                     .and_then(|rv| Vec::<String>::try_from(rv)
                         .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?
-                    .into_iter();
+                    )?;
 
-                let (shv_path, method) = match (params.next(), params.next()) {
-                    (Some(path), Some(method)) => (path, method),
-                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                let [shv_path, method] = params.as_slice() else {
+                    return Err(WRONG_FORMAT_ERR.into());
                 };
 
                 let access_level = state_reader(&ctx.state)
                     .access_level_for_request_params(
                         ctx.peer_id,
-                        &shv_path,
-                        &method,
+                        shv_path,
+                        method,
                         None,
                         frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
                     )
