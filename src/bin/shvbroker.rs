@@ -59,8 +59,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
 
-    let mut logger = SimpleLogger::new();
-    logger = logger.with_level(LevelFilter::Info);
+    let mut logger = SimpleLogger::new().with_level(LevelFilter::Info);
     if let Some(module_names) = cli_opts.verbose {
         for (module, level) in parse_log_verbosity(&module_names, module_path!()) {
             if let Some(module) = module {
