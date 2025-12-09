@@ -28,11 +28,9 @@ pub mod spawn {
 fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
     if shv_path.starts_with(prefix) && (shv_path.len() == prefix.len() || shv_path[prefix.len() ..].starts_with('/')) {
         let shv_path = &shv_path[prefix.len() ..];
-        if let Some(stripped_path) = shv_path.strip_prefix('/') {
-            Some(stripped_path.to_string())
-        } else {
-            Some(shv_path.to_string())
-        }
+        shv_path.strip_prefix('/')
+            .or(Some(shv_path))
+            .map(ToString::to_string)
     } else {
         None
     }

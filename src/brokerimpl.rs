@@ -775,8 +775,7 @@ impl BrokerState {
             enqueue(&mut queue, role);
         }
         let mut flatten_roles = Vec::new();
-        while !queue.is_empty() {
-            let role_name = queue.pop_front().unwrap();
+        while let Some(role_name) = queue.pop_front() {
             if let Some(role) = self.access.roles.get(&role_name) {
                 for role in role.roles.iter() {
                     enqueue(&mut queue, role);
@@ -1050,7 +1049,7 @@ impl BrokerState {
             self.access.mounts.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "mounts", sqlop);
+        self.update_sql(response_meta, "mounts", sqlop);
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
@@ -1072,7 +1071,7 @@ impl BrokerState {
             self.access.users.remove(id);
             UpdateSqlOperation::Delete { id }
         };
-        self.uddate_sql(response_meta, "users", sqlop);
+        self.update_sql(response_meta, "users", sqlop);
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
@@ -1094,10 +1093,10 @@ impl BrokerState {
             self.role_access_rules.remove(role_name);
             UpdateSqlOperation::Delete { id: role_name }
         };
-        self.uddate_sql(response_meta, "roles", sqlop);
+        self.update_sql(response_meta, "roles", sqlop);
         Ok(())
     }
-    fn uddate_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
+    fn update_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
         let query = match oper {
             UpdateSqlOperation::Insert { id, json } => {
                 format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
@@ -1761,14 +1760,10 @@ impl BrokerImpl {
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;
-        let mut pending_call_ix = None;
-        for (ix, pc) in self.pending_rpc_calls.iter().enumerate() {
+        let pending_call_ix = self.pending_rpc_calls.iter().position(|pc| {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
-            if request_id == rqid && pc.peer_id == client_id {
-                pending_call_ix = Some(ix);
-                break;
-            }
-        }
+            request_id == rqid && pc.peer_id == client_id
+        });
         if let Some(ix) = pending_call_ix {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.send(response_frame).await?;
@@ -1779,23 +1774,15 @@ impl BrokerImpl {
     async fn gc_pending_rpc_calls(&mut self) -> shvrpc::Result<()> {
         let now = Instant::now();
         const TIMEOUT: Duration = Duration::from_secs(60);
-        // unfortunately `extract_if()` is not stabilized yet
-        let mut timeouted = vec![];
-        self.pending_rpc_calls.retain(|pending_call| {
-            if now.duration_since(pending_call.started) > TIMEOUT {
-                let mut msg = RpcMessage::from_meta(pending_call.request_meta.clone());
-                msg.set_error(RpcError::new(
+        let timed_out = self.pending_rpc_calls
+            .extract_if(.., |pending_call| now.duration_since(pending_call.started) > TIMEOUT);
+        for timed_out_pending_call in timed_out {
+            let mut msg = RpcMessage::from_meta(timed_out_pending_call.request_meta.clone());
+            msg.set_error(RpcError::new(
                     RpcErrorCode::MethodCallTimeout,
                     "Method call timeout",
-                ));
-                timeouted.push((msg, pending_call.response_sender.clone()));
-                false
-            } else {
-                true
-            }
-        });
-        for (msg, sender) in timeouted {
-            sender.send(msg.to_frame()?).await?;
+            ));
+            timed_out_pending_call.response_sender.send(msg.to_frame()?).await?;
         }
         Ok(())
     }

@@ -16,6 +16,7 @@ use rand::Rng;
 use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
+use shvproto::make_map;
 use shvrpc::client::ClientConfig;
 use shvrpc::framerw::ReceiveFrameError;
 use shvrpc::metamethod::AccessLevel;
@@ -47,8 +48,6 @@ use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
-#[cfg(feature = "entra-id")]
-use shvproto::make_map;
 #[cfg(feature = "entra-id")]
 use async_compat::CompatExt;
 
@@ -198,8 +197,8 @@ pub(crate) async fn server_peer_loop(
                     } else {
                         Alphanumeric.sample_string(&mut rand::rng(), 16)
                     });
-                    let mut result = shvproto::Map::new();
-                    result.insert("nonce".into(), RpcValue::from(nonce));
+
+                    let result = make_map!{"nonce" => nonce};
                     frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
                 },
                 "workflows" => {
@@ -316,8 +315,7 @@ pub(crate) async fn server_peer_loop(
                             }
 
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
-                            let mut result = shvproto::Map::new();
-                            result.insert("clientId".into(), RpcValue::from(peer_id));
+                            let result = make_map!("clientId" => peer_id);
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                             let user = format!("azure:{email}", email = me_response.mail);
                             mapped_groups.insert(0, user.clone());
@@ -364,8 +362,7 @@ pub(crate) async fn server_peer_loop(
                             };
                             if chkpwd() {
                                 peer_log!(debug, "password OK");
-                                let mut result = shvproto::Map::new();
-                                result.insert("clientId".into(), RpcValue::from(peer_id));
+                                let result = make_map!{"clientId" => peer_id};
                                 frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
                                 break 'login_loop (user, params.get("options").cloned());
                             } else {

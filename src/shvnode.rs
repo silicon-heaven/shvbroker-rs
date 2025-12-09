@@ -39,62 +39,36 @@ pub enum DirParam {
 impl From<Option<&RpcValue>> for DirParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    DirParam::MethodExists(rpcval.as_str().into())
-                } else if rpcval.as_bool() {
-                    DirParam::Full
-                } else {
-                    DirParam::Brief
-                }
-            }
-            None => {
-                DirParam::Brief
-            }
+            Some(rpcval) if rpcval.is_string() => DirParam::MethodExists(rpcval.as_str().into()),
+            Some(rpcval) if rpcval.as_bool() => DirParam::Full,
+            Some(_) | None => DirParam::Brief,
         }
     }
 }
 
 pub fn dir<'a>(mut methods: impl Iterator<Item=&'a MetaMethod>, param: DirParam) -> RpcValue {
-    if let DirParam::MethodExists(ref method_name) = param {
-        return methods.any(|mm| mm.name == method_name).into()
-    }
-    let mut lst = rpcvalue::List::new();
-    for mm in methods {
-        match param {
-            DirParam::Brief => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::IMap));
-            }
-            DirParam::Full => {
-                lst.push(mm.to_rpcvalue(metamethod::DirFormat::Map));
-            }
-            _ => {}
-        }
-    }
-    lst.into()
+    let serializer = match param {
+        DirParam::MethodExists(method_name) => return methods.any(|mm| mm.name == method_name).into(),
+        DirParam::Brief => metamethod::DirFormat::IMap,
+        DirParam::Full => metamethod::DirFormat::Map,
+    };
+
+    methods.map(|mm| mm.to_rpcvalue(serializer)).collect::<Vec<_>>().into()
 }
 
 pub enum LsParam {
     List,
     Exists(String),
 }
+
 impl From<Option<&RpcValue>> for LsParam {
     fn from(value: Option<&RpcValue>) -> Self {
         match value {
-            Some(rpcval) => {
-                if rpcval.is_string() {
-                    LsParam::Exists(rpcval.as_str().into())
-                } else {
-                    LsParam::List
-                }
-            }
-            None => {
-                LsParam::List
-            }
+            Some(rpcval) if rpcval.is_string() => LsParam::Exists(rpcval.as_str().into()),
+            Some(_) | None => LsParam::List
         }
     }
 }
-
 
 pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -> Option<Result<RpcValue, RpcError>> {
     let method = frame.method().unwrap_or_default();
@@ -548,17 +522,15 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Cannot change password, access database is not available.".into());
                 }
                 let rq = &frame.to_rpcmesage()?;
-                let mut params = rq
+                let params = rq
                     .param()
                     .ok_or_else(|| WRONG_FORMAT_ERR.to_string())
                     .and_then(|rv| Vec::<String>::try_from(rv)
                         .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?
-                    .into_iter();
+                    )?;
 
-                let (old_password, new_password) = match (params.next(), params.next()) {
-                    (Some(old_password), Some(new_password)) => (old_password, new_password),
-                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                let [old_password, new_password] = params.as_slice() else {
+                    return Err(WRONG_FORMAT_ERR.into());
                 };
 
                 if old_password.is_empty() || new_password.is_empty() {
@@ -598,24 +570,22 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
                 let rq = &frame.to_rpcmesage()?;
-                let mut params = rq
+                let params = rq
                     .param()
                     .ok_or_else(|| WRONG_FORMAT_ERR.into())
                     .and_then(|rv| Vec::<String>::try_from(rv)
                         .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?
-                    .into_iter();
+                    )?;
 
-                let (shv_path, method) = match (params.next(), params.next()) {
-                    (Some(path), Some(method)) => (path, method),
-                    _ => return Err(WRONG_FORMAT_ERR.into()),
+                let [shv_path, method] = params.as_slice() else {
+                    return Err(WRONG_FORMAT_ERR.into());
                 };
 
                 let access_level = state_reader(&ctx.state)
                     .access_level_for_request_params(
                         ctx.peer_id,
-                        &shv_path,
-                        &method,
+                        shv_path,
+                        method,
                         None,
                         frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
                     )
