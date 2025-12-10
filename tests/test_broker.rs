@@ -89,10 +89,10 @@ fn test_broker() -> shvrpc::Result<()> {
     {
         println!("---broker---: .app:dir()");
         let expected_methods = [
-            MetaMethod { name: METH_DIR, param: "DirParam", result: "DirResult", ..Default::default() },
-            MetaMethod { name: METH_LS, param: "LsParam", result: "LsResult", ..Default::default() },
-            MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32,  ..Default::default() },
-            MetaMethod { name: METH_PING, ..Default::default() },
+            MetaMethod::new_static(METH_DIR, Flag::None as u32, metamethod::AccessLevel::Browse, "DirParam", "DirResult", &[], ""),
+            MetaMethod::new_static(METH_LS, Flag::None as u32, metamethod::AccessLevel::Browse, "LsParam", "LsResult", &[], ""),
+            MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, metamethod::AccessLevel::Browse, "", "", &[], ""),
+            MetaMethod::new_static(METH_PING, Flag::None as u32, metamethod::AccessLevel::Browse, "", "", &[], ""),
         ];
         {
             let methods = shv_call_child(".app", "dir", "")?;

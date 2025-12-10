@@ -24,8 +24,8 @@ pub const METH_PING: &str = "ping";
 pub const METH_SUBSCRIBE: &str = "subscribe";
 pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 
-pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Browse, param: "DirParam", result: "DirResult", signals: &[], description: "" };
-pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "LsParam", result: "LsResult", signals: &[], description: "" };
+pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Browse, "DirParam",  "DirResult", &[], "");
+pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Browse, "LsParam",  "LsResult", &[], "");
 pub const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
 pub const DOT_LOCAL_GRANT: &str = "dot_local";
 pub const DOT_LOCAL_DIR: &str = ".local";
@@ -223,11 +223,11 @@ impl AppNode {
     }
 }
 
-const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MAJOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "i", signals: &[], description: "" };
-const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod { name: METH_SHV_VERSION_MINOR, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "i", signals: &[], description: "" };
-const META_METH_APP_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "s", signals: &[], description: "" };
-const META_METH_APP_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "s", signals: &[], description: "" };
-const META_METH_APP_PING: MetaMethod = MetaMethod { name: METH_PING, flags: Flag::None as u32, access: AccessLevel::Browse, param: "", result: "n", signals: &[], description: "" };
+const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MAJOR, Flag::IsGetter as u32, AccessLevel::Browse, "", "i", &[], "");
+const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MINOR, Flag::IsGetter as u32, AccessLevel::Browse, "", "i", &[], "");
+const META_METH_APP_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, AccessLevel::Browse, "", "s", &[], "");
+const META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "s", &[], "");
+const META_METH_APP_PING: MetaMethod = MetaMethod::new_static(METH_PING, Flag::None as u32, AccessLevel::Browse, "", "n", &[], "");
 
 const APP_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
@@ -276,9 +276,9 @@ impl ShvNode for AppNode {
     }
 }
 
-const META_METH_VERSION: MetaMethod = MetaMethod { name: METH_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const META_METH_NAME: MetaMethod = MetaMethod { name: METH_NAME, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
-const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod { name: "serialNumber", flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const META_METH_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
+const META_METH_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
+const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod::new_static("serialNumber", Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
 
 pub struct AppDeviceNode {
     pub device_name: &'static str,
@@ -346,11 +346,11 @@ pub const METH_CLIENTS: &str = "clients";
 pub const METH_MOUNTS: &str = "mounts";
 pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
 
-const META_METH_CLIENT_INFO: MetaMethod = MetaMethod { name: METH_CLIENT_INFO, param: "Int", result: "ClientInfo", access: AccessLevel::Service, flags: Flag::None as u32, description: "", signals: &[] };
-const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod { name: METH_MOUNTED_CLIENT_INFO, param: "String", result: "ClientInfo", access: AccessLevel::Service, flags: Flag::None as u32, description: "", signals: &[] };
-const META_METH_CLIENTS: MetaMethod = MetaMethod { name: METH_CLIENTS, param: "void", result: "List[Int]", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
-const META_METH_MOUNTS: MetaMethod = MetaMethod { name: METH_MOUNTS, param: "void", result: "List[String]", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
-const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod { name: METH_DISCONNECT_CLIENT, param: "Int", result: "void", access: AccessLevel::SuperService, flags: Flag::None as u32, description: "", signals: &[] };
+const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "Int", "ClientInfo", &[], "");
+const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "String", "ClientInfo", &[], "");
+const META_METH_CLIENTS: MetaMethod = MetaMethod::new_static(METH_CLIENTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[Int]", &[], "");
+const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[String]", &[], "");
+const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flag::None as u32, AccessLevel::SuperService, "Int", "void", &[], "");
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
@@ -439,14 +439,30 @@ impl ShvNode for BrokerNode {
     }
 }
 
-const META_METH_INFO: MetaMethod = MetaMethod { name: METH_INFO, flags: Flag::None as u32, access: AccessLevel::Browse, param: "Int", result: "ClientInfo", signals: &[], description: "" };
-const META_METH_SUBSCRIBE: MetaMethod = MetaMethod { name: METH_SUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
-const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod { name: METH_UNSUBSCRIBE, flags: Flag::None as u32, access: AccessLevel::Browse, param: "SubscribeParams", result: "void", signals: &[], description: "" };
-const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod { name: METH_SUBSCRIPTIONS, flags: Flag::None as u32, access: AccessLevel::Browse, param: "void", result: "Map", signals: &[], description: "" };
-const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod { name: METH_CHANGE_PASSWORD, flags: Flag::None as u32, access: AccessLevel::Write, param: "[s:old_password,s:new_password]", result: "Bool", signals: &[], description: r#"(params: ["old_password", "new_password"], old and new passwords are in plain format)"# };
-const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod { name: METH_ACCESS_LEVEL_FOR_METHOD_CALL, flags: Flag::None as u32, access: AccessLevel::Read, param: "[s:path,s:method]", result: "Int", signals: &[], description: r#"(params: ["shv_path", "method"]"# };
-const META_METH_USER_PROFILE: MetaMethod = MetaMethod { name: METH_USER_PROFILE, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "RpcValue", signals: &[], description: "" };
-const META_METH_USER_ROLES: MetaMethod = MetaMethod { name: METH_USER_ROLES, flags: Flag::None as u32, access: AccessLevel::Read, param: "void", result: "List", signals: &[], description: "" };
+const META_METH_INFO: MetaMethod = MetaMethod::new_static(METH_INFO, Flag::None as u32, AccessLevel::Browse, "Int", "ClientInfo", &[], "");
+const META_METH_SUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_SUBSCRIBE, Flag::None as u32, AccessLevel::Browse, "SubscribeParams", "void", &[], "");
+const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_UNSUBSCRIBE, Flag::None as u32, AccessLevel::Browse, "SubscribeParams", "void", &[], "");
+const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod::new_static(METH_SUBSCRIPTIONS, Flag::None as u32, AccessLevel::Browse, "void", "Map", &[], "");
+const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod::new_static(
+    METH_CHANGE_PASSWORD,
+    Flag::None as u32,
+    AccessLevel::Write,
+    "[s:old_password,s:new_password]",
+    "Bool",
+    &[],
+    r#"(params: ["old_password", "new_password"], old and new passwords are in plain format)"#
+);
+const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_static(
+    METH_ACCESS_LEVEL_FOR_METHOD_CALL,
+    Flag::None as u32,
+    AccessLevel::Read,
+    "[s:path,s:method]",
+    "Int",
+    &[],
+    r#"(params: ["shv_path", "method"]"#,
+);
+const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flag::None as u32, AccessLevel::Read, "void", "RpcValue", &[], "");
+const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flag::None as u32, AccessLevel::Read, "void", "List", &[], "");
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
@@ -631,17 +647,18 @@ impl ShvNode for BrokerCurrentClientNode {
     }
 }
 
-const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod { name: METH_DIR, flags: Flag::None as u32, access: AccessLevel::Read, param: "DirParam", result: "DirResult", signals: &[], description: "" };
-const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod { name: METH_LS, flags: Flag::None as u32, access: AccessLevel::Read, param: "LsParam", result: "LsResult", signals: &[], description: "" };
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Read, "DirParam", "DirResult", &[], "");
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Read, "LsParam", "LsResult", &[], "");
 
 pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 pub const METH_DEACTIVATE: &str = "deactivate";
 pub const METH_ACTIVATE: &str = "activate";
-const META_METH_VALUE: MetaMethod = MetaMethod { name: METH_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "void", result: "Map", signals: &[], description: "" };
-const META_METH_SET_VALUE: MetaMethod = MetaMethod { name: METH_SET_VALUE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "[String, Map | Null]", result: "void", signals: &[], description: "" };
-const META_METH_DEACTIVATE: MetaMethod = MetaMethod { name: METH_DEACTIVATE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "Null", result: "void", signals: &[], description: "" };
-const META_METH_ACTIVATE: MetaMethod = MetaMethod { name: METH_ACTIVATE, flags: Flag::None as u32, access: AccessLevel::Superuser, param: "Null", result: "void", signals: &[], description: "" };
+
+const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flag::None as u32, AccessLevel::Superuser, "void", "Map", &[], "");
+const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flag::None as u32, AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
+const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flag::None as u32, AccessLevel::Superuser, "Null", "void", &[], "");
+const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flag::None as u32, AccessLevel::Superuser, "Null", "void", &[], "");
 const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
@@ -862,7 +879,7 @@ impl ShvNode for BrokerAccessRolesNode {
 }
 
 pub const SHV2_METH_APP_VERSION: &str = "appVersion";
-const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod { name: SHV2_METH_APP_VERSION, flags: Flag::IsGetter as u32, access: AccessLevel::Browse, param: "", result: "", signals: &[], description: "" };
+const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(SHV2_METH_APP_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
 const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
 
 pub(crate) struct Shv2BrokerAppNode {}
