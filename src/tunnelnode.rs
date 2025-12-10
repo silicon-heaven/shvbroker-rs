@@ -21,55 +21,15 @@ use smol::io::{BufReader, BufWriter};
 use smol::net::TcpStream;
 use std::time::Instant;
 
-const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod {
-    name: METH_DIR,
-    flags: Flag::None as u32,
-    access: AccessLevel::Superuser,
-    param: "DirParam",
-    result: "DirResult",
-    signals: &[],
-    description: "",
-};
-const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod {
-    name: METH_LS,
-    flags: Flag::None as u32,
-    access: AccessLevel::Superuser,
-    param: "LsParam",
-    result: "LsResult",
-    signals: &[],
-    description: "",
-};
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Superuser, "DirParam", "DirResult", &[], "");
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Superuser, "LsParam", "LsResult", &[], "");
 
 const METH_CREATE: &str = "create";
 const METH_WRITE: &str = "write";
 const METH_CLOSE: &str = "close";
-const META_METH_CREATE: MetaMethod = MetaMethod {
-    name: METH_CREATE,
-    flags: Flag::None as u32,
-    access: AccessLevel::Write,
-    param: "Map",
-    result: "String",
-    signals: &[],
-    description: "",
-};
-const META_METH_WRITE: MetaMethod = MetaMethod {
-    name: METH_WRITE,
-    flags: Flag::None as u32,
-    access: AccessLevel::Superuser,
-    param: "Blob",
-    result: "Blob",
-    signals: &[],
-    description: "",
-};
-const META_METH_CLOSE: MetaMethod = MetaMethod {
-    name: METH_CLOSE,
-    flags: Flag::None as u32,
-    access: AccessLevel::Superuser,
-    param: "Blob",
-    result: "Blob",
-    signals: &[],
-    description: "",
-};
+const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flag::None as u32, AccessLevel::Write, "Map", "String", &[], "");
+const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flag::None as u32, AccessLevel::Superuser, "Blob", "Blob", &[], "");
+const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flag::None as u32, AccessLevel::Superuser, "Blob", "Blob", &[], "");
 
 const TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,

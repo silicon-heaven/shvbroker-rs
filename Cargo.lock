@@ -2425,7 +2425,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.18.11"
+version = "3.19.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2450,7 +2450,7 @@ dependencies = [
  "serialport",
  "shvclient",
  "shvproto 3.6.22",
- "shvrpc 4.0.1",
+ "shvrpc 7.1.0",
  "simple_logger",
  "smol 2.0.2",
  "smol-timeout",
@@ -2527,8 +2527,8 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "4.0.1"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=4.0.1#e60f974a2ee7daceaefbbd34a1d8e07afc735cc8"
+version = "7.1.0"
+source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=7.1.0#ba8103c61d10717a31e684b32104efcaccb4f9b7"
 dependencies = [
  "anyhow",
  "async-trait",
