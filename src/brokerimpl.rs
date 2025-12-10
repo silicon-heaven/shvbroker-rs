@@ -896,6 +896,9 @@ impl BrokerState {
         self.peers.insert(peer_id, peer);
         Ok(())
     }
+    fn user_deactivated(&self, user: &str) -> bool {
+        self.access.users.get(user).is_some_and(|user| user.deactivated)
+    }
     fn sha_password(&self, user: &str) -> Option<String> {
         match self.access.users.get(user) {
             None => None,
@@ -1865,7 +1868,12 @@ impl BrokerImpl {
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
             BrokerCommand::GetPassword { sender, user } => {
-                let shapwd = state_reader(&self.state).sha_password(&user);
+                let shapwd = if !state_reader(&self.state).user_deactivated(&user) {
+                    state_reader(&self.state).sha_password(&user)
+                } else {
+                    None
+                };
+
                 sender
                     .send(BrokerToPeerMessage::PasswordSha1(shapwd))
                     .await?;

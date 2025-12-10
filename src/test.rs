@@ -251,11 +251,11 @@ async fn test_broker_loop_as_admin_async() {
                 assert_eq!(list, RpcValue::from(users.clone()).as_list());
                 let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let user1 = User::try_from(&resp).unwrap();
-                let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()] };
+                let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false };
                 assert_eq!(user1, user2);
             }
             {
-                let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()] };
+                let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false };
                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
                 let list = resp.as_list();

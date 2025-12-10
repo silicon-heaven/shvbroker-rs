@@ -76,6 +76,8 @@ pub struct Listen {
 pub struct User {
     pub password: Password,
     pub roles: Vec<String>,
+    #[serde(default)]
+    pub deactivated: bool,
 }
 impl User {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
@@ -85,7 +87,8 @@ impl User {
     fn from_v2(user: UserV2) -> Result<Self, String> {
         Ok(Self {
             password: Password::from_v2(user.password)?,
-            roles: user.roles
+            roles: user.roles,
+            deactivated: false,
         })
     }
 }
@@ -273,12 +276,12 @@ impl Default for BrokerConfig {
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
-                    ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()] }),
-                    ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()] }),
-                    ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()] }),
-                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect() }),
-                    ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()] }),
-                    ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()] }),
+                    ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false }),
+                    ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false }),
+                    ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false }),
+                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false }),
+                    ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false }),
+                    ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false }),
                 ]),
                 roles: BTreeMap::from([
                     ("su".to_string(), Role {
