@@ -616,12 +616,11 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_PROFILE => {
                 let state = state_reader(&ctx.state);
-                let Some(user_name) = state.peer_user(ctx.peer_id) else {
-                    return Err("Undefined user".into());
+                let Some(user_roles) = state.user_base_roles(ctx.peer_id) else {
+                    return Err("This connection does not have any roles associated with it".into());
                 };
                 let merged_profile = state
-                    .flatten_roles(user_name)
-                    .unwrap_or_default()
+                    .flatten_roles(user_roles)
                     .iter()
                     .filter_map(|role| state.access_role(role))
                     .filter_map(|role| role.profile.clone())
@@ -633,12 +632,15 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_ROLES => {
                 let state = state_reader(&ctx.state);
-                let Some(user_name) = state.peer_user(ctx.peer_id) else {
-                    return Err("Undefined user".into());
+                let Some(user_roles) = state.user_base_roles(ctx.peer_id) else {
+                    return Err("This connection does not have any roles associated with it".into());
                 };
 
-                let result = state.flatten_roles(user_name).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined"))?;
-                Ok(ProcessRequestRetval::Retval(result.into()))
+                if user_roles.is_empty() {
+                    return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
+                }
+
+                Ok(ProcessRequestRetval::Retval(state.flatten_roles(user_roles).into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
