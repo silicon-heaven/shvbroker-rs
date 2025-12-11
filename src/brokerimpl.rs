@@ -1737,7 +1737,6 @@ impl BrokerImpl {
         request: RpcMessage,
         pending_call: PendingRpcCall,
     ) -> shvrpc::Result<()> {
-        //self.pending_calls.retain(|r| !r.sender.is_closed());
         let sender = {
             let state = self.state.read().map_err(|e| e.to_string())?;
             let peer = state

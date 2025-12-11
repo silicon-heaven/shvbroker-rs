@@ -1248,9 +1248,10 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionK
     };
     // println!("current path: {shv_path}");
     let shv_path = if starts_with_path(&shv_path, ".broker") {
-        if frame.method() == Some(METH_SUBSCRIBE) || frame.method() == Some(METH_UNSUBSCRIBE) {
+        if let Some(method) = frame.method() && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE) {
             // prepend exported root to subscribed path
-            frame = fix_subscribe_param(frame, shv_root)?;
+            let is_subscribe = method == METH_SUBSCRIBE;
+            frame = fix_subscribe_param(frame, shv_root, is_subscribe)?;
         }
         shv_path
     } else if is_dot_local_request(&frame) {
@@ -1266,11 +1267,18 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionK
     // println!("new path: {}", frame.shv_path().unwrap_or_default());
     Ok(frame)
 }
-fn fix_subscribe_param(frame: RpcFrame, exported_root: &str) -> shvrpc::Result<RpcFrame> {
+
+fn fix_subscribe_param(frame: RpcFrame, exported_root: &str, is_subscribe: bool) -> shvrpc::Result<RpcFrame> {
     let mut msg = frame.to_rpcmesage()?;
-    let mut subpar = SubscriptionParam::from_rpcvalue(msg.param().unwrap_or_default())?;
+    let param = msg.param().unwrap_or_default();
+    let mut subpar = SubscriptionParam::from_rpcvalue(param)?;
     let new_path = join_path(exported_root, subpar.ri.path());
     subpar.ri = ShvRI::from_path_method_signal(&new_path, subpar.ri.method(), subpar.ri.signal())?;
-    msg.set_param(subpar.to_rpcvalue());
+    let new_param = if is_subscribe {
+        subpar.to_rpcvalue()
+    } else {
+        RpcValue::from(subpar.ri.to_string())
+    };
+    msg.set_param(new_param);
     msg.to_frame()
 }
