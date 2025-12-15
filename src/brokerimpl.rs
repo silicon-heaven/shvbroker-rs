@@ -704,15 +704,11 @@ impl BrokerState {
                 ),
             }
         };
-        if let Some(roles) = self.azure_user_groups.get(&peer_id) {
-            let flatten_roles = self.impl_flatten_roles(roles);
-            log!(target: "Access", Level::Debug, "User: {} (azure), flatten roles: {:?}", &peer_id, flatten_roles);
-            access_level_from_flatten_roles(flatten_roles)
-        } else if let Some(user) = peer.user() {
+        if let Some(user_roles) = self.user_base_roles(peer_id) {
             // request from logged-in user,
             // it can be client, device, child broker or parent broker as client
-            let flatten_roles = self.flatten_roles(user).unwrap_or_default();
-            log!(target: "Access", Level::Debug, "User: {user}, flatten roles: {:?}", flatten_roles);
+            let flatten_roles = self.flatten_roles(user_roles);
+            log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user().unwrap_or_default());
             // client (especially parent broker) can set access level for its request
             // cap it to the maximum level allowed by its access rights configured in the broker
             let mut max_level = access_level_from_flatten_roles(flatten_roles);
@@ -756,14 +752,23 @@ impl BrokerState {
             }
         }
     }
-    pub(crate) fn flatten_roles(&self, user: &str) -> Option<Vec<String>> {
-        self.access
-            .users
-            .get(user)
-            .map(|user| self.impl_flatten_roles(&user.roles))
+
+    // Fetches base defined roles for a user.
+    pub(crate) fn user_base_roles(&self, peer_id: PeerId) -> Option<&[String]> {
+        if let Some(roles) = self.azure_user_groups.get(&peer_id) {
+            return Some(roles.as_slice())
+        } else if let Some(user) = self.peers.get(&peer_id).and_then(Peer::user) {
+            return Some(self.access
+                .users
+                .get(user)
+                .map(|user| user.roles.as_slice())
+                .unwrap_or_default())
+        }
+
+        None
     }
 
-    fn impl_flatten_roles(&self, roles: &[String]) -> Vec<String> {
+    pub(crate) fn flatten_roles(&self, roles: &[String]) -> Vec<String> {
         let mut queue: VecDeque<String> = VecDeque::new();
         fn enqueue(queue: &mut VecDeque<String>, role: &str) {
             let role = role.to_string();
@@ -2075,10 +2080,9 @@ mod test {
     fn test_broker() {
         let config = BrokerConfig::default();
         let access = config.access.clone();
-        let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access, None);
+        let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), None);
         let roles = state_reader(&broker.state)
-            .flatten_roles("child-broker")
-            .unwrap();
+            .flatten_roles(access.users.get("child-broker").unwrap().roles.as_slice());
         assert_eq!(
             roles,
             vec![
