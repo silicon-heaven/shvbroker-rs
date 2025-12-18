@@ -53,6 +53,7 @@ use async_compat::CompatExt;
 
 pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     server_mode: ServerMode,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
@@ -61,11 +62,11 @@ pub(crate) async fn try_server_peer_loop(
     let res = match server_mode {
         ServerMode::Tcp => {
             info!("Entering TCP peer loop, peer: {peer_id}.");
-            server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+            server_tcp_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
         ServerMode::WebSocket => {
             info!("Entering WebSocket peer loop, peer: {peer_id}.");
-            server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+            server_ws_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
     };
     match res {
@@ -81,6 +82,7 @@ pub(crate) async fn try_server_peer_loop(
 }
 async fn server_tcp_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
@@ -94,11 +96,12 @@ async fn server_tcp_peer_loop(
     let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
     let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
+    server_peer_loop(peer_id, ip_addr, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 async fn server_ws_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
@@ -108,7 +111,7 @@ async fn server_ws_peer_loop(
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
     let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
+    server_peer_loop(peer_id, ip_addr, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 const IDLE_WATCHDOG_TIMEOUT_DEFAULT: u64 = 180;
@@ -126,6 +129,7 @@ async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
 
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
@@ -327,6 +331,7 @@ pub(crate) async fn server_peer_loop(
 
                     broker_writer.send(BrokerCommand::CheckAuth {
                         peer_id,
+                        ip_addr,
                         sender: peer_writer.clone(),
                         user: user.as_str().to_string(),
                         password: password.to_string(),
@@ -792,7 +797,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         tasks.push(smol::spawn(async move {
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_addr);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_addr, local_addr);
-            let res = server_peer_loop(peer_id, broker_sender, frame_reader, frame_writer, broker_config).await;
+            let res = server_peer_loop(peer_id, None, broker_sender, frame_reader, frame_writer, broker_config).await;
             (peer_id, peer_local_addr, res)
         }));
     }

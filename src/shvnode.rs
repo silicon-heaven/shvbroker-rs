@@ -333,6 +333,7 @@ pub const DIR_BROKER_CURRENT_CLIENT: &str = ".broker/currentClient";
 pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
+pub const DIR_BROKER_ACCESS_ALLOWED_IPS: &str = ".broker/access/allowedIps";
 
 pub const DIR_SHV2_BROKER_APP: &str = ".broker/app";
 pub const DIR_SHV2_BROKER_ETC_ACL_USERS: &str = ".broker/etc/acl/users";
@@ -871,6 +872,74 @@ impl ShvNode for BrokerAccessRolesNode {
                 };
                 let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
                 state_writer(&ctx.state).set_access_role(response_meta, key.as_str(), role)?;
+                Ok(ProcessRequestRetval::RetvalDeferred)
+            }
+            _ => {
+                Ok(ProcessRequestRetval::MethodNotFound)
+            }
+        }
+    }
+}
+
+pub(crate) struct BrokerAccessAllowedIpsNode {}
+impl BrokerAccessAllowedIpsNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+}
+impl ShvNode for BrokerAccessAllowedIpsNode {
+    fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
+        if shv_path.is_empty() {
+            ACCESS_NODE_METHODS
+        } else {
+            ACCESS_VALUE_NODE_METHODS
+        }
+    }
+
+    fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(state_reader(broker_state).access.allowed_ips.keys().map(|m| m.to_string()).collect())
+        } else {
+            Some(vec![])
+        }
+    }
+
+    fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+        match frame.method().unwrap_or_default() {
+            METH_VALUE => {
+                match state_reader(&ctx.state).access_allowed_ips(&ctx.node_path) {
+                    None => {
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    }
+                    Some(allowed_ips) => {
+                        Ok(ProcessRequestRetval::Retval(serde_json::to_string(allowed_ips)?.into()))
+                    }
+                }
+            }
+            METH_SET_VALUE => {
+                if !ctx.sql_available {
+                    return Err(make_access_ro_error().into())
+                }
+                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
+                let param = param.as_list();
+                let key = param.first().ok_or("Key is missing")?;
+                let allowed_ips = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let allowed_ips: Option<Result<Vec<ipnet::IpNet>,_>> = allowed_ips
+                    .map(|val| val
+                        .as_list()
+                        .iter()
+                        .map(|ip| ip
+                            .as_str()
+                            .parse()
+                        ).collect::<Result<Vec<_>,_>>());
+                let allowed_ips  = match allowed_ips {
+                    None => None,
+                    Some(Ok(allowed_ips)) => {Some(allowed_ips)}
+                    Some(Err(e)) => { return Err(e.into() )}
+                };
+                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
+                state_writer(&ctx.state).set_allowed_ips(response_meta, key.as_str(), allowed_ips);
                 Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
