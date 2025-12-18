@@ -27,8 +27,8 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-shvproto = { git = "https://github.com/silicon-heaven/libshvproto-rs.git", tag = "3.6.22", features = [ "serde" ] }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "7.1.0", features = ["websocket"] }
+shvproto = { version = "3.6.22", features = [ "serde" ] }
+shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "7.1.4", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
@@ -44,7 +44,7 @@ clap = { version = "4.4.12", features = ["derive"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 reqwest = { version = "0.12.20", features = ["json", "http2", "rustls-tls"], default-features = false, optional = true }
 serialport = "4.7.1"
-async-tungstenite = "0.29.1"
+async-tungstenite = "0.32.0"
 async-compat = { version = "0.2.4", optional = true }
 socketcan = { version = "3.5.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
