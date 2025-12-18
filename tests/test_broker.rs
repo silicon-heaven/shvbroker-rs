@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::Arc;
 use assert_cmd::cargo_bin;
 use shvrpc::rpcmessage::RpcErrorCode;
 use tempfile::NamedTempFile;
@@ -6,7 +7,6 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::{fs, thread, time::Duration};
 use shvclient::appnodes::{DotAppNode, DotDeviceNode};
 use shvclient::clientnode::SIG_CHNG;
-use shvclient::AppState;
 use shvproto::{RpcValue, rpcvalue};
 use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
@@ -174,15 +174,66 @@ fn test_broker() -> shvrpc::Result<()> {
     Ok(())
 }
 
-fn run_testing_device(url: Url, mount_point: &str) {
-    struct State {
-        number: AtomicI32,
-        text: RwLock<String>,
-    }
+struct State {
+    number: AtomicI32,
+    text: RwLock<String>,
+}
 
-    const NUMBER_MOUNT: &str = "state/number";
-    const TEXT_MOUNT: &str = "state/text";
-    const OVERSIZED_MOUNT: &str = "state/oversized";
+const NUMBER_MOUNT: &str = "state/number";
+const TEXT_MOUNT: &str = "state/text";
+const OVERSIZED_MOUNT: &str = "state/oversized";
+
+type AppState = Arc<State>;
+struct NumberNode {
+    state: AppState,
+}
+
+shvclient::impl_static_node!{
+    NumberNode(&self, request, client_cmd_tx) {
+        "get" [IsGetter, Read, "Null", "Int"] => {
+            Some(Ok(self.state.number.load(Ordering::SeqCst).into()))
+        }
+        "set" [IsSetter, Write, "Int", "Null"] (param: i32) => {
+            if self.state.number.load(Ordering::SeqCst) != param {
+                self.state.number.store(param, Ordering::SeqCst);
+                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
+                let _ = client_cmd_tx.send_message(sigchng);
+            }
+            Some(Ok(().into()))
+        }
+    }
+}
+
+struct TextNode {
+    state: AppState,
+}
+
+shvclient::impl_static_node!{
+    TextNode(&self, request, client_cmd_tx) {
+        "get" [IsGetter, Read, "String", "Null"] => {
+            let s = &*self.state.text.read().await;
+            Some(Ok(s.into()))
+        }
+        "set" [IsSetter, Write, "Null", "String"] (param: String) => {
+            if *self.state.text.read().await != param {
+                *self.state.text.write().await = param.clone();
+                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
+                let _ = client_cmd_tx.send_message(sigchng);
+            }
+            Some(Ok(().into()))
+        }
+    }
+}
+
+struct OversizedNode;
+shvclient::impl_static_node!{
+    OversizedNode(&self, _request, _client_cmd_tx) {
+        "get" [IsGetter, Read, "String", "Null"] (param: usize) => {
+            Some(Ok(std::iter::repeat_n('A', param).collect::<String>().into()))
+        }
+    }
+}
+fn run_testing_device(url: Url, mount_point: &str) {
 
     let client_config = shvclient::shvrpc::client::ClientConfig {
         url,
@@ -190,55 +241,15 @@ fn run_testing_device(url: Url, mount_point: &str) {
         ..Default::default()
     };
 
-    let state = AppState::new(State{ number: 0.into(), text: "".to_string().into() });
-
-    let number_node = shvclient::fixed_node!{
-        number_node_handler<State>(request, client_cmd_tx, app_state) {
-            "get" [IsGetter, Read, "Null", "Int"] => {
-                    Some(Ok(app_state.number.load(Ordering::SeqCst).into()))
-            }
-            "set" [IsSetter, Write, "Int", "Null"] (param: i32) => {
-                if app_state.number.load(Ordering::SeqCst) != param {
-                    app_state.number.store(param, Ordering::SeqCst);
-                    let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
-                    let _ = client_cmd_tx.send_message(sigchng);
-                }
-                Some(Ok(().into()))
-            }
-       }
-    };
-    let text_node = shvclient::fixed_node!{
-        text_node_handler<State>(request, client_cmd_tx, app_state) {
-            "get" [IsGetter, Read, "String", "Null"] => {
-                let s = &*app_state.text.read().await;
-                Some(Ok(s.into()))
-            }
-            "set" [IsSetter, Write, "Null", "String"] (param: String) => {
-                if *app_state.text.read().await != param {
-                    *app_state.text.write().await = param.clone();
-                    let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
-                    let _ = client_cmd_tx.send_message(sigchng);
-                }
-                Some(Ok(().into()))
-            }
-       }
-    };
-    let oversized_node = shvclient::fixed_node!{
-        text_node_handler<State>(_request, _client_cmd_tx, _app_state) {
-            "get" [IsGetter, Read, "String", "Null"] (param: usize) => {
-                Some(Ok(std::iter::repeat_n('A', param).collect::<String>().into()))
-            }
-       }
-    };
+    let state = Arc::new(State{ number: 0.into(), text: "".to_string().into() });
 
     smol::spawn(async move {
         shvclient::Client::new()
             .app(DotAppNode::new("shvbrokertestingdevice"))
             .device(DotDeviceNode::new("shvbrokertestingdevice", "0.1", Some("00000".into())))
-            .mount(NUMBER_MOUNT, number_node)
-            .mount(TEXT_MOUNT, text_node)
-            .mount(OVERSIZED_MOUNT, oversized_node)
-            .with_app_state(state)
+            .mount_static(NUMBER_MOUNT, NumberNode {state: state.clone()} )
+            .mount_static(TEXT_MOUNT, TextNode {state: state.clone()})
+            .mount_static(OVERSIZED_MOUNT, OversizedNode{})
             //.run_with_init(&client_config, init_task)
             .run(&client_config)
             .await

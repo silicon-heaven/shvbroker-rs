@@ -667,15 +667,6 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
-dependencies = [
- "unicode-segmentation",
-]
-
-[[package]]
-name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
@@ -1595,22 +1586,11 @@ checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libshvproto-macros"
-version = "0.2.0"
-source = "git+https://github.com/silicon-heaven/libshvproto-rs.git?tag=3.6.2#fcddcc731d4457b9d9dad5b8d377d46ac98d59b3"
-dependencies = [
- "convert_case 0.8.0",
- "proc-macro2",
- "quote",
- "syn 2.0.111",
-]
-
-[[package]]
-name = "libshvproto-macros"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa5a5556f28c7681af8680d7282b2244925c8dcaaeff5afefb8e096710b665b0"
 dependencies = [
- "convert_case 0.10.0",
+ "convert_case",
  "proc-macro2",
  "quote",
  "syn 2.0.111",
@@ -2552,6 +2532,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async-compat",
+ "async-trait",
  "async-tungstenite",
  "cargo-run-bin",
  "clap",
@@ -2571,8 +2552,8 @@ dependencies = [
  "serde_yaml",
  "serialport",
  "shvclient",
- "shvproto 3.6.28",
- "shvrpc 7.1.5",
+ "shvproto",
+ "shvrpc",
  "simple_logger",
  "smol 2.0.2",
  "smol-timeout",
@@ -2583,11 +2564,11 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.14.0"
-source = "git+https://github.com/silicon-heaven/libshvclient-rs.git?tag=0.14.0#12905cd43ba1d599c054538f7d793e15b8351652"
+version = "0.21.6"
 dependencies = [
  "async-broadcast",
- "duration-str 0.17.0",
+ "async-trait",
+ "duration-str 0.18.0",
  "futures",
  "futures-rustls",
  "futures-time",
@@ -2595,22 +2576,10 @@ dependencies = [
  "macro_magic",
  "rustls-pemfile",
  "rustls-platform-verifier",
- "shvproto 3.6.2",
- "shvrpc 3.12.2",
+ "shvproto",
+ "shvrpc",
  "smol 2.0.2",
  "url",
-]
-
-[[package]]
-name = "shvproto"
-version = "3.6.2"
-source = "git+https://github.com/silicon-heaven/libshvproto-rs.git?tag=3.6.2#fcddcc731d4457b9d9dad5b8d377d46ac98d59b3"
-dependencies = [
- "chrono",
- "clap",
- "hex",
- "libshvproto-macros 0.2.0",
- "log",
 ]
 
 [[package]]
@@ -2622,30 +2591,9 @@ dependencies = [
  "chrono",
  "clap",
  "hex",
- "libshvproto-macros 0.2.1",
+ "libshvproto-macros",
  "log",
  "serde",
-]
-
-[[package]]
-name = "shvrpc"
-version = "3.12.2"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=3.12.2#bce43074b597db7ec57379254057b7aa524c3dc5"
-dependencies = [
- "anyhow",
- "async-trait",
- "crc",
- "duration-str 0.17.0",
- "futures",
- "futures-time",
- "glob",
- "hex",
- "log",
- "serde",
- "serde_yaml",
- "sha1",
- "shvproto 3.6.2",
- "url",
 ]
 
 [[package]]
@@ -2666,7 +2614,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sha1",
- "shvproto 3.6.28",
+ "shvproto",
  "socketcan",
  "thiserror 2.0.17",
  "tungstenite",
