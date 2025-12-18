@@ -103,7 +103,6 @@ async fn server_ws_peer_loop(
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    use futures::StreamExt;
     let stream = async_tungstenite::accept_async(stream).await?;
     let (socket_sink, socket_stream) = stream.split();
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
