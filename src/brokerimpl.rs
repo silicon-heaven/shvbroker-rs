@@ -1,13 +1,10 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
-    process_local_dir_ls, AppNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode,
-    BrokerCurrentClientNode, BrokerNode, ProcessRequestRetval, Shv2BrokerAppNode, ShvNode,
-    DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT,
-    DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE,
-    METH_UNSUBSCRIBE, SIG_LSMOD, SIG_MNTMOD
+    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
+use crate::sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS};
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -30,7 +27,6 @@ use smol::channel;
 use smol::channel::{Receiver, Sender, unbounded};
 use smol_timeout::TimeoutExt;
 use url::Url;
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap,VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -67,6 +63,7 @@ pub enum BrokerCommand {
     CheckAuth {
         sender: Sender<BrokerToPeerMessage>,
         peer_id: PeerId,
+        ip_addr: Option<core::net::IpAddr>,
         nonce: Option<String>,
         user: String,
         password: String,
@@ -409,17 +406,17 @@ async fn server_accept_loop(
         };
 
         let peer_id = next_peer_id();
-        let peer_addr = stream.peer_addr().map_or(Cow::from("<unknown>"), |a| a.to_string().into());
-        info!("Accepted TCP connection from peer: {peer_addr}, peer_id: {peer_id}");
+        let peer_addr = stream.peer_addr().as_ref().map(core::net::SocketAddr::ip).ok();
+        info!("Accepted TCP connection from peer: {peer_addr:?}, peer_id: {peer_id}");
 
         let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.as_ref().cloned() {
             match tls_acceptor.accept(stream).await {
                 Ok(stream) => {
-                    info!("TLS handshake OK, peer: {peer_addr}, peer_id: {peer_id}");
+                    info!("TLS handshake OK, peer: {peer_addr:?}, peer_id: {peer_id}");
                     Box::new(stream)
                 }
                 Err(err) => {
-                    error!("TLS handshake FAILED, peer: {peer_addr}, err: {err}");
+                    error!("TLS handshake FAILED, peer: {peer_addr:?}, err: {err}");
                     smol::Timer::after(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -428,7 +425,7 @@ async fn server_accept_loop(
             Box::new(stream)
         };
 
-        spawn_and_log_error(peer::try_server_peer_loop(peer_id, server_mode, broker_sender.clone(), stream, broker_config.clone()));
+        spawn_and_log_error(peer::try_server_peer_loop(peer_id, peer_addr, server_mode, broker_sender.clone(), stream, broker_config.clone()));
     }
     Ok(())
 }
@@ -905,9 +902,19 @@ impl BrokerState {
         self.peers.insert(peer_id, peer);
         Ok(())
     }
+
     fn user_deactivated(&self, user: &str) -> bool {
         self.access.users.get(user).is_some_and(|user| user.deactivated)
     }
+
+    fn login_allowed_from_ip(&self, user: &str, ip: core::net::IpAddr) -> bool {
+        let Some(allowed_ips) = self.access.allowed_ips.get(user) else {
+            return true;
+        };
+
+        allowed_ips.iter().any(|allowed_ip| allowed_ip.contains(&ip))
+    }
+
     fn sha_password(&self, user: &str) -> Option<String> {
         match self.access.users.get(user) {
             None => None,
@@ -1051,17 +1058,40 @@ impl BrokerState {
                 "".to_string()
             });
             let sql = if self.access.mounts.contains_key(id) {
-                UpdateSqlOperation::Update { id, json }
+                UpdateSqlOperation::Update {table: TBL_MOUNTS, id, json }
             } else {
-                UpdateSqlOperation::Insert { id, json }
+                UpdateSqlOperation::Insert {table: TBL_MOUNTS, id, json }
             };
             self.access.mounts.insert(id.to_string(), mount);
             sql
         } else {
             self.access.mounts.remove(id);
-            UpdateSqlOperation::Delete { id }
+            UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
         };
-        self.update_sql(response_meta, "mounts", sqlop);
+        self.update_sql(response_meta, vec![sqlop]);
+    }
+
+    pub(crate) fn access_allowed_ips(&self, id: &str) -> Option<&Vec<ipnet::IpNet>> {
+        self.access.allowed_ips.get(id)
+    }
+    pub(crate) fn set_allowed_ips(&mut self, response_meta: MetaMap, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>) {
+        let sqlop = if let Some(allowed_ips) = allowed_ips {
+            let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
+                error!("Generate SQL statement error: {e}");
+                "".to_string()
+            });
+            let sql = if self.access.allowed_ips.contains_key(id) {
+                UpdateSqlOperation::Update {table: TBL_ALLOWED_IPS, id, json }
+            } else {
+                UpdateSqlOperation::Insert {table: TBL_ALLOWED_IPS, id, json }
+            };
+            self.access.allowed_ips.insert(id.to_string(), allowed_ips);
+            sql
+        } else {
+            self.access.allowed_ips.remove(id);
+            UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
+        };
+        self.update_sql(response_meta, vec![sqlop]);
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
@@ -1073,17 +1103,21 @@ impl BrokerState {
                 "".to_string()
             });
             let sql = if self.access.users.contains_key(id) {
-                UpdateSqlOperation::Update { id, json }
+                vec![UpdateSqlOperation::Update { table: TBL_USERS,  id, json }]
             } else {
-                UpdateSqlOperation::Insert { id, json }
+                vec![UpdateSqlOperation::Insert { table: TBL_USERS, id, json }]
             };
             self.access.users.insert(id.to_string(), user);
             sql
         } else {
             self.access.users.remove(id);
-            UpdateSqlOperation::Delete { id }
+            let mut res = vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }];
+            if self.access.allowed_ips.remove(id).is_some() {
+                res.push(UpdateSqlOperation::Delete { table: TBL_USERS, id })
+            }
+            res
         };
-        self.update_sql(response_meta, "users", sqlop);
+        self.update_sql(response_meta, sqlop);
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
@@ -1093,33 +1127,35 @@ impl BrokerState {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             let json = serde_json::to_string(&role).expect("JSON should be generated");
             let sql = if self.access.roles.contains_key(role_name) {
-                UpdateSqlOperation::Update { id: role_name, json }
+                UpdateSqlOperation::Update { table: TBL_ROLES, id: role_name, json }
             } else {
-                UpdateSqlOperation::Insert { id: role_name, json }
+                UpdateSqlOperation::Insert { table: TBL_ROLES, id: role_name, json }
             };
             self.access.roles.insert(role_name.to_string(), role);
             self.role_access_rules.insert(role_name.to_string(), parsed_access_rules);
             sql
         } else {
             self.access.roles.remove(role_name);
-            self.role_access_rules.remove(role_name);
-            UpdateSqlOperation::Delete { id: role_name }
+            UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
         };
-        self.update_sql(response_meta, "roles", sqlop);
+        self.update_sql(response_meta, vec![sqlop]);
         Ok(())
     }
-    fn update_sql(&self, response_meta: MetaMap, table: &str, oper: UpdateSqlOperation) {
-        let query = match oper {
-            UpdateSqlOperation::Insert { id, json } => {
-                format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');")
-            }
-            UpdateSqlOperation::Update { id, json } => {
-                format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';")
-            }
-            UpdateSqlOperation::Delete { id } => {
-                format!("DELETE FROM {table} WHERE id = '{id}';")
-            }
-        };
+    fn update_sql(&self, response_meta: MetaMap, oper: Vec<UpdateSqlOperation>) {
+        let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
+            match oper {
+                UpdateSqlOperation::Insert { table, id, json } => {
+                    acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
+                }
+                UpdateSqlOperation::Update { table, id, json } => {
+                    acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
+                }
+                UpdateSqlOperation::Delete { table, id } => {
+                    acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
+                }
+            };
+            acc
+        });
         let sender = self.command_sender.clone();
         let (sql_response_sender, sql_response_receiver) = unbounded();
         smol::spawn(async move {
@@ -1255,9 +1291,9 @@ fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>>
 }
 
 enum UpdateSqlOperation<'a> {
-    Insert { id: &'a str, json: String },
-    Update { id: &'a str, json: String },
-    Delete { id: &'a str },
+    Insert { table: &'a str, id: &'a str, json: String },
+    Update { table: &'a str, id: &'a str, json: String },
+    Delete { table: &'a str, id: &'a str },
 }
 pub struct BrokerImpl {
     pub(crate) state: SharedBrokerState,
@@ -1517,6 +1553,10 @@ impl BrokerImpl {
         add_node(
             DIR_BROKER_ACCESS_ROLES,
             Box::new(BrokerAccessRolesNode::new()),
+        );
+        add_node(
+            DIR_BROKER_ACCESS_ALLOWED_IPS,
+            Box::new(BrokerAccessAllowedIpsNode::new()),
         );
         if config.shv2_compatibility {
             add_node(
@@ -1875,8 +1915,21 @@ impl BrokerImpl {
                 }
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
-            BrokerCommand::CheckAuth { sender, peer_id, nonce, user, password, login_type } => {
+            BrokerCommand::CheckAuth {
+                sender,
+                ip_addr,
+                peer_id,
+                nonce,
+                user,
+                password,
+                login_type
+            } => {
                 let result = 'result: {
+                    if let Some(ip_addr) = ip_addr && !state_reader(&self.state).login_allowed_from_ip(&user, ip_addr) {
+                        info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
+                        break 'result false;
+                    }
+
                     if state_reader(&self.state).user_deactivated(&user) {
                         break 'result false;
                     }

@@ -1478,6 +1478,9 @@ name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "iri-string"
@@ -2508,7 +2511,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.19.14"
+version = "3.20.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2521,6 +2524,7 @@ dependencies = [
  "duration-str",
  "futures",
  "futures-rustls",
+ "ipnet",
  "log",
  "rand",
  "rcgen",
