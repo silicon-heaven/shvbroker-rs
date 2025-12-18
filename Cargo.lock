@@ -2572,7 +2572,7 @@ dependencies = [
  "serialport",
  "shvclient",
  "shvproto 3.6.28",
- "shvrpc 7.1.4",
+ "shvrpc 7.1.5",
  "simple_logger",
  "smol 2.0.2",
  "smol-timeout",
@@ -2650,8 +2650,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "7.1.4"
-source = "git+https://github.com/silicon-heaven/libshvrpc-rs.git?tag=7.1.4#0efccc26ac3de69e2b73ed4d38405ad4fbf2a010"
+version = "7.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fbb72bcd260ab0db52c05c755d1a9c2b69d2dc4f505b54bb36ac5fc5e1460aa"
 dependencies = [
  "anyhow",
  "async-trait",

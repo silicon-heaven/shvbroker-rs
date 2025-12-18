@@ -28,7 +28,7 @@ panic = "abort"
 
 [dependencies]
 shvproto = { version = "3.6.22", features = [ "serde" ] }
-shvrpc = { git = "https://github.com/silicon-heaven/libshvrpc-rs.git", tag = "7.1.4", features = ["websocket"] }
+shvrpc = { version = "7.1.4", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
