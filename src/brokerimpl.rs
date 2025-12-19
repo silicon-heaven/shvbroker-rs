@@ -64,9 +64,13 @@ impl Subscription {
 
 #[derive(Debug)]
 pub enum BrokerCommand {
-    GetPassword {
+    CheckAuth {
         sender: Sender<BrokerToPeerMessage>,
+        peer_id: PeerId,
+        nonce: Option<String>,
         user: String,
+        password: String,
+        login_type: String,
     },
     #[cfg(feature = "entra-id")]
     SetAzureGroups {
@@ -105,7 +109,7 @@ pub enum BrokerCommand {
 
 #[derive(Debug)]
 pub enum BrokerToPeerMessage {
-    PasswordSha1(Option<String>),
+    AuthResult(bool),
     SendFrame(RpcFrame),
     DisconnectByBroker {
         reason: Option<String>,
@@ -1871,15 +1875,40 @@ impl BrokerImpl {
                 }
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
-            BrokerCommand::GetPassword { sender, user } => {
-                let shapwd = if !state_reader(&self.state).user_deactivated(&user) {
-                    state_reader(&self.state).sha_password(&user)
-                } else {
-                    None
+            BrokerCommand::CheckAuth { sender, peer_id, nonce, user, password, login_type } => {
+                let result = 'result: {
+                    if state_reader(&self.state).user_deactivated(&user) {
+                        break 'result false;
+                    }
+
+                    let Some(shapwd) = state_reader(&self.state).sha_password(&user) else {
+                        break 'result false;
+                    };
+
+                    match login_type.as_str() {
+                        "PLAIN" => {
+                            let client_shapass = sha1_hash(password.as_bytes());
+                            client_shapass == shapwd
+                        },
+                        "SHA1" => {
+                            if let Some(nonce) = &nonce {
+                                let mut data = nonce.as_bytes().to_vec();
+                                data.extend_from_slice(shapwd.as_bytes());
+                                password == sha1_hash(&data)
+                            } else {
+                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
+                                false
+                            }
+                        },
+                        _ => {
+                            debug!("peer_id({peer_id}): unknown login type '{login_type}'");
+                            false
+                        }
+                    }
                 };
 
                 sender
-                    .send(BrokerToPeerMessage::PasswordSha1(shapwd))
+                    .send(BrokerToPeerMessage::AuthResult(result))
                     .await?;
             }
             #[cfg(feature = "entra-id")]
