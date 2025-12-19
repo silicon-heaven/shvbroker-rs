@@ -20,7 +20,7 @@ rcgen = "0.14.5"
 async-trait = "0.1.89"
 
 [package.metadata.bin]
-shvcall = { git = "https://github.com/silicon-heaven/shvcall-rs.git", branch = "master", version = "^3.9" }
+shvcall = { version = "^3.9.0" }
 
 [profile.release]
 panic = "abort"

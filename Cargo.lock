@@ -2565,6 +2565,8 @@ dependencies = [
 [[package]]
 name = "shvclient"
 version = "0.21.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb6a0f91b904d8dd61abcd6bce3799820b4518980e1aaaf88a1636741ab813ae"
 dependencies = [
  "async-broadcast",
  "async-trait",
