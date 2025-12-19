@@ -164,6 +164,9 @@ impl ProfileValue {
                     }
                 }
             }
+            (ProfileValue::List(lhs_list), ProfileValue::List(rhs_list)) => {
+                lhs_list.extend_from_slice(&rhs_list);
+            }
             // Ignore all other cases, values that are merged into self do not override self.
             _ => ()
         }
@@ -470,12 +473,11 @@ mod tests {
         }
 
         #[test]
-        fn merge_list_does_not_replace_list() {
+        fn merge_list_concats() {
             let mut a = ProfileValue::List(vec![ProfileValue::Int(1)]);
-            let orig_a = a.clone();
             let b = ProfileValue::List(vec![ProfileValue::Int(2), ProfileValue::Int(3)]);
             a.merge(b.clone());
-            assert_eq!(a, orig_a);
+            assert_eq!(a, ProfileValue::List(vec![ProfileValue::Int(1), ProfileValue::Int(2), ProfileValue::Int(3)]));
         }
 
         #[test]
