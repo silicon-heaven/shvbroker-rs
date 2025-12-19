@@ -3,8 +3,11 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.19.4"
+version = "3.19.5"
 edition = "2024"
+
+[package.metadata.bin]
+shvcall = { version = "^3.9.0" }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -21,9 +24,6 @@ const_format = "0.2.35"
 anyhow = "1.0.100"
 rcgen = "0.14.5"
 async-trait = "0.1.89"
-
-[package.metadata.bin]
-shvcall = { version = "^3.9.0" }
 
 [profile.release]
 panic = "abort"

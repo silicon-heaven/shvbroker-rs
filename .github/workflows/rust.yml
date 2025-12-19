@@ -35,7 +35,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - name: Install system dependencies
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -63,7 +63,7 @@ jobs:
       HASH_FOR_FILENAMES: ${{github.event.pull_request.head.sha || github.sha}}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install system dependencies
         run: |
           sudo apt update
