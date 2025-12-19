@@ -811,20 +811,6 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "duration-str"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9add086174f60bcbcfde7175e71dcfd99da24dfd12f611d0faf74f4f26e15a06"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde",
- "thiserror 2.0.17",
- "time",
- "winnow 0.7.14",
-]
-
-[[package]]
-name = "duration-str"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6eb193f176998d2f9fed5cfea52af8237f86a03fe66b85f96ad75d890a85299"
@@ -2527,7 +2513,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.19.7"
+version = "3.19.8"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2537,7 +2523,7 @@ dependencies = [
  "cargo-run-bin",
  "clap",
  "const_format",
- "duration-str 0.17.0",
+ "duration-str",
  "futures",
  "futures-rustls",
  "log",
@@ -2564,13 +2550,13 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.21.6"
+version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb6a0f91b904d8dd61abcd6bce3799820b4518980e1aaaf88a1636741ab813ae"
+checksum = "9e383e8993f0153ed7f96e627113a33839ce8b651adf8be8b1603f86d51f08f0"
 dependencies = [
  "async-broadcast",
  "async-trait",
- "duration-str 0.18.0",
+ "duration-str",
  "futures",
  "futures-rustls",
  "futures-time",
@@ -2600,14 +2586,14 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "7.1.5"
+version = "7.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fbb72bcd260ab0db52c05c755d1a9c2b69d2dc4f505b54bb36ac5fc5e1460aa"
+checksum = "1e044c1198308d33f5470afee029a5d078b9746823d9723e31d332799f247c9b"
 dependencies = [
  "anyhow",
  "async-trait",
  "crc",
- "duration-str 0.18.0",
+ "duration-str",
  "futures",
  "futures-time",
  "glob",
