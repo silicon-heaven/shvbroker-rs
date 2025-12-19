@@ -164,10 +164,8 @@ impl ProfileValue {
                     }
                 }
             }
-            // Replace in all other cases except the other value is not set (Null)
-            (this, rhs) => {
-                *this = rhs;
-            }
+            // Ignore all other cases, values that are merged into self do not override self.
+            _ => ()
         }
     }
 }
@@ -362,17 +360,17 @@ mod tests {
         }
 
         #[test]
-        fn merge_simple_replacement() {
+        fn merge_simple() {
             let mut a = ProfileValue::Int(10);
             a.merge(ProfileValue::Int(20));
-            assert_eq!(a, ProfileValue::Int(20));
+            assert_eq!(a, ProfileValue::Int(10));
         }
 
         #[test]
         fn merge_null_does_not_replace() {
             let mut a = ProfileValue::String("Hello".into());
             a.merge(ProfileValue::Null);
-            assert_eq!(a, ProfileValue::Null);
+            assert_eq!(a, ProfileValue::String("Hello".into()));
         }
 
         #[test]
@@ -397,7 +395,7 @@ mod tests {
         }
 
         #[test]
-        fn merge_map_replaces_non_map_values() {
+        fn merge_map_does_not_replace_non_map_values() {
             let mut a = map([
                 ("name", ProfileValue::String("Alice".into())),
             ]);
@@ -410,7 +408,7 @@ mod tests {
 
             assert_eq!(
                 a,
-                map([("name", ProfileValue::String("Bob".into()))])
+                map([("name", ProfileValue::String("Alice".into()))])
             );
         }
 
@@ -438,7 +436,7 @@ mod tests {
                         "settings",
                         map([
                             ("dark_mode", ProfileValue::Bool(false)),
-                            ("volume", ProfileValue::Int(10)),
+                            ("volume", ProfileValue::Int(5)),
                             ("notifications", ProfileValue::Bool(true)),
                         ])
                 )])
@@ -446,11 +444,11 @@ mod tests {
         }
 
         #[test]
-        fn merge_non_map_replaced_by_map() {
+        fn merge_non_map_not_replaced_by_map() {
             let mut a = ProfileValue::Int(5);
             let b = map([("key", ProfileValue::Bool(true))]);
             a.merge(b.clone());
-            assert_eq!(a, b);
+            assert_eq!(a, ProfileValue::Int(5));
         }
 
         #[test]
@@ -467,16 +465,17 @@ mod tests {
 
             assert_eq!(
                 a,
-                map([("theme", ProfileValue::Null)])
+                map([("theme", ProfileValue::String("light".into()))])
             );
         }
 
         #[test]
-        fn merge_list_replaces_entire_list() {
+        fn merge_list_does_not_replace_list() {
             let mut a = ProfileValue::List(vec![ProfileValue::Int(1)]);
+            let orig_a = a.clone();
             let b = ProfileValue::List(vec![ProfileValue::Int(2), ProfileValue::Int(3)]);
             a.merge(b.clone());
-            assert_eq!(a, b);
+            assert_eq!(a, orig_a);
         }
 
         #[test]
