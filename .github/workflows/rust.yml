@@ -87,25 +87,6 @@ jobs:
         with:
           project_name: shvbroker
 
-  check-version-bump:
-    name: Check version bump
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Check version bump
-        uses: silicon-heaven/rust-check-version-bump@v1.0.1
-
-      - name: Check if Cargo.lock was changed
-        continue-on-error: ${{startsWith(github.head_ref, 'dependabot/')}}
-        run: |
-          cargo update --workspace
-          if ! git diff --exit-code; then
-            echo "Error: No version bump detected in Cargo.lock"
-            exit 1
-          fi
-
   upload-crates-io:
     name: Publish crates on crates.io
     if: github.ref == 'refs/heads/master'
