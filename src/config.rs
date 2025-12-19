@@ -56,7 +56,7 @@ impl Default for ConnectionKind {
 pub struct BrokerConnectionConfig {
     pub name: String,
     #[serde(default)]
-    pub enabled:bool,
+    pub enabled: bool,
     #[serde(default)]
     pub connection_kind: ConnectionKind,
     pub client: ClientConfig,
@@ -67,6 +67,8 @@ pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
     pub roles: BTreeMap<String, Role>,
     pub mounts: BTreeMap<DeviceId, Mount>,
+    #[serde(default)]
+    pub allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
@@ -346,6 +348,7 @@ impl Default for BrokerConfig {
                     ("test-device".into(), Mount{ mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() }),
                     ("test-child-broker".into(), Mount{ mount_point: "test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
+                allowed_ips: Default::default(),
             },
             tunnelling: Default::default(),
             azure: Default::default(),

@@ -5,9 +5,10 @@ use rusqlite::Connection;
 
 use crate::config::AccessConfig;
 
-const TBL_MOUNTS: &str = "mounts";
-const TBL_USERS: &str = "users";
-const TBL_ROLES: &str = "roles";
+pub const TBL_MOUNTS: &str = "mounts";
+pub const TBL_USERS: &str = "users";
+pub const TBL_ROLES: &str = "roles";
+pub const TBL_ALLOWED_IPS: &str = "allowed_ips";
 
 pub fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Connection, AccessConfig)> {
     info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
@@ -65,12 +66,20 @@ fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc:
     save_table(sql_conn, TBL_MOUNTS, &access.mounts)?;
     save_table(sql_conn, TBL_USERS, &access.users)?;
     save_table(sql_conn, TBL_ROLES, &access.roles)?;
+    save_table(sql_conn, TBL_ALLOWED_IPS, &access.allowed_ips)?;
 
     Ok(())
 }
 
 fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
     fn load_table<TableElementType: for <'a> serde::Deserialize<'a>>(sql_conn: &Connection, table_name: &str) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
+        sql_conn.execute(&format!(r#"
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id character varying PRIMARY KEY,
+                def character varying
+            );
+        "#), [])?;
+
         let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {table_name}"))?;
         let rows = stmt.query([])?;
         let first_two_columns = rows.mapped(|row| {
@@ -91,5 +100,6 @@ fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
         users: load_table(sql_conn, TBL_USERS)?,
         roles: load_table(sql_conn, TBL_ROLES)?,
         mounts: load_table(sql_conn, TBL_MOUNTS)?,
+        allowed_ips: load_table(sql_conn, TBL_ALLOWED_IPS)?,
     })
 }
