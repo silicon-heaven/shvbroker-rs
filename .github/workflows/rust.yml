@@ -105,3 +105,16 @@ jobs:
             echo "Error: No version bump detected in Cargo.lock"
             exit 1
           fi
+
+  upload-crates-io:
+    name: Publish crates on crates.io
+    if: github.ref == 'refs/heads/master'
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - run: |
+          cargo login <<< "${{secrets.CRATES_IO_TOKEN}}"
+          cargo publish
