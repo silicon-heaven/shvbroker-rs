@@ -56,7 +56,7 @@ impl Default for ConnectionKind {
 pub struct BrokerConnectionConfig {
     pub name: String,
     #[serde(default)]
-    pub enabled:bool,
+    pub enabled: bool,
     #[serde(default)]
     pub connection_kind: ConnectionKind,
     pub client: ClientConfig,
