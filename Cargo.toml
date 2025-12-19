@@ -1,5 +1,8 @@
 [package]
 name = "shvbroker"
+description = "Rust implementation of the SHV broker"
+license = "MIT"
+repository = "https://github.com/silicon-heaven/shvbroker-rs"
 version = "3.19.3"
 edition = "2024"
 
