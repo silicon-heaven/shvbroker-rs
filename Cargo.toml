@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.19.5"
+version = "3.19.6"
 edition = "2024"
 
 [package.metadata.bin]
@@ -32,13 +32,13 @@ panic = "abort"
 
 [dependencies]
 shvproto = { version = "3.6.22", features = [ "serde" ] }
-shvrpc = { version = "7.1.4", features = ["websocket"] }
+shvrpc = { version = "7.1.6", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
 log = "0.4.21"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
-duration-str = "0.17"
+duration-str = "0.18"
 rand = "0.9.0"
 url = "2.5"
 serde = "1.0.203"
