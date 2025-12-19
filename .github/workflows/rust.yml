@@ -21,26 +21,39 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest]
         toolchain: [stable, nightly]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            features: --all-features
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: --features entra-id
     runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
     - name: Install system dependencies
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt update
         sudo apt-get install -y libudev-dev pkg-config
+    - name: Set up Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        target: ${{ matrix.target }}
+        components: clippy
+        toolchain: ${{ matrix.toolchain }}
+        override: true
     - name: Clippy
-      run: cargo clippy --verbose --all-targets --all-features -- --deny warnings
+      run: cargo clippy --all-targets ${{matrix.features}} -- --deny warnings
     - name: Build
-      run: cargo build --verbose --all-features
+      run: cargo build ${{matrix.features}}
     - name: Run tests
-      run: cargo test --verbose --all-features -- --test-threads=1
+      run: cargo test ${{matrix.features}} -- --test-threads=1
 
   create-nightly-release:
     name: Create nightly
@@ -87,21 +100,15 @@ jobs:
         with:
           project_name: shvbroker
 
-  check-version-bump:
-    name: Check version bump
+  upload-crates-io:
+    name: Publish crates on crates.io
+    if: github.ref == 'refs/heads/master'
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
-      - name: Check version bump
-        uses: silicon-heaven/rust-check-version-bump@v1.0.1
-
-      - name: Check if Cargo.lock was changed
-        continue-on-error: ${{startsWith(github.head_ref, 'dependabot/')}}
-        run: |
-          cargo update --workspace
-          if ! git diff --exit-code; then
-            echo "Error: No version bump detected in Cargo.lock"
-            exit 1
-          fi
+      - run: |
+          cargo login <<< "${{secrets.CRATES_IO_TOKEN}}"
+          cargo publish

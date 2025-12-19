@@ -7,7 +7,7 @@ use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
 use shvbroker::brokerimpl::{run_broker, BrokerImpl};
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
-use shvclient::client::{RpcCallDirExists, RpcCallDirList};
+use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
 use shvrpc::client::ClientConfig;
 use smol_timeout::TimeoutExt;
@@ -46,7 +46,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
     panic!("Could not start the broker");
 }
 
-async fn start_client() -> Option<(ClientCommandSender<()>, ClientEventsReceiver)> {
+async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
     let (tx, rx) = futures::channel::oneshot::channel();
     smol::spawn(async {
         let client_config = shvclient::shvrpc::client::ClientConfig {
@@ -56,7 +56,7 @@ async fn start_client() -> Option<(ClientCommandSender<()>, ClientEventsReceiver
             heartbeat_interval: Duration::from_secs(60),
             reconnect_interval: None,
         };
-        shvclient::client::Client::<_,()>::new_plain()
+        shvclient::client::Client::new_plain()
             .run_with_init(&client_config, |commands_tx, events_rx| {
                 tx.send((commands_tx, events_rx))
                     .unwrap_or_else(|(commands_tx, _)| {
