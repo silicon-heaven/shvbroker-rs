@@ -2545,9 +2545,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.21.7"
+version = "0.21.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e383e8993f0153ed7f96e627113a33839ce8b651adf8be8b1603f86d51f08f0"
+checksum = "2d3558862827774f6a07a3c946cf82f6fe18f8b9754c2063da37985df9fa4dd0"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -2581,9 +2581,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "7.1.6"
+version = "7.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e044c1198308d33f5470afee029a5d078b9746823d9723e31d332799f247c9b"
+checksum = "b9e350832137e2365cc3354159772b929c121b161886ca48d70f7e8346f9abc6"
 dependencies = [
  "anyhow",
  "async-trait",
