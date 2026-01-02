@@ -2153,9 +2153,14 @@ pub(crate) struct NodeRequestContext {
 
 #[cfg(test)]
 mod test {
+    use smol::channel;
+
+    use crate::brokerimpl::BrokerCommand;
+    use crate::brokerimpl::BrokerToPeerMessage;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::brokerimpl::state_reader;
+    use crate::config::Password;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     #[test]
@@ -2176,6 +2181,58 @@ mod test {
                 "browse"
             ]
         );
+    }
+
+    smol_macros::test! {
+        async fn test_check_auth() {
+            let config = BrokerConfig::default();
+            let mut access = config.access.clone();
+            access.users.insert("deactivated_user".to_string(), crate::config::User {
+                password: Password::Plain("some_pw".to_string()),
+                roles: Default::default(),
+                deactivated: true,
+            });
+
+            access.users.insert("localhost_user".to_string(), crate::config::User {
+                password: Password::Plain("some_pw".to_string()),
+                roles: Default::default(),
+                deactivated: false,
+            });
+
+            access.allowed_ips.insert("localhost_user".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
+
+            for ((user, password, ip_addr), expected_result) in [
+                (("viewer", "viewer", None), true),
+                (("viewer", "wrong-password", None), false),
+                (("nonexisting_user", "some_pw", None), false),
+                (("deactivated_user", "some_pw", None), false),
+                (("localhost_user", "some_pw", None), true),
+                (("localhost_user", "some_pw", Some("127.0.0.1".parse().unwrap())), true),
+                (("localhost_user", "some_pw", Some("127.0.0.2".parse().unwrap())), true),
+                (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
+            ] {
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), None);
+                let (sender, reader) = channel::unbounded::<BrokerToPeerMessage>();
+                broker.process_broker_command(BrokerCommand::CheckAuth {
+                    sender,
+                    peer_id: 0,
+                    ip_addr,
+                    nonce: None,
+                    user: user.to_string(),
+                    password: password.to_string(),
+                    login_type: "PLAIN".to_string()
+                }).await.expect("Sending commands must work");
+
+                match reader.recv().await.expect("Receiving resposnses must work") {
+                    BrokerToPeerMessage::AuthResult(resp) => {
+                        assert_eq!(resp, expected_result);
+                    },
+                    msg => {
+                        panic!("Got unexpected BrokerToPeerMessage: {msg:?}");
+                    },
+                }
+            }
+        }
     }
 
     #[test]
