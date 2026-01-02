@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.19.14"
+version = "3.20.0"
 edition = "2024"
 
 [package.metadata.bin]
@@ -52,6 +52,8 @@ socketcan = { version = "3.5.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.1"
+smol-macros = "0.1.1"
+ipnet = { version = "2.11.0", features = ["serde"] }
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

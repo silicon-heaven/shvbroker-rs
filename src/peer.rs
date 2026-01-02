@@ -33,7 +33,7 @@ use crate::brokerimpl::load_certs;
 use crate::brokerimpl::AsyncReadWriteBox;
 use crate::brokerimpl::ServerMode;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-use shvrpc::util::{join_path, login_from_url, sha1_hash, starts_with_path, strip_prefix_path};
+use shvrpc::util::{join_path, login_from_url, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
@@ -53,6 +53,7 @@ use async_compat::CompatExt;
 
 pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     server_mode: ServerMode,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
@@ -61,11 +62,11 @@ pub(crate) async fn try_server_peer_loop(
     let res = match server_mode {
         ServerMode::Tcp => {
             info!("Entering TCP peer loop, peer: {peer_id}.");
-            server_tcp_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+            server_tcp_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
         ServerMode::WebSocket => {
             info!("Entering WebSocket peer loop, peer: {peer_id}.");
-            server_ws_peer_loop(peer_id, broker_writer.clone(), stream, broker_config).await
+            server_ws_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
     };
     match res {
@@ -81,6 +82,7 @@ pub(crate) async fn try_server_peer_loop(
 }
 async fn server_tcp_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
@@ -94,11 +96,12 @@ async fn server_tcp_peer_loop(
     let frame_reader = StreamFrameReader::new(brd).with_peer_id(peer_id);
     let frame_writer = StreamFrameWriter::new(bwr).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
+    server_peer_loop(peer_id, ip_addr, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 async fn server_ws_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
@@ -108,7 +111,7 @@ async fn server_ws_peer_loop(
     let frame_reader = WebSocketFrameReader::new(socket_stream).with_peer_id(peer_id);
     let frame_writer = WebSocketFrameWriter::new(socket_sink).with_peer_id(peer_id);
 
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
+    server_peer_loop(peer_id, ip_addr, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 const IDLE_WATCHDOG_TIMEOUT_DEFAULT: u64 = 180;
@@ -126,6 +129,7 @@ async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
 
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
+    ip_addr: Option<core::net::IpAddr>,
     broker_writer: Sender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
@@ -325,41 +329,18 @@ pub(crate) async fn server_peer_loop(
 
                     let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
-                    broker_writer.send(BrokerCommand::GetPassword { sender: peer_writer.clone(), user: user.as_str().to_string() }).await?;
+                    broker_writer.send(BrokerCommand::CheckAuth {
+                        peer_id,
+                        ip_addr,
+                        sender: peer_writer.clone(),
+                        user: user.as_str().to_string(),
+                        password: password.to_string(),
+                        nonce: nonce.clone(),
+                        login_type: login_type.to_string(),
+                    }).await?;
                     match peer_reader.recv().await? {
-                        BrokerToPeerMessage::PasswordSha1(broker_shapass) => {
-                            let chkpwd = || {
-                                match broker_shapass {
-                                    None => {false}
-                                    Some(broker_shapass) => {
-                                        match login_type {
-                                            "PLAIN" => {
-                                                let client_shapass = sha1_hash(password.as_bytes());
-                                                client_shapass == broker_shapass
-                                            },
-                                            "SHA1" => {
-                                                if let Some(nonce) = &nonce {
-                                                    let mut data = nonce.as_bytes().to_vec();
-                                                    data.extend_from_slice(broker_shapass.as_bytes());
-                                                    let broker_shapass = sha1_hash(&data);
-                                                    //peer_log!(info, "nonce: {nonce}");
-                                                    //peer_log!(info, "client password: {password}");
-                                                    //peer_log!(info, "broker password: {broker_password}", broker_password = std::str::from_utf8(&broker_shapass).unwrap());
-                                                    password == broker_shapass
-                                                } else {
-                                                    peer_log!(debug, "user tried SHA1 login without using `:hello`");
-                                                    false
-                                                }
-                                            },
-                                            _ => {
-                                                peer_log!(debug, "unknown login type '{login_type}'");
-                                                false
-                                            }
-                                        }
-                                    }
-                                }
-                            };
-                            if chkpwd() {
+                        BrokerToPeerMessage::AuthResult(result) => {
+                            if result {
                                 peer_log!(debug, "password OK");
                                 let result = make_map!{"clientId" => peer_id};
                                 frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
@@ -371,7 +352,7 @@ pub(crate) async fn server_peer_loop(
                             }
                         }
                         _ => {
-                            panic!("Internal error, PeerEvent::PasswordSha1 expected");
+                            panic!("Internal error, PeerEvent::AuthResult expected");
                         }
                     }
                 },
@@ -505,8 +486,8 @@ pub(crate) async fn server_peer_loop(
                     }
                     Ok(event) => {
                         match event {
-                            BrokerToPeerMessage::PasswordSha1(_) => {
-                                panic!("PasswordSha1 cannot be received here")
+                            BrokerToPeerMessage::AuthResult(_) => {
+                                panic!("AuthResult cannot be received here")
                             }
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
@@ -816,7 +797,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         tasks.push(smol::spawn(async move {
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_addr);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_addr, local_addr);
-            let res = server_peer_loop(peer_id, broker_sender, frame_reader, frame_writer, broker_config).await;
+            let res = server_peer_loop(peer_id, None, broker_sender, frame_reader, frame_writer, broker_config).await;
             (peer_id, peer_local_addr, res)
         }));
     }
@@ -1200,8 +1181,8 @@ async fn broker_as_client_peer_loop(
                 }
                 Ok(event) => {
                     match event {
-                        BrokerToPeerMessage::PasswordSha1(_) => {
-                            panic!("PasswordSha1 cannot be received here")
+                        BrokerToPeerMessage::AuthResult(_) => {
+                            panic!("AuthResult cannot be received here")
                         }
                         BrokerToPeerMessage::DisconnectByBroker {reason} => {
                             info!("Disconnected by parent broker, client ID: {peer_id}, reason: {reason:?}");

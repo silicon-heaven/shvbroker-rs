@@ -54,7 +54,7 @@ async fn serial_peer_loop(
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
     let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-    server_peer_loop(peer_id, broker_writer, frame_reader, frame_writer, broker_config).await
+    server_peer_loop(peer_id, None, broker_writer, frame_reader, frame_writer, broker_config).await
 }
 
 pub(crate) fn create_serial_frame_reader_writer(port_name: &str, peer_id: PeerId) -> shvrpc::Result<(impl FrameReader + use<>, impl FrameWriter + use<>)> {
