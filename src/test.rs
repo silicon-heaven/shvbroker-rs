@@ -297,122 +297,120 @@ async fn test_broker_loop_as_admin_async() {
     broker_task.cancel().await;
 }
 
-#[test]
-fn test_tunnel_loop() {
-    smol::block_on(test_tunnel_loop_async())
-}
-async fn test_tunnel_loop_async() {
-    let mut config = BrokerConfig::default();
-    config.tunnelling.enabled = true;
-    let config = SharedBrokerConfig::new(config);
-    let access = config.access.clone();
-    let broker = BrokerImpl::new(config, access, None);
-    let broker_sender = broker.command_sender.clone();
-    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
+smol_macros::test! {
+    async fn test_tunnel_loop_async() {
+        let mut config = BrokerConfig::default();
+        config.tunnelling.enabled = true;
+        let config = SharedBrokerConfig::new(config);
+        let access = config.access.clone();
+        let broker = BrokerImpl::new(config, access, None);
+        let broker_sender = broker.command_sender.clone();
+        let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
-    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
-    let client_id = 3;
+        let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+        let client_id = 3;
 
-    let call_ctx = CallCtx {
-        writer: &broker_sender,
-        reader: &peer_reader,
-        client_id,
-    };
+        let call_ctx = CallCtx {
+            writer: &broker_sender,
+            reader: &peer_reader,
+            client_id,
+        };
 
-    // login
-    let user = "test";
-    //let password = "test";
-    broker_sender.send(BrokerCommand::NewPeer {
-        peer_id: client_id,
-        peer_kind: PeerKind::Client{ user: user.to_string() },
-        sender: peer_writer.clone() }).await.unwrap();
+        // login
+        let user = "test";
+        //let password = "test";
+        broker_sender.send(BrokerCommand::NewPeer {
+            peer_id: client_id,
+            peer_kind: PeerKind::Client{ user: user.to_string() },
+            sender: peer_writer.clone() }).await.unwrap();
 
-    let tunid = call(".app/tunnel", "create", None, &call_ctx).await;
-    // host param is missing
-    assert!(tunid.is_err());
+        let tunid = call(".app/tunnel", "create", None, &call_ctx).await;
+        // host param is missing
+        assert!(tunid.is_err());
 
-    let param = Map::from([("host".to_string(), "localhost:54321".into())]);
-    let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await;
-    // service not running
-    assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException.into());
+        let param = Map::from([("host".to_string(), "localhost:54321".into())]);
+        let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await;
+        // service not running
+        assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException.into());
 
-    // echo loop
-    const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
-    smol::spawn(async move {
-        let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
-        println!("Echo server is listening on {}", listener.local_addr().unwrap());
+        // echo loop
+        const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
+        smol::spawn(async move {
+            let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
+            println!("Echo server is listening on {}", listener.local_addr().unwrap());
 
-        while let Some(stream) = listener.incoming().next().await {
-            match stream {
-                Ok(mut socket) => {
-                    let addr = socket.peer_addr().unwrap();
-                    println!("New connection from: {addr}");
+            while let Some(stream) = listener.incoming().next().await {
+                match stream {
+                    Ok(mut socket) => {
+                        let addr = socket.peer_addr().unwrap();
+                        println!("New connection from: {addr}");
 
-                    smol::spawn(async move {
-                        let mut buffer = vec![0; 1024];
+                        smol::spawn(async move {
+                            let mut buffer = vec![0; 1024];
 
-                        loop {
-                            match socket.read(&mut buffer).await {
-                                Ok(0) => {
-                                    println!("Connection closed by client: {addr}");
-                                    return;
-                                }
-                                Ok(n) => {
-                                    if socket.write_all(&buffer[..n]).await.is_err() {
-                                        println!("Failed to send data to: {addr}");
+                            loop {
+                                match socket.read(&mut buffer).await {
+                                    Ok(0) => {
+                                        println!("Connection closed by client: {addr}");
+                                        return;
+                                    }
+                                    Ok(n) => {
+                                        if socket.write_all(&buffer[..n]).await.is_err() {
+                                            println!("Failed to send data to: {addr}");
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        println!("Error reading from {addr}: {e}");
                                         return;
                                     }
                                 }
-                                Err(e) => {
-                                    println!("Error reading from {addr}: {e}");
-                                    return;
-                                }
                             }
-                        }
-                    }).detach();
+                        }).detach();
+                    }
+                    Err(e) => println!("Connection failed: {e}"),
                 }
-                Err(e) => println!("Connection failed: {e}"),
             }
-        }
-    }).detach();
+        }).detach();
 
-    // Wait for the echo loop to initialize
-    async fn wait_for_server(address: &str, timeout: std::time::Duration) {
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout {
-            if smol::net::TcpStream::connect(address).await.is_ok() {
-                return;
+        // Wait for the echo loop to initialize
+        async fn wait_for_server(address: &str, timeout: std::time::Duration) {
+            let start = std::time::Instant::now();
+            while start.elapsed() < timeout {
+                if smol::net::TcpStream::connect(address).await.is_ok() {
+                    return;
+                }
+                smol::Timer::after(std::time::Duration::from_millis(200)).await;
             }
-            smol::Timer::after(std::time::Duration::from_millis(200)).await;
+            panic!("Could not connect to: {address}");
         }
-        panic!("Could not connect to: {address}");
+        wait_for_server(ECHO_LOOP_ADDRESS, std::time::Duration::from_secs(3)).await;
+
+        let param = Map::from([("host".to_string(), ECHO_LOOP_ADDRESS.into())]);
+        let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
+        assert!(tunid.is_string());
+
+        let tunid = tunid.as_str();
+
+        let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+        assert_eq!(res.as_list(), &[tunid.into()].to_vec());
+        let res = call(".app/tunnel", "ls", Some(tunid.into()), &call_ctx).await.unwrap();
+        assert!(res.as_bool());
+
+        let data = "hello".as_bytes();
+        let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, None).await.unwrap();
+        assert_eq!(res.as_blob(), data);
+
+        let data = "tunnel".as_bytes();
+        let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, Some(tun_rq_id)).await.unwrap();
+        assert_eq!(res.as_blob(), data);
+
+        let res = call(&format!(".app/tunnel/{tunid}"), "close", None, &call_ctx).await.unwrap();
+        assert!(res.as_bool());
+
+        let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+        assert!(res.as_list().is_empty());
+
+        broker_task.cancel().await;
     }
-    wait_for_server(ECHO_LOOP_ADDRESS, std::time::Duration::from_secs(3)).await;
-
-    let param = Map::from([("host".to_string(), ECHO_LOOP_ADDRESS.into())]);
-    let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
-    assert!(tunid.is_string());
-
-    let tunid = tunid.as_str();
-
-    let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
-    assert_eq!(res.as_list(), &[tunid.into()].to_vec());
-    let res = call(".app/tunnel", "ls", Some(tunid.into()), &call_ctx).await.unwrap();
-    assert!(res.as_bool());
-
-    let data = "hello".as_bytes();
-    let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, None).await.unwrap();
-    assert_eq!(res.as_blob(), data);
-
-    let data = "tunnel".as_bytes();
-    let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, Some(tun_rq_id)).await.unwrap();
-    assert_eq!(res.as_blob(), data);
-
-    let res = call(&format!(".app/tunnel/{tunid}"), "close", None, &call_ctx).await.unwrap();
-    assert!(res.as_bool());
-
-    let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
-    assert!(res.as_list().is_empty());
-
-    broker_task.cancel().await;
 }

@@ -52,6 +52,7 @@ socketcan = { version = "3.5.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.1"
+smol-macros = "0.1.1"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

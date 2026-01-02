@@ -2537,6 +2537,7 @@ dependencies = [
  "shvrpc",
  "simple_logger",
  "smol 2.0.2",
+ "smol-macros",
  "smol-timeout",
  "socketcan",
  "tempfile",
@@ -2667,6 +2668,19 @@ dependencies = [
  "async-net 2.0.0",
  "async-process 2.5.0",
  "blocking",
+ "futures-lite 2.6.1",
+]
+
+[[package]]
+name = "smol-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfcaedb62e0475a6898988138995ec7b1e5d116167a72bb12c7b59d0649fbbc2"
+dependencies = [
+ "async-executor",
+ "async-io 2.6.0",
+ "async-lock 3.4.1",
+ "event-listener 5.4.1",
  "futures-lite 2.6.1",
 ]
 
