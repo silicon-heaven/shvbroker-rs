@@ -1,7 +1,7 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
-    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_DIR, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS};
@@ -15,7 +15,7 @@ use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{rpcvalue, Map, MetaMap, RpcValue, Value};
+use shvproto::{rpcvalue, Map, MetaMap, RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -2091,51 +2091,31 @@ impl BrokerImpl {
 
     async fn check_subscribe_api(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        async fn check_path_with_timeout(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<bool> {
-            async fn check_path(client_id: PeerId, path: &str, broker_command_sender: &Sender<BrokerCommand>) -> shvrpc::Result<bool> {
-                let (response_sender, response_receiver) = unbounded();
-                let request = RpcMessage::new_request(path, METH_DIR, Some(METH_SUBSCRIBE.into()));
-                let cmd = BrokerCommand::RpcCall {
-                    peer_id: client_id,
-                    request,
-                    response_sender,
-                };
-                broker_command_sender.send(cmd).await?;
-                let resp = response_receiver.recv().await?.to_rpcmesage()?;
-                match resp.response() {
-                    Ok(val) => {
-                        match val {
-                            Response::Success(rpc_value) => match rpc_value.value {
-                                // `false` or `null` means that the method doesn't exist, any other
-                                // value means that it exists.
-                                // https://silicon-heaven.github.io/shv-doc/rpcmethods/discovery.html#dir
-                                Value::Bool(false) | Value::Null => Ok(false),
-                                _ => Ok(true),
-                            },
-                            Response::Delay(_) => Err("Delay messages are not supported in SHV API version discovery.".into()),
-                        }
-                    }
-                    Err(err) if err.code == RpcErrorCode::MethodNotFound.into() => Ok(false),
-                    Err(err) => Err(err.into()),
-                }
-            }
-            match check_path(client_id, path, broker_command_sender).timeout(Duration::from_secs(5)).await {
-                None => Err("Timeout".into()),
-                Some(res) => res,
-            }
-        }
         let broker_command_sender = state_reader(&state).command_sender.clone();
-        let subscribe_api = 'api_discovery: {
-            for api in [SubscribeApi::V3, SubscribeApi::V2] {
-                match check_path_with_timeout(peer_id, api.path(), &broker_command_sender).await {
-                    Ok(path_exists) => if path_exists {
-                        break 'api_discovery Some(api)
-                    },
-                    Err(e) => error!("Error checking subscribe API: {e}"),
+        let subscribe_api = {
+            let (response_sender, response_receiver) = unbounded();
+            let request = RpcMessage::new_request(".broker", METH_LS, None);
+            let cmd = BrokerCommand::RpcCall {
+                peer_id,
+                request,
+                response_sender,
+            };
+            broker_command_sender.send(cmd).await?;
+            let resp = response_receiver.recv().await?.to_rpcmesage()?;
+            match resp.response() {
+                // Ok => this is a broker, and only V2 brokers have "clients", otherwise we'll assume V3.
+                // Rust broker with SHV2 compatibility do not have "clients", just "client".
+                Ok(Response::Success(result)) => {
+                    if result.as_list().iter().any(|elem| elem.as_str() == "clients") {
+                        Some(SubscribeApi::V2)
+                    } else {
+                        Some(SubscribeApi::V3)
+                    }
                 }
+                Ok(Response::Delay(_)) => return Err("Delay messages are not supported in SHV API version discovery.".into()),
+                // .broker:ls failed, so this is not a broker.
+                Err(_) => None,
             }
-
-            None
         };
 
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
