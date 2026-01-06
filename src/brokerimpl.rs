@@ -232,9 +232,8 @@ impl Peer {
         if self.is_connected_to_parent_broker() {
             return Ok(None);
         }
-        let (mount_point, subscribe_api) = match (&self.mount_point, self.subscribe_api) {
-            (Some(mount_point), Some(subscribe_path)) => (mount_point, subscribe_path),
-            _ => return Ok(None),
+        let (Some(mount_point), Some(subscribe_api)) = (&self.mount_point, self.subscribe_api) else {
+            return Ok(None)
         };
         let Ok(Some((_, forwarded_path))) = split_glob_on_match(ri.path(), mount_point) else {
             return Ok(None)
