@@ -677,7 +677,7 @@ impl BrokerState {
         log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
         let access_level_from_flatten_roles = |flatten_roles| {
-            let found_grant = (|| {
+            let found_grant = 'found_grant: {
                 for role_name in flatten_roles {
                     if let Some(rules) = self.role_access_rules.get(&role_name) {
                         log!(target: "Access", Level::Debug, "----------- access for role: {role_name}");
@@ -685,13 +685,13 @@ impl BrokerState {
                             log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
                             if rule.glob.match_shv_ri(&ri) {
                                 log!(target: "Access", Level::Debug, "\t\t HIT");
-                                return Some((rule.access_level as i32, rule.access.clone()));
+                                break 'found_grant Some((rule.access_level as i32, rule.access.clone()));
                             }
                         }
                     }
                 }
                 None
-            })();
+            };
 
             match found_grant {
                 Some((access_level, access)) => Ok((Some(access_level), Some(access))),
