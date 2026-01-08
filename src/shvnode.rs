@@ -625,8 +625,11 @@ impl ShvNode for BrokerCurrentClientNode {
                     .iter()
                     .filter_map(|role| state.access_role(role))
                     .filter_map(|role| role.profile.clone())
-                    .fold(crate::config::ProfileValue::Null, |mut res, profile| {
-                        res.merge(profile);
+                    .fold(None, |mut res: Option<crate::config::ProfileValue>, profile| {
+                        match &mut res {
+                            Some(res) => res.merge(profile),
+                            None => res = Some(profile),
+                        }
                         res
                     });
                 Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
