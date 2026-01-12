@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.20.3"
+version = "3.20.4"
 edition = "2024"
 
 [package.metadata.bin]
@@ -15,7 +15,7 @@ can = ["dep:socketcan", "shvrpc/can"]
 
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
-assert_cmd = "2.0"
+assert_cmd = "2.1"
 shvclient = { version = "0.21.10", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.35"
@@ -46,7 +46,7 @@ clap = { version = "4.5.54", features = ["derive"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 reqwest = { version = "0.12.28", features = ["json", "http2", "rustls-tls"], default-features = false, optional = true }
 serialport = "4.7.1"
-async-tungstenite = "0.32.0"
+async-tungstenite = "0.32.1"
 async-compat = { version = "0.2.4", optional = true }
 socketcan = { version = "3.5.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
