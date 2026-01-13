@@ -177,27 +177,27 @@ impl Peer {
         if let Some(subscr) = self.forwarded_subscriptions.iter_mut().find(|subscr| subscr.param.ri == forwarded_ri) {
             subscr.count += 1;
             debug!(target: "Subscr", "  refcount increased to: {refcount}", refcount = subscr.count);
-            Ok(false)
-        } else {
-            debug!(target: "Subscr", "  new subscription on the peer");
-            let subscr_param = SubscriptionParam {
-                ri: forwarded_ri,
-                ttl: None,
-            };
-
-            self.forwarded_subscriptions.push(ForwardedSubscription {
-                param: subscr_param.clone(),
-                count: 1,
-            });
-
-            Ok(subscr_tx.unbounded_send(SubscriptionCommand {
-                peer_id: self.peer_id,
-                api: subscribe_path,
-                param: subscr_param,
-                action: SubscriptionAction::Subscribe,
-            })
-            .map(|_| true)?)
+            return Ok(false)
         }
+
+        debug!(target: "Subscr", "  new subscription on the peer");
+        let subscr_param = SubscriptionParam {
+            ri: forwarded_ri,
+            ttl: None,
+        };
+
+        self.forwarded_subscriptions.push(ForwardedSubscription {
+            param: subscr_param.clone(),
+            count: 1,
+        });
+
+        Ok(subscr_tx.unbounded_send(SubscriptionCommand {
+            peer_id: self.peer_id,
+            api: subscribe_path,
+            param: subscr_param,
+            action: SubscriptionAction::Subscribe,
+        })
+        .map(|_| true)?)
     }
 
     pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
@@ -213,28 +213,26 @@ impl Peer {
         if subscr.count > 1 {
             subscr.count -= 1;
             debug!(target: "Subscr", "  refcount decreased to: {refcount}", refcount = subscr.count);
-            Ok(false)
-        } else {
-            debug!(target: "Subscr", "  remove subscription from the peer");
-            let subscr = self.forwarded_subscriptions.remove(subscr_idx);
-
-            subscr_tx.unbounded_send(SubscriptionCommand {
-                peer_id: self.peer_id,
-                api: subscribe_api,
-                param: subscr.param,
-                action: SubscriptionAction::Unsubscribe,
-            })?;
-           Ok(true)
+            return Ok(false)
         }
+        debug!(target: "Subscr", "  remove subscription from the peer");
+        let subscr = self.forwarded_subscriptions.remove(subscr_idx);
+
+        subscr_tx.unbounded_send(SubscriptionCommand {
+            peer_id: self.peer_id,
+            api: subscribe_api,
+            param: subscr.param,
+            action: SubscriptionAction::Unsubscribe,
+        })?;
+       Ok(true)
     }
 
     fn forwarded_subscription_params(&self, ri: &ShvRI) -> shvrpc::Result<Option<(SubscribeApi, ShvRI)>> {
         if self.is_connected_to_parent_broker() {
             return Ok(None);
         }
-        let (mount_point, subscribe_api) = match (&self.mount_point, self.subscribe_api) {
-            (Some(mount_point), Some(subscribe_path)) => (mount_point, subscribe_path),
-            _ => return Ok(None),
+        let (Some(mount_point), Some(subscribe_api)) = (&self.mount_point, self.subscribe_api) else {
+            return Ok(None)
         };
         let Ok(Some((_, forwarded_path))) = split_glob_on_match(ri.path(), mount_point) else {
             return Ok(None)
@@ -678,22 +676,20 @@ impl BrokerState {
         };
         log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
-        let access_level_from_flatten_roles = |flatten_roles| {
-            let found_grant = (|| {
-                for role_name in flatten_roles {
-                    if let Some(rules) = self.role_access_rules.get(&role_name) {
-                        log!(target: "Access", Level::Debug, "----------- access for role: {role_name}");
-                        for rule in rules {
-                            log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str());
-                            if rule.glob.match_shv_ri(&ri) {
-                                log!(target: "Access", Level::Debug, "\t\t HIT");
-                                return Some((rule.access_level as i32, rule.access.clone()));
-                            }
-                        }
-                    }
-                }
-                None
-            })();
+        let access_level_from_flatten_roles = |flatten_roles: Vec<String>| {
+            let found_grant = flatten_roles
+                .into_iter()
+                .filter_map(|role_name| self.role_access_rules.get(&role_name)
+                    .inspect(|_| log!(target: "Access", Level::Debug, "----------- access for role: {role_name}"))
+                )
+                .find_map(|rules| {
+                    rules
+                        .iter()
+                        .inspect(|rule| log!(target: "Access", Level::Debug, "\trule: {}", rule.glob.as_str()))
+                        .find(|rule| rule.glob.match_shv_ri(&ri))
+                })
+                .inspect(|_| log!(target: "Access", Level::Debug, "\t\t HIT"))
+                .map(|rule| (rule.access_level as i32, rule.access.clone()));
 
             match found_grant {
                 Some((access_level, access)) => Ok((Some(access_level), Some(access))),
