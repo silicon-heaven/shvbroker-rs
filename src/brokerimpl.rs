@@ -1,5 +1,5 @@
 use crate::brokerimpl::BrokerCommand::ExecSql;
-use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, RuntimeData, SharedBrokerConfig};
 use crate::shvnode::{
     AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
@@ -602,6 +602,7 @@ pub struct BrokerState {
     pub(crate) peers: BTreeMap<PeerId, Peer>,
     mounts: BTreeMap<String, Mount>,
     pub(crate) access: AccessConfig,
+    pub(crate) runtime_data: RuntimeData,
     role_access_rules: HashMap<String, Vec<ParsedAccessRule>>,
 
     azure_user_groups: BTreeMap<PeerId, Vec<String>>,
@@ -620,12 +621,13 @@ struct DisconnectPeerReason {
 
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
-    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
+    pub(crate) fn new(access: AccessConfig, runtime_data: RuntimeData, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
         let role_access = parse_config_roles(&access.roles);
         Self {
             peers: Default::default(),
             mounts: Default::default(),
             access,
+            runtime_data,
             role_access_rules: role_access,
             azure_user_groups: Default::default(),
             command_sender,
@@ -1508,12 +1510,13 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
+        runtime_data: RuntimeData,
         sql_connection: Option<rusqlite::Connection>,
     ) -> Self {
         let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
+        let state = BrokerState::new(access, runtime_data, command_sender.clone(), subscr_cmd_sender);
         let mut broker = Self {
             state: Arc::new(RwLock::new(state)),
             nodes: Default::default(),

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
-use shvproto::RpcValue;
+use shvproto::{DateTime, RpcValue};
 use shvrpc::client::ClientConfig;
 use url::Url;
 
@@ -70,6 +70,12 @@ pub struct AccessConfig {
     #[serde(default)]
     pub allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct RuntimeData {
+    pub last_login: BTreeMap<String, DateTime>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
     pub url: Url,

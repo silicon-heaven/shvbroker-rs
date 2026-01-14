@@ -71,9 +71,9 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let (sql_connection, (access_config, runtime_data)) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
     let config = SharedBrokerConfig::new(config);
-    let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, runtime_data, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -156,9 +156,9 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let (sql_connection, (access_config, runtime_data)) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
     let config = SharedBrokerConfig::new(config);
-    let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, runtime_data, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 
@@ -303,7 +303,7 @@ smol_macros::test! {
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
-        let broker = BrokerImpl::new(config, access, None);
+        let broker = BrokerImpl::new(config, access, crate::config::RuntimeData::default(), None);
         let broker_sender = broker.command_sender.clone();
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker));
 

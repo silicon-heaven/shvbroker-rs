@@ -100,21 +100,21 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
-    let (access, sql_connection) = if config.use_access_db {
+    let ((access, runtime_data), sql_connection) = if config.use_access_db {
         let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
         info!("Data directory: {}", data_dir);
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
         let (sql_connection, access_config) = sql::migrate_sqlite_connection(&sql_config_file, &config.access)?;
         (access_config, Some(sql_connection))
     } else {
-        (config.access.clone(), None)
+        ((config.access.clone(), shvbroker::config::RuntimeData::default()), None)
     };
     if cli_opts.print_config {
         print_config(&config, &access)?;
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, sql_connection);
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, runtime_data, sql_connection);
     smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl))
 }
 
