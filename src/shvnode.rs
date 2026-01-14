@@ -10,7 +10,7 @@ use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use crate::brokerimpl::{BrokerToPeerMessage};
-use crate::brokerimpl::{NodeRequestContext, SharedBrokerState, state_reader, state_writer};
+use crate::brokerimpl::{NodeRequestContext, SharedBrokerState};
 
 pub const METH_DIR: &str = "dir";
 pub const METH_LS: &str = "ls";
@@ -400,7 +400,7 @@ impl ShvNode for BrokerNode {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
-                let info = match state_reader(&ctx.state).await.client_info(peer_id) {
+                let info = match ctx.state.read().await.client_info(peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -409,25 +409,25 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().as_str();
-                let info = match state_reader(&ctx.state).await.mounted_client_info(mount_point) {
+                let info = match ctx.state.read().await.mounted_client_info(mount_point) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = state_reader(&ctx.state).await.peers.keys().map(|id| RpcValue::from(*id)).collect();
+                let clients: rpcvalue::List = ctx.state.read().await.peers.keys().map(|id| RpcValue::from(*id)).collect();
                 Ok(ProcessRequestRetval::Retval(clients.into()))
             }
             METH_MOUNTS => {
-                let mounts: List = state_reader(&ctx.state).await.peers.values()
+                let mounts: List = ctx.state.read().await.peers.values()
                     .filter(|peer| peer.mount_point.is_some())
                     .map(|peer| if let Some(mount_point) = &peer.mount_point {RpcValue::from(mount_point)} else { RpcValue::null() } )
                     .collect();
                 Ok(ProcessRequestRetval::Retval(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
-                if let Some(peer) = state_reader(&ctx.state).await.peers.get(&ctx.peer_id) {
+                if let Some(peer) = ctx.state.read().await.peers.get(&ctx.peer_id) {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).await;
@@ -492,12 +492,12 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
 
 impl BrokerCurrentClientNode {
     async fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        let res = state_writer(state).await.subscribe(peer_id, subpar);
+        let res = state.write().await.subscribe(peer_id, subpar);
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
     async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        let res = state_writer(state).await.unsubscribe(peer_id, subpar);
+        let res = state.write().await.unsubscribe(peer_id, subpar);
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
@@ -528,11 +528,11 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = state_reader(&ctx.state).await.subscriptions(ctx.peer_id)?;
+                let result = ctx.state.read().await.subscriptions(ctx.peer_id)?;
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
-                let info = match state_reader(&ctx.state).await.client_info(ctx.peer_id) {
+                let info = match ctx.state.read().await.client_info(ctx.peer_id) {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -559,7 +559,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let mut state = state_writer(&ctx.state).await;
+                let mut state = ctx.state.write().await;
                 let Some(user_name) = state.peer_user(ctx.peer_id).map(String::from) else {
                     return Err("Undefined user".into());
                 };
@@ -603,7 +603,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
 
-                let access_level = state_reader(&ctx.state)
+                let access_level = ctx.state.read()
                     .await
                     .access_level_for_request_params(
                         ctx.peer_id,
@@ -622,7 +622,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(access_level.into()))
             }
             METH_USER_PROFILE => {
-                let state = state_reader(&ctx.state).await;
+                let state = ctx.state.read().await;
                 let Some(user_roles) = state.user_base_roles(ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
@@ -641,7 +641,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
             }
             METH_USER_ROLES => {
-                let state = state_reader(&ctx.state).await;
+                let state = ctx.state.read().await;
                 let Some(user_roles) = state.user_base_roles(ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
@@ -696,7 +696,7 @@ impl ShvNode for BrokerAccessMountsNode {
 
     async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(state_reader(broker_state).await.access.mounts.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.read().await.access.mounts.keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -705,7 +705,7 @@ impl ShvNode for BrokerAccessMountsNode {
     async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.state).await.access_mount(&ctx.node_path) {
+                match ctx.state.read().await.access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -729,7 +729,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                state_writer(&ctx.state).await.set_access_mount(response_meta, key.as_str(), mount);
+                ctx.state.write().await.set_access_mount(response_meta, key.as_str(), mount);
                 Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
@@ -759,7 +759,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
     async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(state_reader(broker_state).await.access.users.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.read().await.access.users.keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -769,7 +769,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
-            let user = state_reader(&ctx.state).await.access_user(&ctx.node_path).cloned();
+            let user = ctx.state.read().await.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
                     Err(format!("Invalid node key: {}", &ctx.node_path).into())
@@ -779,7 +779,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     if user.deactivated == new_deactivated {
                         return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
                     }
-                    state_writer(&ctx.state).await.set_access_user(response_meta, &ctx.node_path, Some(crate::config::User{
+                    ctx.state.write().await.set_access_user(response_meta, &ctx.node_path, Some(crate::config::User{
                         deactivated: new_deactivated,
                         ..user.clone()
                     }));
@@ -790,7 +790,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.state).await.access_user(&ctx.node_path) {
+                match ctx.state.read().await.access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -820,7 +820,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     None
                 };
                 let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                state_writer(&ctx.state).await.set_access_user(response_meta, key.as_str(), user);
+                ctx.state.write().await.set_access_user(response_meta, key.as_str(), user);
                 Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
@@ -850,7 +850,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
     async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(state_reader(broker_state).await.access.roles.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.read().await.access.roles.keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -859,7 +859,7 @@ impl ShvNode for BrokerAccessRolesNode {
     async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.state).await.access_role(&ctx.node_path) {
+                match ctx.state.read().await.access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -883,7 +883,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                state_writer(&ctx.state).await.set_access_role(response_meta, key.as_str(), role)?;
+                ctx.state.write().await.set_access_role(response_meta, key.as_str(), role)?;
                 Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
@@ -913,7 +913,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
 
     async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(state_reader(broker_state).await.access.allowed_ips.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.read().await.access.allowed_ips.keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -922,7 +922,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match state_reader(&ctx.state).await.access_allowed_ips(&ctx.node_path) {
+                match ctx.state.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -953,7 +953,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Err(e)) => { return Err(e.into() )}
                 };
                 let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                state_writer(&ctx.state).await.set_allowed_ips(response_meta, key.as_str(), allowed_ips);
+                ctx.state.write().await.set_allowed_ips(response_meta, key.as_str(), allowed_ips);
                 Ok(ProcessRequestRetval::RetvalDeferred)
             }
             _ => {
@@ -988,13 +988,13 @@ impl Shv2BrokerAppNode {
                 .map_err(|err| format!("Cannot convert RI '{ri}' to shv2 compatible equivalent: {err}", ri = subpar.ri.as_str()))?,
             ttl: subpar.ttl,
         };
-        let res = state_writer(state).await.subscribe(peer_id, &subpar);
+        let res = state.write().await.subscribe(peer_id, &subpar);
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 
     async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &SharedBrokerState) -> shvrpc::Result<bool> {
-        let res = state_writer(state).await.unsubscribe(peer_id, subpar);
+        let res = state.write().await.unsubscribe(peer_id, subpar);
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
