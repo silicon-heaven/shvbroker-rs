@@ -3,14 +3,15 @@ use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
 use log::{debug, info};
 use rusqlite::Connection;
 
-use crate::config::AccessConfig;
+use crate::config::{AccessConfig, RuntimeData};
 
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";
 pub const TBL_ROLES: &str = "roles";
 pub const TBL_ALLOWED_IPS: &str = "allowed_ips";
+pub const TBL_LAST_LOGIN: &str = "last_login";
 
-pub fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Connection, AccessConfig)> {
+pub fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Connection, (AccessConfig, RuntimeData))> {
     info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
     let (sql_connection, db_is_empty) = if sql_config_file == ":memory:" {
         (Connection::open_in_memory()?, true)
@@ -35,10 +36,10 @@ pub fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfi
     Ok((sql_connection, access_config))
 }
 
-fn init_access_db(sql_connection: &Connection, db_is_empty: bool, access: &AccessConfig) -> shvrpc::Result<AccessConfig> {
+fn init_access_db(sql_connection: &Connection, db_is_empty: bool, access: &AccessConfig) -> shvrpc::Result<(AccessConfig, RuntimeData)> {
     let access_config = if db_is_empty {
         create_access_sqlite(sql_connection, access)?;
-        access.clone()
+        (access.clone(), RuntimeData::default())
     } else {
         load_access_sqlite(sql_connection)?
     };
@@ -71,7 +72,7 @@ fn create_access_sqlite(sql_conn: &Connection, access: &AccessConfig) -> shvrpc:
     Ok(())
 }
 
-fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
+fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<(AccessConfig, RuntimeData)> {
     fn load_table<TableElementType: for <'a> serde::Deserialize<'a>>(sql_conn: &Connection, table_name: &str) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
         sql_conn.execute(&format!(r#"
             CREATE TABLE IF NOT EXISTS {table_name} (
@@ -96,10 +97,12 @@ fn load_access_sqlite(sql_conn: &Connection) -> shvrpc::Result<AccessConfig> {
         Ok(parsed_rows)
     }
 
-    Ok(AccessConfig {
+    Ok((AccessConfig {
         users: load_table(sql_conn, TBL_USERS)?,
         roles: load_table(sql_conn, TBL_ROLES)?,
         mounts: load_table(sql_conn, TBL_MOUNTS)?,
         allowed_ips: load_table(sql_conn, TBL_ALLOWED_IPS)?,
-    })
+    }, RuntimeData {
+        last_login: load_table(sql_conn, TBL_ALLOWED_IPS)?,
+    }))
 }

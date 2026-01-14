@@ -31,7 +31,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
     let access_config = broker_config.access.clone();
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
-        run_broker(BrokerImpl::new(broker_config, access_config, None))
+        run_broker(BrokerImpl::new(broker_config, access_config, shvbroker::config::RuntimeData::default(), None))
             .await
             .expect("broker accept_loop failed")
     }).detach();
