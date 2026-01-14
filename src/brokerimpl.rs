@@ -1513,21 +1513,13 @@ impl BrokerImpl {
         let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
-        let mut broker = Self {
-            state: Arc::new(RwLock::new(state)),
-            nodes: Default::default(),
-            pending_rpc_calls: vec![],
-            command_sender,
-            command_receiver,
-            sql_connection,
-            config: config.clone(),
-        };
+        let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
+        let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
-            state_writer(&broker.state)
+            state
                 .mounts
                 .insert(path.into(), Mount::Node);
-            broker.nodes.insert(path.into(), node);
+            nodes.insert(path.into(), node);
         };
         add_node(DIR_APP, Box::new(AppNode::new()));
         if config.tunnelling.enabled {
@@ -1568,7 +1560,16 @@ impl BrokerImpl {
                 Box::new(BrokerAccessUsersNode::new()),
             );
         }
-        broker
+
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            nodes,
+            pending_rpc_calls: vec![],
+            command_sender,
+            command_receiver,
+            sql_connection,
+            config: config.clone(),
+        }
     }
     pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
