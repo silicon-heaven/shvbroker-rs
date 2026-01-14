@@ -54,6 +54,7 @@ rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.1"
 smol-macros = "0.1.1"
 ipnet = { version = "2.11.0", features = ["serde"] }
+async-trait = "0.1.89"
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

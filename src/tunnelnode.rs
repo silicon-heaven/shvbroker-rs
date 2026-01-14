@@ -49,6 +49,8 @@ impl TunnelNode {
         TunnelNode {}
     }
 }
+
+#[async_trait::async_trait]
 impl ShvNode for TunnelNode {
     fn methods(&self, shv_path: &str) -> &'static [&'static MetaMethod] {
         if shv_path.is_empty() {
@@ -57,8 +59,9 @@ impl ShvNode for TunnelNode {
             OPEN_TUNNEL_NODE_METHODS
         }
     }
-    fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
         let tunnels = state_reader(broker_state)
+            .await
             .active_tunnel_ids()
             .iter()
             .map(|id| format!("{}", *id))
@@ -72,18 +75,18 @@ impl ShvNode for TunnelNode {
         }
     }
 
-    fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
+    async fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
             let shv_path = rq.shv_path().unwrap_or_default();
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
-            state_reader(&ctx.state).is_request_granted_tunnel(shv_path, rq)
+            state_reader(&ctx.state).await.is_request_granted_tunnel(shv_path, rq)
         }
     }
 
-    fn process_request(
+    async fn process_request(
         &mut self,
         frame: &RpcFrame,
         ctx: &NodeRequestContext,
@@ -99,7 +102,7 @@ impl ShvNode for TunnelNode {
                 METH_WRITE => {
                     let rq = frame.to_rpcmesage()?;
                     let data = rq.param().unwrap_or_default().as_blob().to_vec();
-                    state_reader(&ctx.state).write_tunnel(
+                    state_reader(&ctx.state).await.write_tunnel(
                         tunid,
                         rq.request_id().unwrap_or_default(),
                         data,
@@ -107,8 +110,8 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let command_sender = state_reader(&ctx.state).command_sender.clone();
-                    let is_active = state_reader(&ctx.state).is_tunnel_active(tunid);
+                    let command_sender = state_reader(&ctx.state).await.command_sender.clone();
+                    let is_active = state_reader(&ctx.state).await.is_tunnel_active(tunid);
                     smol::spawn(async move {
                         let _ = command_sender
                             .send(BrokerCommand::TunnelClosed(tunid))
@@ -129,10 +132,10 @@ impl ShvNode for TunnelNode {
                         .ok_or("'host' parameter must be provided")?
                         .as_str()
                         .to_string();
-                    let (tunid, receiver) = state_writer(&ctx.state).create_tunnel(&rq)?;
+                    let (tunid, receiver) = state_writer(&ctx.state).await.create_tunnel(&rq)?;
                     let rq_meta = rq.meta().clone();
                     let state = ctx.state.clone();
-                    let command_sender = state_reader(&state).command_sender.clone();
+                    let command_sender = state_reader(&state).await.command_sender.clone();
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
@@ -168,7 +171,7 @@ pub(crate) async fn tunnel_task(
 ) -> shvrpc::Result<()> {
     let peer_id = *request_meta.caller_ids().first().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
-    let to_broker_sender = state_reader(&state).command_sender.clone();
+    let to_broker_sender = state_reader(&state).await.command_sender.clone();
     log!(target: "Tunnel", Level::Debug, "Tunnel: {tunnel_id}, connecting to: {addr} ...");
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
@@ -193,7 +196,7 @@ pub(crate) async fn tunnel_task(
             return Err(e.to_string().into());
         }
     };
-    state_writer(&state).touch_tunnel(tunnel_id);
+    state_writer(&state).await.touch_tunnel(tunnel_id);
     to_broker_sender
         .send(BrokerCommand::TunnelActive(tunnel_id))
         .await?;
@@ -250,7 +253,7 @@ pub(crate) async fn tunnel_task(
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
                 Ok(bytes_read) => {
                     trace!(target: "Tunnel", "Read {bytes_read} bytes from client socket.");
-                    state_writer(&state).touch_tunnel(tunnel_id);
+                    state_writer(&state).await.touch_tunnel(tunnel_id);
                     if bytes_read == 0 {
                         trace!(target: "Tunnel", "Client socket closed.");
                         break;
@@ -273,7 +276,7 @@ pub(crate) async fn tunnel_task(
                     match cmd {
                         ToRemoteMsg::WriteData(rqid, data) => {
                             trace!(target: "Tunnel", "CMD WriteData, data size: {}", data.len());
-                            state_writer(&state).touch_tunnel(tunnel_id);
+                            state_writer(&state).await.touch_tunnel(tunnel_id);
                             if write_request_id.is_none() {
                                 write_request_id = Some(rqid);
                                 response_meta.set_request_id(rqid);

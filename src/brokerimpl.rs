@@ -29,7 +29,8 @@ use smol_timeout::TimeoutExt;
 use url::Url;
 use std::collections::{BTreeMap, HashMap,VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
+use smol::lock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -1302,11 +1303,11 @@ pub struct BrokerImpl {
 
     pub(crate) sql_connection: Option<rusqlite::Connection>,
 }
-pub(crate) fn state_reader<'a>(state: &'a SharedBrokerState) -> RwLockReadGuard<'a, BrokerState> {
-    state.read().unwrap()
+pub(crate) async fn state_reader<'a>(state: &'a SharedBrokerState) -> RwLockReadGuard<'a, BrokerState> {
+    state.read().await
 }
-pub(crate) fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard<'a, BrokerState> {
-    state.write().unwrap()
+pub(crate) async fn state_writer<'a>(state: &'a SharedBrokerState) -> RwLockWriteGuard<'a, BrokerState> {
+    state.write().await
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -1577,7 +1578,7 @@ impl BrokerImpl {
             let method = frame.method().unwrap_or_default().to_string();
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
             // println!("response meta: {:?}", response_meta);
-            let access = state_reader(&self.state).access_level_for_request(peer_id, &frame);
+            let access = state_reader(&self.state).await.access_level_for_request(peer_id, &frame);
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
@@ -1591,7 +1592,7 @@ impl BrokerImpl {
                     return Ok(());
                 }
             };
-            let local_result = process_local_dir_ls(&state_reader(&self.state).mounts, &frame);
+            let local_result = process_local_dir_ls(&state_reader(&self.state).await.mounts, &frame);
             if let Some(result) = local_result {
                 self.command_sender
                     .send(BrokerCommand::SendResponse {
@@ -1604,7 +1605,7 @@ impl BrokerImpl {
             }
             //let state = self.state.read().map_err(|e| e.to_string())?;
             let paths = find_longest_path_prefix(
-                &self.state.read().map_err(|e| e.to_string())?.mounts,
+                &self.state.read().await.mounts,
                 &shv_path,
             );
             if let Some((mount_point, node_path)) = paths {
@@ -1622,7 +1623,7 @@ impl BrokerImpl {
                     frame.set_shvpath(node_path);
                     frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
-                    let state = state_reader(&self.state);
+                    let state = state_reader(&self.state).await;
                     match state.mounts.get(mount_point).expect("Should be mounted") {
                         Mount::Peer(device_peer_id) => {
                             let sender = state
@@ -1652,8 +1653,8 @@ impl BrokerImpl {
                     }
                     Action::NodeRequest { node_id, frame, ctx, } => {
                         let node = self.nodes.get_mut(&node_id).expect("Should be mounted");
-                        if node.is_request_granted(&frame, &ctx) {
-                            let result = match node.process_request_and_dir_ls(&frame, &ctx) {
+                        if node.is_request_granted(&frame, &ctx).await {
+                            let result = match node.process_request_and_dir_ls(&frame, &ctx).await {
                                 Err(e) => Err(RpcError::new(
                                     RpcErrorCode::MethodCallException,
                                     e.to_string(),
@@ -1716,6 +1717,7 @@ impl BrokerImpl {
                     frame.push_caller_id(peer_id);
                 }
                 let sender = state_reader(&self.state)
+                    .await
                     .peers
                     .get(&fwd_peer_id)
                     .map(|p| p.sender.clone());
@@ -1740,7 +1742,7 @@ impl BrokerImpl {
         assert!(signal_frame.is_signal());
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
-            let state = state_reader(&self.state);
+            let state = state_reader(&self.state).await;
             if let Some(peer) = state.peers.get(&peer_id) {
                 if let PeerKind::Broker(ConnectionKind::ToChildBroker { shv_root, .. }) =
                     &peer.peer_kind
@@ -1784,7 +1786,7 @@ impl BrokerImpl {
         pending_call: PendingRpcCall,
     ) -> shvrpc::Result<()> {
         let sender = {
-            let state = self.state.read().map_err(|e| e.to_string())?;
+            let state = self.state.read().await;
             let peer = state
                 .peers
                 .get(&pending_call.peer_id)
@@ -1851,13 +1853,13 @@ impl BrokerImpl {
                 sender,
             } => {
                 debug!("New peer, id: {peer_id}.");
-                let peer_add_result = state_writer(&self.state).add_peer(peer_id, peer_kind, sender.clone());
+                let peer_add_result = state_writer(&self.state).await.add_peer(peer_id, peer_kind, sender.clone());
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer}).await?;
                     return Err(msg.into());
                 };
 
-                let mount_point = state_reader(&self.state).mount_point(peer_id);
+                let mount_point = state_reader(&self.state).await.mount_point(peer_id);
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(
@@ -1881,13 +1883,13 @@ impl BrokerImpl {
             }
             BrokerCommand::PeerGone { peer_id } => {
                 debug!("Peer gone, id: {peer_id}.");
-                let mount_point = state_writer(&self.state).remove_peer(peer_id)?;
+                let mount_point = state_writer(&self.state).await.remove_peer(peer_id)?;
                 if let Some(mount_point) = mount_point {
                     let mut lsmod_path = mount_point.as_ref();
                     let mut lsmod_value = "";
                     while !mount_point.is_empty() {
                         (lsmod_path, lsmod_value) = split_last_fragment(lsmod_path);
-                        if state_reader(&self.state).mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
+                        if state_reader(&self.state).await.mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
                             break;
                         }
                     }
@@ -1922,16 +1924,16 @@ impl BrokerImpl {
                 login_type
             } => {
                 let result = 'result: {
-                    if let Some(ip_addr) = ip_addr && !state_reader(&self.state).login_allowed_from_ip(&user, ip_addr) {
+                    if let Some(ip_addr) = ip_addr && !state_reader(&self.state).await.login_allowed_from_ip(&user, ip_addr) {
                         info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
                         break 'result false;
                     }
 
-                    if state_reader(&self.state).user_deactivated(&user) {
+                    if state_reader(&self.state).await.user_deactivated(&user) {
                         break 'result false;
                     }
 
-                    let Some(shapwd) = state_reader(&self.state).sha_password(&user) else {
+                    let Some(shapwd) = state_reader(&self.state).await.sha_password(&user) else {
                         break 'result false;
                     };
 
@@ -1964,6 +1966,7 @@ impl BrokerImpl {
             #[cfg(feature = "entra-id")]
             BrokerCommand::SetAzureGroups { peer_id, groups } => {
                 state_writer(&self.state)
+                    .await
                     .azure_user_groups
                     .insert(peer_id, groups);
             }
@@ -1973,6 +1976,7 @@ impl BrokerImpl {
                 result,
             } => {
                 let peer_sender = state_reader(&self.state)
+                    .await
                     .peers
                     .get(&peer_id)
                     .ok_or("Invalid peer ID")?
@@ -2026,7 +2030,7 @@ impl BrokerImpl {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {
                         smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = state_reader(&state).last_tunnel_activity(tunnel_id);
+                        let last_activity = state_reader(&state).await.last_tunnel_activity(tunnel_id);
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
                                 debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
@@ -2041,7 +2045,7 @@ impl BrokerImpl {
                 }).detach();
             }
             BrokerCommand::TunnelClosed(tunnel_id) => {
-                let closed = state_writer(&self.state).close_tunnel(tunnel_id)?;
+                let closed = state_writer(&self.state).await.close_tunnel(tunnel_id)?;
                 if let Some(true) = closed {
                     let msg = RpcMessage::new_signal_with_source(
                         &format!(".app/tunnel/{tunnel_id}"),
@@ -2057,25 +2061,26 @@ impl BrokerImpl {
     }
 
     async fn on_device_mounted(state: SharedBrokerState, new_peer_id: PeerId) -> shvrpc::Result<()> {
-        if state_reader(&state).mount_point(new_peer_id).is_none() {
+        if state_reader(&state).await.mount_point(new_peer_id).is_none() {
             return Ok(());
         }
         if Self::check_subscribe_api(state.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
-        if state_reader(&state).peers.get(&new_peer_id).is_none_or(Peer::is_connected_to_parent_broker) {
+        if state_reader(&state).await.peers.get(&new_peer_id).is_none_or(Peer::is_connected_to_parent_broker) {
             return Ok(());
         }
         let forwarded_ris = state_reader(&state)
+            .await
             .peers
             .iter()
             .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
             .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
             .collect::<Vec<_>>();
 
-        let subscr_cmd_sender = state_reader(&state).subscr_cmd_sender.clone();
+        let subscr_cmd_sender = state_reader(&state).await.subscr_cmd_sender.clone();
 
-        if let Some(new_peer) = state_writer(&state).peers.get_mut(&new_peer_id) {
+        if let Some(new_peer) = state_writer(&state).await.peers.get_mut(&new_peer_id) {
             for ri in forwarded_ris {
                 new_peer
                     .add_forwarded_subscription(&ri, &subscr_cmd_sender)
@@ -2088,7 +2093,7 @@ impl BrokerImpl {
 
     async fn check_subscribe_api(state: SharedBrokerState, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        let broker_command_sender = state_reader(&state).command_sender.clone();
+        let broker_command_sender = state_reader(&state).await.command_sender.clone();
         let subscribe_api = {
             let (response_sender, response_receiver) = unbounded();
             let request = RpcMessage::new_request(".broker", METH_LS, None);
@@ -2116,7 +2121,7 @@ impl BrokerImpl {
         };
 
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
-        state_writer(&state).set_subscribe_api(peer_id, subscribe_api)?;
+        state_writer(&state).await.set_subscribe_api(peer_id, subscribe_api)?;
         Ok(subscribe_api)
     }
 }
@@ -2140,24 +2145,26 @@ mod test {
     use crate::config::Password;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
-    #[test]
-    fn test_broker() {
-        let config = BrokerConfig::default();
-        let access = config.access.clone();
-        let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), None);
-        let roles = state_reader(&broker.state)
-            .flatten_roles(access.users.get("child-broker").unwrap().roles.as_slice());
-        assert_eq!(
-            roles,
-            vec![
-                "child-broker",
-                "device",
-                "client",
-                "ping",
-                "subscribe",
-                "browse"
-            ]
-        );
+    smol_macros::test! {
+        async fn test_broker() {
+            let config = BrokerConfig::default();
+            let access = config.access.clone();
+            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), None);
+            let roles = state_reader(&broker.state)
+                .await
+                .flatten_roles(access.users.get("child-broker").unwrap().roles.as_slice());
+            assert_eq!(
+                roles,
+                vec![
+                    "child-broker",
+                    "device",
+                    "client",
+                    "ping",
+                    "subscribe",
+                    "browse"
+                ]
+            );
+        }
     }
 
     smol_macros::test! {
