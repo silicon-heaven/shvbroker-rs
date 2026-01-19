@@ -30,7 +30,7 @@ panic = "abort"
 
 [dependencies]
 shvproto = { version = "3.6.22", features = [ "serde" ] }
-shvrpc = { version = "7.1.8", features = ["websocket"] }
+shvrpc = { version = "7.1.9", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
