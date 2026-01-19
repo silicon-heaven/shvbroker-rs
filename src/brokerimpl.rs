@@ -1050,7 +1050,7 @@ impl BrokerState {
     pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {
         self.access.mounts.get(id)
     }
-    pub(crate) fn set_access_mount(&mut self, response_meta: MetaMap, id: &str, mount: Option<crate::config::Mount>) {
+    pub(crate) async fn set_access_mount(&mut self, id: &str, mount: Option<crate::config::Mount>) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(mount) = mount {
             let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
                 error!("Generate SQL statement error: {e}");
@@ -1067,13 +1067,13 @@ impl BrokerState {
             self.access.mounts.remove(id);
             UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
         };
-        self.update_sql(response_meta, vec![sqlop]);
+        self.update_sql(vec![sqlop]).await
     }
 
     pub(crate) fn access_allowed_ips(&self, id: &str) -> Option<&Vec<ipnet::IpNet>> {
         self.access.allowed_ips.get(id)
     }
-    pub(crate) fn set_allowed_ips(&mut self, response_meta: MetaMap, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>) {
+    pub(crate) async fn set_allowed_ips(&mut self, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(allowed_ips) = allowed_ips {
             let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
                 error!("Generate SQL statement error: {e}");
@@ -1090,12 +1090,12 @@ impl BrokerState {
             self.access.allowed_ips.remove(id);
             UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
         };
-        self.update_sql(response_meta, vec![sqlop]);
+        self.update_sql(vec![sqlop]).await
     }
     pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
         self.access.users.get(id)
     }
-    pub(crate) fn set_access_user(&mut self, response_meta: MetaMap, id: &str, user: Option<crate::config::User>) {
+    pub(crate) async fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(user) = user {
             let json = serde_json::to_string(&user).unwrap_or_else(|e| {
                 error!("Generate SQL statement error: {e}");
@@ -1116,12 +1116,12 @@ impl BrokerState {
             }
             res
         };
-        self.update_sql(response_meta, sqlop);
+        self.update_sql(sqlop).await
     }
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.access.roles.get(id)
     }
-    pub(crate) fn set_access_role(&mut self, response_meta: MetaMap, role_name: &str, role: Option<Role>) -> shvrpc::Result<()> {
+    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(role) = role {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             let json = serde_json::to_string(&role).expect("JSON should be generated");
@@ -1137,12 +1137,11 @@ impl BrokerState {
             self.access.roles.remove(role_name);
             UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
         };
-        self.update_sql(response_meta, vec![sqlop]);
-        Ok(())
+        self.update_sql(vec![sqlop]).await
     }
-    fn update_sql(&self, response_meta: MetaMap, oper: Vec<UpdateSqlOperation>) {
+    async fn update_sql(&self, oper: Vec<UpdateSqlOperation<'_>>) -> shvrpc::Result<RpcValue> {
         let Some(sql_connection) = &self.sql_connection else {
-            return;
+            return Err("SQL is not enabled on this broker".into());
         };
 
         let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
@@ -1159,25 +1158,12 @@ impl BrokerState {
             };
             acc
         });
-        let sender = self.command_sender.clone();
-        let sql_connection = sql_connection.clone();
-        smol::spawn(async move {
-            let exec_sql = sql_connection.conn(move |sql_connection| {
-                sql_connection.execute(&query, ())
-            });
-            let result = exec_sql.await
-                .map(|v| RpcValue::from(v as i64))
-                .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()));
-            let mut meta = response_meta;
-            let Some(peer_id) = meta.pop_caller_id() else {
-                error!("Failed to pop caller ID from metadata");
-                return;
-            };
-            if let Err(e) = sender.send(BrokerCommand::SendResponse { peer_id, meta, result }).await {
-                error!("Failed to send response: {}", e);
-            }
-        })
-        .detach();
+
+        sql_connection.conn(move |sql_connection| {
+            sql_connection.execute(&query, ())
+        }).await
+            .map(|v| RpcValue::from(v as i64))
+            .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()).into())
     }
     pub(crate) fn create_tunnel(
         &mut self,

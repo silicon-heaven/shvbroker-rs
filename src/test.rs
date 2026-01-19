@@ -182,7 +182,6 @@ async fn test_broker_loop_as_admin_async() {
             mount_point: Some("test/device".to_string()),
         },
         sender: peer_writer.clone() }).await.unwrap();
-
     /*
     lsmod cannot be received because it is not subscribed
     loop {
