@@ -156,10 +156,10 @@ pub(crate) trait ShvNode : Send + Sync {
         let methods = self.methods(shv_path);
         is_request_granted_methods(methods, rq)
     }
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult;
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult;
 }
 impl dyn ShvNode {
-    pub async fn process_request_and_dir_ls(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    pub async fn process_request_and_dir_ls(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         let result = self.process_request(frame, ctx).await;
         if let Ok(ProcessRequestRetval::MethodNotFound) = result {
             match frame.method().unwrap_or_default() {
@@ -254,7 +254,7 @@ impl ShvNode for AppNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(ProcessRequestRetval::Retval(env!("CARGO_PKG_NAME").into()))
@@ -310,7 +310,7 @@ impl ShvNode for AppDeviceNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_NAME => {
                 Ok(ProcessRequestRetval::Retval(self.device_name.into()))
@@ -395,7 +395,7 @@ impl ShvNode for BrokerNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
@@ -513,7 +513,7 @@ impl ShvNode for BrokerCurrentClientNode {
         Some(vec![])
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
@@ -702,7 +702,7 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match ctx.state.read().await.access_mount(&ctx.node_path) {
@@ -765,7 +765,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
@@ -856,7 +856,7 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match ctx.state.read().await.access_role(&ctx.node_path) {
@@ -919,7 +919,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
         }
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 match ctx.state.read().await.access_allowed_ips(&ctx.node_path) {
@@ -1010,7 +1010,7 @@ impl ShvNode for Shv2BrokerAppNode {
         Some(vec![])
     }
 
-    async fn process_request(&mut self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_PING => {
                 Ok(ProcessRequestRetval::Retval(().into()))
