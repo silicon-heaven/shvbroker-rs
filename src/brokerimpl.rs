@@ -318,10 +318,10 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(mut broker: BrokerImpl) {
+pub(crate) async fn broker_loop(mut broker: BrokerImpl, command_receiver: Receiver<BrokerCommand>) {
     loop {
         select! {
-            command = broker.command_receiver.recv().fuse() => match command {
+            command = command_receiver.recv().fuse() => match command {
                 Ok(command) => {
                     if let Err(err) = broker.process_broker_command(command).await {
                         warn!("Process broker command error: {err}");
@@ -424,10 +424,10 @@ async fn server_accept_loop(
     Ok(())
 }
 
-pub async fn run_broker(broker_impl: BrokerImpl) -> shvrpc::Result<()> {
+pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: Receiver<BrokerCommand>) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
     let broker_config = broker_impl.config.clone();
-    let broker_task = smol::spawn(broker_loop(broker_impl));
+    let broker_task = smol::spawn(broker_loop(broker_impl, command_receiver));
     for Listen { url } in &broker_config.listen {
         let address_string = |url: &Url| {
             format!("{host}:{port}",
@@ -1283,7 +1283,6 @@ pub struct BrokerImpl {
 
     pending_rpc_calls: Vec<PendingRpcCall>,
     pub command_sender: Sender<BrokerCommand>,
-    pub(crate) command_receiver: Receiver<BrokerCommand>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -1485,9 +1484,9 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
+        command_sender: Sender<BrokerCommand>,
         sql_connection: Option<async_sqlite::Client>,
     ) -> Self {
-        let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
         let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender, sql_connection);
@@ -1543,7 +1542,6 @@ impl BrokerImpl {
             nodes,
             pending_rpc_calls: vec![],
             command_sender,
-            command_receiver,
             config: config.clone(),
         }
     }
@@ -2113,7 +2111,8 @@ mod test {
         async fn test_broker() {
             let config = BrokerConfig::default();
             let access = config.access.clone();
-            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), None);
+            let (command_sender, _) = channel::unbounded();
+            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), command_sender, None);
             let roles = broker.state.read()
                 .await
                 .flatten_roles(access.users.get("child-broker").unwrap().roles.as_slice());
@@ -2159,7 +2158,8 @@ mod test {
                 (("localhost_user", "some_pw", Some("127.0.0.2".parse().unwrap())), true),
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), None);
+                let (command_sender, _) = channel::unbounded();
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), command_sender, None);
                 let (sender, reader) = channel::unbounded::<BrokerToPeerMessage>();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,

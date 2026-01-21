@@ -114,8 +114,9 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
-    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, sql_connection);
-    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl))
+    let (command_sender, command_receiver) = smol::channel::unbounded();
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, command_sender, sql_connection);
+    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
