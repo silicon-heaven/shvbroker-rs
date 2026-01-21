@@ -585,9 +585,8 @@ impl ShvNode for BrokerCurrentClientNode {
 
                 let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
                 user.password = crate::config::Password::Sha1(new_password_sha1);
-                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                state.set_access_user(response_meta, &user_name, Some(user));
-                Ok(ProcessRequestRetval::RetvalDeferred)
+                let res = state.set_access_user(&user_name, Some(user)).await?;
+                Ok(ProcessRequestRetval::Retval(res))
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
@@ -728,9 +727,8 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                ctx.state.write().await.set_access_mount(response_meta, key.as_str(), mount);
-                Ok(ProcessRequestRetval::RetvalDeferred)
+                let res = ctx.state.write().await.set_access_mount(key.as_str(), mount).await?;
+                Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -775,15 +773,14 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                     Err(format!("Invalid node key: {}", &ctx.node_path).into())
                 }
                 Some(user) => {
-                    let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
                     if user.deactivated == new_deactivated {
                         return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
                     }
-                    ctx.state.write().await.set_access_user(response_meta, &ctx.node_path, Some(crate::config::User{
+                    let res = ctx.state.write().await.set_access_user(&ctx.node_path, Some(crate::config::User{
                         deactivated: new_deactivated,
                         ..user.clone()
-                    }));
-                    Ok(ProcessRequestRetval::RetvalDeferred)
+                    })).await?;
+                    Ok(ProcessRequestRetval::Retval(res))
                 }
             }
         };
@@ -819,9 +816,8 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                ctx.state.write().await.set_access_user(response_meta, key.as_str(), user);
-                Ok(ProcessRequestRetval::RetvalDeferred)
+                let res = ctx.state.write().await.set_access_user(key.as_str(), user).await?;
+                Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -874,7 +870,7 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
-                let key = param.first().ok_or("Key is missing")?;
+                let key = param.first().ok_or("Key is missing")?.clone();
                 let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
                 let role = rv.map(crate::config::Role::try_from);
                 let role = match role {
@@ -882,9 +878,8 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                ctx.state.write().await.set_access_role(response_meta, key.as_str(), role)?;
-                Ok(ProcessRequestRetval::RetvalDeferred)
+                let res = ctx.state.write().await.set_access_role(key.as_str(), role).await?;
+                Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -952,9 +947,8 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Ok(allowed_ips)) => {Some(allowed_ips)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-                ctx.state.write().await.set_allowed_ips(response_meta, key.as_str(), allowed_ips);
-                Ok(ProcessRequestRetval::RetvalDeferred)
+                let res = ctx.state.write().await.set_allowed_ips(key.as_str(), allowed_ips).await?;
+                Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
