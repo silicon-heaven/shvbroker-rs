@@ -1301,7 +1301,7 @@ pub struct BrokerImpl {
     pub command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
 
-    pub(crate) sql_connection: Option<rusqlite::Connection>,
+    pub(crate) sql_connection: Option<async_sqlite::Client>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -1503,7 +1503,7 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
-        sql_connection: Option<rusqlite::Connection>,
+        sql_connection: Option<async_sqlite::Client>,
     ) -> Self {
         let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
@@ -2002,8 +2002,9 @@ impl BrokerImpl {
             }
             BrokerCommand::ExecSql { query, response_sender } => {
                 if let Some(connection) = &self.sql_connection {
-                    let resp = connection
+                    let resp = connection.conn(move |connection| connection
                         .execute(&query, ())
+                    ).await
                         .map_err(|sql_err| format!("SQL exec error: {sql_err}"));
                     response_sender.send(resp).await?;
                 } else {
