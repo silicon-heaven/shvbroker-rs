@@ -104,7 +104,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
         info!("Data directory: {}", data_dir);
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
-        let (sql_connection, access_config) = sql::migrate_sqlite_connection(&sql_config_file, &config.access)?;
+        let (sql_connection, access_config) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access))?;
         (access_config, Some(sql_connection))
     } else {
         (config.access.clone(), None)

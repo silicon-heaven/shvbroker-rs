@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.20.7"
+version = "3.20.8"
 edition = "2024"
 
 [package.metadata.bin]
@@ -43,7 +43,7 @@ serde = "1.0.203"
 serde_yaml = "0.9"
 serde_json = "1.0"
 clap = { version = "4.5.54", features = ["derive"] }
-rusqlite = { version = "0.38.0", features = ["bundled"] }
+async-sqlite = { version = "0.5.4", features = ["bundled", "modern-full"] }
 reqwest = { version = "0.12.28", features = ["json", "http2", "rustls-tls"], default-features = false, optional = true }
 serialport = "4.7.1"
 async-tungstenite = "0.32.1"

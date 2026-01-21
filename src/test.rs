@@ -71,7 +71,7 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();
@@ -156,7 +156,7 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).unwrap();
+    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let broker = BrokerImpl::new(config, access_config, Some(sql_connection));
     let broker_sender = broker.command_sender.clone();

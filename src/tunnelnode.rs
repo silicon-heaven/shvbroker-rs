@@ -87,7 +87,7 @@ impl ShvNode for TunnelNode {
     }
 
     async fn process_request(
-        &mut self,
+        &self,
         frame: &RpcFrame,
         ctx: &NodeRequestContext,
     ) -> shvnode::ProcessRequestResult {

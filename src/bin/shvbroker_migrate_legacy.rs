@@ -1,5 +1,6 @@
+use async_sqlite::ClientBuilder;
 use clap::Parser;
-use rusqlite::{params, Connection, OpenFlags, Result};
+use async_sqlite::rusqlite::{params, Connection, OpenFlags, Result};
 use serde::Serialize;
 use shvbroker::config::{AccessRule, Mount, Password, ProfileValue, Role, User};
 use std::collections::BTreeMap;
@@ -146,7 +147,7 @@ fn insert_map<T: Serialize>(
             tx.prepare(&format!("INSERT OR REPLACE INTO {table} (id, def) VALUES (?1, ?2)"))?;
         for (key, value) in map {
             let json = serde_json::to_string(value)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                .map_err(|e| async_sqlite::rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             stmt.execute(params![key, json])?;
         }
     }
@@ -583,17 +584,28 @@ fn main() -> shvrpc::Result<()> {
             to = new_db_path.to_string_lossy()
         );
 
-        let input_conn = Connection::open_with_flags(legacy_db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let mut output_conn = Connection::open(new_db_path)?;
+        smol::block_on(async {
+            let input_conn = ClientBuilder::new().path(legacy_db_path).flags(OpenFlags::SQLITE_OPEN_READ_ONLY).open().await?;
+            let output_conn = ClientBuilder::new().path(new_db_path).open().await?;
 
-        let users = load_users(&input_conn)?;
-        let mounts = load_mounts(&input_conn)?;
-        let roles = load_roles(&input_conn)?;
+            let (users, mounts, roles) = input_conn.conn(|input_conn| {
+                let users = load_users(input_conn)?;
+                let mounts = load_mounts(input_conn)?;
+                let roles = load_roles(input_conn)?;
+                Ok((users, mounts, roles))
+            }).await?;
 
-        init_output_schema(&output_conn)?;
-        insert_map(&mut output_conn, "users", &users)?;
-        insert_map(&mut output_conn, "mounts", &mounts)?;
-        insert_map(&mut output_conn, "roles", &roles)?;
+            output_conn.conn_mut(move |output_conn| {
+                init_output_schema(output_conn)?;
+                insert_map(output_conn, "users", &users)?;
+                insert_map(output_conn, "mounts", &mounts)?;
+                insert_map(output_conn, "roles", &roles)?;
+
+                Ok(())
+            }).await?;
+
+            shvrpc::Result::Ok(())
+        })?;
     }
 
     Ok(())
