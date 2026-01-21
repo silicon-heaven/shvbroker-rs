@@ -1,4 +1,3 @@
-use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
     AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
@@ -96,10 +95,6 @@ pub enum BrokerCommand {
         peer_id: PeerId,
         request: RpcMessage,
         response_sender: Sender<RpcFrame>,
-    },
-    ExecSql {
-        query: String,
-        response_sender: Sender<Result<usize, String>>,
     },
     TunnelActive(TunnelId),
     TunnelClosed(TunnelId),
@@ -1146,6 +1141,10 @@ impl BrokerState {
         Ok(())
     }
     fn update_sql(&self, response_meta: MetaMap, oper: Vec<UpdateSqlOperation>) {
+        let Some(sql_connection) = &self.sql_connection else {
+            return;
+        };
+
         let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
             match oper {
                 UpdateSqlOperation::Insert { table, id, json } => {
@@ -1161,19 +1160,11 @@ impl BrokerState {
             acc
         });
         let sender = self.command_sender.clone();
-        let (sql_response_sender, sql_response_receiver) = unbounded();
+        let sql_connection = sql_connection.clone();
         smol::spawn(async move {
-            let exec_sql = async {
-                sender
-                    .send(ExecSql { query, response_sender: sql_response_sender })
-                    .await
-                    .map_err(|send_err|send_err.to_string())?;
-                sql_response_receiver
-                    .recv()
-                    .await
-                    .map_err(|recv_err| recv_err.to_string())?
-                    .map_err(|sql_err| format!("Failed to execute SQL query: {sql_err}"))
-            };
+            let exec_sql = sql_connection.conn(move |sql_connection| {
+                sql_connection.execute(&query, ())
+            });
             let result = exec_sql.await
                 .map(|v| RpcValue::from(v as i64))
                 .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()));
@@ -2003,17 +1994,6 @@ impl BrokerImpl {
                     },
                 )
                 .await?
-            }
-            BrokerCommand::ExecSql { query, response_sender } => {
-                if let Some(connection) = &self.state.read().await.sql_connection {
-                    let resp = connection.conn(move |connection| connection
-                        .execute(&query, ())
-                    ).await
-                        .map_err(|sql_err| format!("SQL exec error: {sql_err}"));
-                    response_sender.send(resp).await?;
-                } else {
-                    response_sender.send(Err("SQL config is disabled, use --use-access-db CLI switch.".into())).await?;
-                }
             }
             BrokerCommand::TunnelActive(tunnel_id) => {
                 let msg = RpcMessage::new_signal_with_source(
