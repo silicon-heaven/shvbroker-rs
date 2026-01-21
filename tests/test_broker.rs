@@ -14,7 +14,7 @@ use shvrpc::metamethod::{Flag, MetaMethod};
 use smol::lock::RwLock;
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
 use url::Url;
-use crate::common::{KillProcessGuard, shv_call, shv_call_many};
+use crate::common::{KillProcessGuard, ShvCallCommand, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
 
 mod common;
@@ -259,14 +259,15 @@ fn run_testing_device(url: Url, mount_point: &str) {
 fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> shvrpc::Result<()> {
     //let info = shv_call_child(".broker/currentClient", "info", "")?;
     //println!("INFO: {info}");
-    let calls: Vec<String> = vec![
-        format!(r#".broker/currentClient:subscribe ["{subscribe_path}:*:chng"]"#),
-        format!(r#"{property_path}:set 42"#),
-        format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#),
-        format!(r#"{property_path}:set 123"#),
+    let calls: Vec<ShvCallCommand> = vec![
+        ShvCallCommand::Call(format!(r#".broker/currentClient:subscribe ["{subscribe_path}:*:chng"]"#)),
+        ShvCallCommand::Call(format!(r#"{property_path}:set 42"#)),
+        ShvCallCommand::Wait(std::time::Duration::from_millis(1000)),
+        ShvCallCommand::Call(format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#)),
+        ShvCallCommand::Call(format!(r#"{property_path}:set 123"#)),
     ];
     println!("shv_call_many property: {property_path}, port: {port}");
-    for c in calls.iter() { println!("\t{c}"); }
+    for c in calls.iter() { println!("\t{c:?}"); }
     let values = shv_call_many(calls, Some(port))?;
     println!("shv_call_many result:");
     for v in values.iter() { println!("\t{v}"); }
