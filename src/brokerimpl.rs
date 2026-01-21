@@ -1,4 +1,3 @@
-use crate::brokerimpl::BrokerCommand::ExecSql;
 use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
 use crate::shvnode::{
     AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
@@ -96,10 +95,6 @@ pub enum BrokerCommand {
         peer_id: PeerId,
         request: RpcMessage,
         response_sender: Sender<RpcFrame>,
-    },
-    ExecSql {
-        query: String,
-        response_sender: Sender<Result<usize, String>>,
     },
     TunnelActive(TunnelId),
     TunnelClosed(TunnelId),
@@ -612,6 +607,8 @@ pub struct BrokerState {
 
     active_tunnels: BTreeMap<TunnelId, ActiveTunnel>,
     next_tunnel_number: TunnelId,
+
+    pub(crate) sql_connection: Option<async_sqlite::Client>,
 }
 
 struct DisconnectPeerReason {
@@ -621,7 +618,11 @@ struct DisconnectPeerReason {
 
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
-    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
+    pub(crate) fn new(access: AccessConfig,
+        command_sender: Sender<BrokerCommand>,
+        subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+        sql_connection: Option<async_sqlite::Client>,
+    ) -> Self {
         let role_access = parse_config_roles(&access.roles);
         Self {
             peers: Default::default(),
@@ -633,6 +634,7 @@ impl BrokerState {
             subscr_cmd_sender,
             active_tunnels: Default::default(),
             next_tunnel_number: 1,
+            sql_connection,
         }
     }
     fn mount_point(&self, peer_id: PeerId) -> Option<String> {
@@ -1139,6 +1141,10 @@ impl BrokerState {
         Ok(())
     }
     fn update_sql(&self, response_meta: MetaMap, oper: Vec<UpdateSqlOperation>) {
+        let Some(sql_connection) = &self.sql_connection else {
+            return;
+        };
+
         let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
             match oper {
                 UpdateSqlOperation::Insert { table, id, json } => {
@@ -1154,19 +1160,11 @@ impl BrokerState {
             acc
         });
         let sender = self.command_sender.clone();
-        let (sql_response_sender, sql_response_receiver) = unbounded();
+        let sql_connection = sql_connection.clone();
         smol::spawn(async move {
-            let exec_sql = async {
-                sender
-                    .send(ExecSql { query, response_sender: sql_response_sender })
-                    .await
-                    .map_err(|send_err|send_err.to_string())?;
-                sql_response_receiver
-                    .recv()
-                    .await
-                    .map_err(|recv_err| recv_err.to_string())?
-                    .map_err(|sql_err| format!("Failed to execute SQL query: {sql_err}"))
-            };
+            let exec_sql = sql_connection.conn(move |sql_connection| {
+                sql_connection.execute(&query, ())
+            });
             let result = exec_sql.await
                 .map(|v| RpcValue::from(v as i64))
                 .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()));
@@ -1300,8 +1298,6 @@ pub struct BrokerImpl {
     pending_rpc_calls: Vec<PendingRpcCall>,
     pub command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
-
-    pub(crate) sql_connection: Option<async_sqlite::Client>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -1508,7 +1504,7 @@ impl BrokerImpl {
         let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
+        let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender, sql_connection);
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             state
@@ -1562,7 +1558,6 @@ impl BrokerImpl {
             pending_rpc_calls: vec![],
             command_sender,
             command_receiver,
-            sql_connection,
             config: config.clone(),
         }
     }
@@ -1635,7 +1630,7 @@ impl BrokerImpl {
                                 peer_id,
                                 node_path: node_path.to_string(),
                                 state: self.state.clone(),
-                                sql_available: self.sql_connection.is_some(),
+                                sql_available: state.sql_connection.is_some(),
                             },
                         },
                     }
@@ -1999,17 +1994,6 @@ impl BrokerImpl {
                     },
                 )
                 .await?
-            }
-            BrokerCommand::ExecSql { query, response_sender } => {
-                if let Some(connection) = &self.sql_connection {
-                    let resp = connection.conn(move |connection| connection
-                        .execute(&query, ())
-                    ).await
-                        .map_err(|sql_err| format!("SQL exec error: {sql_err}"));
-                    response_sender.send(resp).await?;
-                } else {
-                    response_sender.send(Err("SQL config is disabled, use --use-access-db CLI switch.".into())).await?;
-                }
             }
             BrokerCommand::TunnelActive(tunnel_id) => {
                 let msg = RpcMessage::new_signal_with_source(
