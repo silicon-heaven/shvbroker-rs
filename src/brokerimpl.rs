@@ -612,6 +612,8 @@ pub struct BrokerState {
 
     active_tunnels: BTreeMap<TunnelId, ActiveTunnel>,
     next_tunnel_number: TunnelId,
+
+    pub(crate) sql_connection: Option<async_sqlite::Client>,
 }
 
 struct DisconnectPeerReason {
@@ -621,7 +623,11 @@ struct DisconnectPeerReason {
 
 pub(crate) type SharedBrokerState = Arc<RwLock<BrokerState>>;
 impl BrokerState {
-    pub(crate) fn new(access: AccessConfig, command_sender: Sender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
+    pub(crate) fn new(access: AccessConfig,
+        command_sender: Sender<BrokerCommand>,
+        subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+        sql_connection: Option<async_sqlite::Client>,
+    ) -> Self {
         let role_access = parse_config_roles(&access.roles);
         Self {
             peers: Default::default(),
@@ -633,6 +639,7 @@ impl BrokerState {
             subscr_cmd_sender,
             active_tunnels: Default::default(),
             next_tunnel_number: 1,
+            sql_connection,
         }
     }
     fn mount_point(&self, peer_id: PeerId) -> Option<String> {
@@ -1300,8 +1307,6 @@ pub struct BrokerImpl {
     pending_rpc_calls: Vec<PendingRpcCall>,
     pub command_sender: Sender<BrokerCommand>,
     pub(crate) command_receiver: Receiver<BrokerCommand>,
-
-    pub(crate) sql_connection: Option<async_sqlite::Client>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -1508,7 +1513,7 @@ impl BrokerImpl {
         let (command_sender, command_receiver) = unbounded();
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender);
+        let mut state = BrokerState::new(access, command_sender.clone(), subscr_cmd_sender, sql_connection);
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             state
@@ -1562,7 +1567,6 @@ impl BrokerImpl {
             pending_rpc_calls: vec![],
             command_sender,
             command_receiver,
-            sql_connection,
             config: config.clone(),
         }
     }
@@ -1635,7 +1639,7 @@ impl BrokerImpl {
                                 peer_id,
                                 node_path: node_path.to_string(),
                                 state: self.state.clone(),
-                                sql_available: self.sql_connection.is_some(),
+                                sql_available: state.sql_connection.is_some(),
                             },
                         },
                     }
@@ -2001,7 +2005,7 @@ impl BrokerImpl {
                 .await?
             }
             BrokerCommand::ExecSql { query, response_sender } => {
-                if let Some(connection) = &self.sql_connection {
+                if let Some(connection) = &self.state.read().await.sql_connection {
                     let resp = connection.conn(move |connection| connection
                         .execute(&query, ())
                     ).await
