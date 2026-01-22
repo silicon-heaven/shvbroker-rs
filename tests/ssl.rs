@@ -33,7 +33,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, broker_sender, None), broker_receiver)
+        run_broker(Arc::new(BrokerImpl::new(broker_config, access_config, broker_sender, None)), broker_receiver)
             .await
             .expect("broker accept_loop failed")
     }).detach();

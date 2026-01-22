@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::brokerimpl::BrokerImpl;
 use crate::sql;
@@ -74,7 +75,7 @@ async fn test_broker_loop_as_user_async() {
     let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection));
+    let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -159,7 +160,7 @@ async fn test_broker_loop_as_admin_async() {
     let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection));
+    let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
@@ -303,7 +304,7 @@ smol_macros::test! {
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, broker_sender.clone(), None);
+        let broker = Arc::new(BrokerImpl::new(config, access, broker_sender.clone(), None));
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();

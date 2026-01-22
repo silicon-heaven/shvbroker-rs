@@ -1,6 +1,6 @@
 use log::trace;
 use crate::brokerimpl::{
-    BrokerCommand, NodeRequestContext, SharedBrokerState, TunnelId,
+    BrokerCommand, BrokerImpl, NodeRequestContext, TunnelId
 };
 use crate::shvnode;
 use crate::shvnode::{
@@ -19,6 +19,7 @@ use smol::channel;
 use smol::channel::{Receiver, Sender};
 use smol::io::{BufReader, BufWriter};
 use smol::net::TcpStream;
+use std::sync::Arc;
 use std::time::Instant;
 
 const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Superuser, "DirParam", "DirResult", &[], "");
@@ -59,7 +60,7 @@ impl ShvNode for TunnelNode {
             OPEN_TUNNEL_NODE_METHODS
         }
     }
-    async fn children(&self, shv_path: &str, broker_state: &SharedBrokerState) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         let tunnels = broker_state
             .active_tunnel_ids()
             .await
@@ -167,7 +168,7 @@ pub(crate) async fn tunnel_task(
     request_meta: MetaMap,
     addr: String,
     from_broker_receiver: Receiver<ToRemoteMsg>,
-    state: SharedBrokerState,
+    state: Arc<BrokerImpl>,
 ) -> shvrpc::Result<()> {
     let peer_id = *request_meta.caller_ids().first().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
