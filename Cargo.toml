@@ -20,7 +20,7 @@ shvclient = { version = "0.21.10", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.35"
 anyhow = "1.0.100"
-rcgen = "0.14.5"
+rcgen = "0.14.7"
 async-trait = "0.1.89"
 
 [profile.release]
