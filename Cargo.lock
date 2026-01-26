@@ -2192,9 +2192,9 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.14.6"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ec0a99f2de91c3cddc84b37e7db80e4d96b743e05607f647eb236fc0455907f"
+checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
 dependencies = [
  "pem",
  "ring",
@@ -2611,7 +2611,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.20.11"
+version = "3.20.12"
 dependencies = [
  "anyhow",
  "assert_cmd",
