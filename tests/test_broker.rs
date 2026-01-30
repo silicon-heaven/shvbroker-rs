@@ -28,7 +28,7 @@ fn test_broker() -> shvrpc::Result<()> {
     thread::sleep(Duration::from_millis(100));
     assert!(broker_process_guard.is_running());
 
-    let _process_guard_3756 = {
+    let _process_guard_3755 = {
         let config = BrokerConfig {
             listen: vec![Listen { url: Url::parse("tcp://localhost:3756")? }],
             connections: vec![
