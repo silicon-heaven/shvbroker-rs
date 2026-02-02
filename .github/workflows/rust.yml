@@ -123,7 +123,7 @@ jobs:
           body: |
             shvbroker ${{ steps.get-version.outputs.version }}
 
-            If you find any bugs, report them to the repository's issue tracker.
+            If you find any bugs, please report them to the repository's issue tracker.
           files: |
             ${{github.workspace}}/install/bin/shvbroker*${{ steps.get-version.outputs.version }}*
 
