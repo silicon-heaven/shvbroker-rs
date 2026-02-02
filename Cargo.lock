@@ -347,9 +347,9 @@ dependencies = [
 
 [[package]]
 name = "async-sqlite"
-version = "0.5.4"
+version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0d7f95be4bae0f9c86c7550b9ea890fa3283a06d71aef9a99d7f21de07a93a1"
+checksum = "b6037310bc3258a157bc12e9bba372420ad69143ecc24d986a3b1218d6d97b01"
 dependencies = [
  "crossbeam-channel",
  "futures-channel",
@@ -555,9 +555,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6e6ff9dcd79cff5cd969a17a545d79e84ab086e444102a591e288a8aa3ce394"
+checksum = "a75ca66430e33a14957acc24c5077b503e7d374151b2b4b3a10c83b4ceb4be0e"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -565,9 +565,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa42cf4d2b7a41bc8f663a7cab4031ebafa1bf3875705bfaf8466dc60ab52c00"
+checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -577,9 +577,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.49"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -853,9 +853,9 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "duration-str"
-version = "0.18.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6eb193f176998d2f9fed5cfea52af8237f86a03fe66b85f96ad75d890a85299"
+checksum = "12494809f9915b6132014cc259c4e204ab53ab6c6dd2225672703b5359267d82"
 dependencies = [
  "chrono",
  "rust_decimal",
@@ -2650,9 +2650,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "0.21.10"
+version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95a9651b4d7bf66062dbeda53a1608138ac6124be527c88627e9acb7bcd7bc19"
+checksum = "1cfcdc72cf1923e6781493ddfed4e8651aca4ec30bf4f78c7756ce7048088d90"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -2686,9 +2686,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "7.1.9"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f933ab659c999598dc3308a6ca2ee27439c30ff8b82d6c4f12d386298d8a837"
+checksum = "1888cc59abf52592f42bbe28dbd79ce250ce3199bd3873abcbc27b1eda75b207"
 dependencies = [
  "anyhow",
  "async-trait",
