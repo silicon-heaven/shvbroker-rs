@@ -22,15 +22,15 @@ use smol::net::TcpStream;
 use std::sync::Arc;
 use std::time::Instant;
 
-const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Superuser, "DirParam", "DirResult", &[], "");
-const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Superuser, "LsParam", "LsResult", &[], "");
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::SuperService, "DirParam", "DirResult", &[], "");
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::SuperService, "LsParam", "LsResult", &[], "");
 
 const METH_CREATE: &str = "create";
 const METH_WRITE: &str = "write";
 const METH_CLOSE: &str = "close";
 const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flag::None as u32, AccessLevel::Write, "Map", "String", &[], "");
-const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flag::None as u32, AccessLevel::Superuser, "Blob", "Blob", &[], "");
-const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flag::None as u32, AccessLevel::Superuser, "Blob", "Blob", &[], "");
+const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flag::None as u32, AccessLevel::SuperService, "Blob", "Blob", &[], "");
+const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flag::None as u32, AccessLevel::SuperService, "Blob", "Blob", &[], "");
 
 const TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
