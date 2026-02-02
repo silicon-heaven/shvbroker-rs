@@ -55,30 +55,6 @@ jobs:
     - name: Run tests
       run: cargo test ${{matrix.features}} -- --test-threads=1
 
-  tag-release:
-    name: Tag Release
-    if: github.ref == 'refs/heads/master'
-    needs: [build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get version from Cargo.toml
-        id: get-version
-        run: |
-          version="$(grep '^version' Cargo.toml | head -n1 | sed 's/version\s*=\s*"\(.*\)"/\1/')"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Create and push tag
-        uses: rickstaa/action-create-tag@v1
-        with:
-          tag: ${{ steps.get-version.outputs.version }}
-
   create-releases:
     name: Create releases
     if: github.ref == 'refs/heads/master'
@@ -123,7 +99,7 @@ jobs:
           body: |
             shvbroker ${{ steps.get-version.outputs.version }}
 
-            If you find any bugs, report them to the repository's issue tracker.
+            If you find any bugs, please report them to the repository's issue tracker.
           files: |
             ${{github.workspace}}/install/bin/shvbroker*${{ steps.get-version.outputs.version }}*
 
