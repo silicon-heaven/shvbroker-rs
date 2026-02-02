@@ -55,12 +55,34 @@ jobs:
     - name: Run tests
       run: cargo test ${{matrix.features}} -- --test-threads=1
 
-  create-nightly-release:
-    name: Create nightly
+  tag-release:
+    name: Tag Release
+    if: github.ref == 'refs/heads/master'
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: get-version
+        run: |
+          version="$(grep '^version' Cargo.toml | head -n1 | sed 's/version\s*=\s*"\(.*\)"/\1/')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ steps.get-version.outputs.version }}
+
+  create-releases:
+    name: Create releases
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    env:
-      HASH_FOR_FILENAMES: ${{github.event.pull_request.head.sha || github.sha}}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -75,17 +97,35 @@ jobs:
           cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --all-features --locked
         shell: bash
 
+      - name: Get version from Cargo.toml
+        id: get-version
+        run: |
+          version="$(grep '^version' Cargo.toml | head -n1 | sed 's/version\s*=\s*"\(.*\)"/\1/')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ steps.get-version.outputs.version }}
+
       - name: Rename artifacts
         run: |
-          SHVBROKER_FILE_NAME="$(printf "shvbroker-nightly-g%s" "$(head -c 7 <<< '${{env.HASH_FOR_FILENAMES}}')")"
-          mv '${{github.workspace}}/install/bin/shvbroker' "${{github.workspace}}/install/bin/${SHVBROKER_FILE_NAME}"
+          mv "${{github.workspace}}/install/bin/shvbroker" "${{github.workspace}}/install/bin/shvbroker-${{ steps.get-version.outputs.version }}"
+          mv "${{github.workspace}}/install/bin/shvbroker_migrate_legacy" "${{github.workspace}}/install/bin/shvbroker_migrate_legacy-${{ steps.get-version.outputs.version }}"
 
-      - name: Create release
-        env:
-          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
-        uses: silicon-heaven/rust-nightly-release-action@v1.0.0
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
-          path_glob: ${{github.workspace}}/install/bin/shvbroker*
+          name: shvbroker ${{ steps.get-version.outputs.version }}
+          tag_name: ${{ steps.get-version.outputs.version }}
+          fail_on_unmatched_files: true
+          make_latest: true
+          body: |
+            shvbroker ${{ steps.get-version.outputs.version }}
+
+            If you find any bugs, report them to the repository's issue tracker.
+          files: |
+            ${{github.workspace}}/install/bin/shvbroker*${{ steps.get-version.outputs.version }}*
 
   coverage:
     name: Code coverage
