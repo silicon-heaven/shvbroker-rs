@@ -37,10 +37,13 @@ pub struct AzureConfig {
     pub token_url: String,
     pub scopes: Vec<String>,
 }
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct TunnellingConfig {
     #[serde(default)]
     pub enabled:bool,
+    #[serde(default)]
+    pub tsub_support: bool,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionKind {
