@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.21.2"
+version = "3.22.0"
 edition = "2024"
 default-run = "shvbroker"
 

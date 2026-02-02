@@ -59,11 +59,15 @@ fn load_mounts(conn: &Connection) -> Result<BTreeMap<String, Mount>> {
     Ok(mounts)
 }
 
+fn fix_azure_role_prefix(name: String) -> String {
+    name.strip_prefix("azure:").map(ToString::to_string).unwrap_or(name)
+}
+
 fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
     // --- Load roles from acl_roles table ---
     let mut stmt = conn.prepare("SELECT name, roles, profile FROM acl_roles")?;
     let mut roles = stmt.query_map([], |row| {
-        let name: String = row.get(0)?;
+        let name: String = fix_azure_role_prefix(row.get(0)?);
         let roles_str: String = row.get(1)?;
         let profile_str: Option<String> = row.get(2).ok();
 
@@ -107,7 +111,7 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
     )?;
 
     let access_rows = stmt.query_map([], |row| {
-        let role: String = row.get(0)?;
+        let role: String = fix_azure_role_prefix(row.get(0)?);
         let path = row.get(1).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
         let method = row.get(2).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
         let grant: String = row.get(3)?;

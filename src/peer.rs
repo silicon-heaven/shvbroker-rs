@@ -320,7 +320,7 @@ pub(crate) async fn server_peer_loop(
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let result = make_map!("clientId" => peer_id);
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
-                            let user = format!("azure:{email}", email = me_response.mail);
+                            let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
                             break 'login_loop (user, params.get("options").cloned());
