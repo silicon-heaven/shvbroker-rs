@@ -356,6 +356,16 @@ pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
 const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "Int", "ClientInfo", &[], "");
 const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "String", "ClientInfo", &[], "");
 const META_METH_CLIENTS: MetaMethod = MetaMethod::new_static(METH_CLIENTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[Int]", &[], "");
+const META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_static(
+    METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL,
+    Flag::None as u32,
+    AccessLevel::Service,
+    "[s:username,s:path,s:method]",
+    "Int",
+    &[],
+    r#"params: ["username", "shv_path", "method"]
+    only works for currently logged-in clients"#,
+);
 const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[String]", &[], "");
 const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flag::None as u32, AccessLevel::SuperService, "Int", "void", &[], "");
 
@@ -363,6 +373,7 @@ pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
 pub const METH_CHANGE_PASSWORD: &str = "changePassword";
 pub const METH_ACCESS_LEVEL_FOR_METHOD_CALL: &str = "accessLevelForMethodCall";
+pub const METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: &str = "userAccessLevelForMethodCall";
 pub const METH_USER_PROFILE: &str = "userProfile";
 pub const METH_USER_ROLES: &str = "userRoles";
 
@@ -380,6 +391,7 @@ const BROKER_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_CLIENT_INFO,
     &META_METH_MOUNTED_CLIENT_INFO,
     &META_METH_CLIENTS,
+    &META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL,
     &META_METH_MOUNTS,
     &META_METH_DISCONNECT_CLIENT,
 ];
@@ -440,6 +452,46 @@ impl ShvNode for BrokerNode {
                     Err(format!("Disconnect client error - peer {} not found.", ctx.peer_id).into())
                 }
             }
+            METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
+                const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;
+                let rq = &frame.to_rpcmesage()?;
+                let params = rq
+                    .param()
+                    .ok_or_else(|| WRONG_FORMAT_ERR.into())
+                    .and_then(|rv| Vec::<String>::try_from(rv)
+                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
+                    )?;
+
+                let [username, shv_path, method] = params.as_slice() else {
+                    return Err(WRONG_FORMAT_ERR.into());
+                };
+                let Some(peer_id) = ctx.state.peers.read().await
+                    .iter()
+                    .find_map(|(peer_id, peer)| match &peer.peer_kind {
+                        crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
+                        _ => None,
+                    }) else {
+                        return Err("Couldn't determine access level".into());
+                    };
+
+                let access_level = ctx.state
+                    .access_level_for_request_params(
+                        peer_id,
+                        shv_path,
+                        method,
+                        None,
+                        frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
+                    )
+                    .await
+                    .map(|(access_level, _)| access_level.unwrap_or_default())
+                    .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied.into() {
+                        Ok(0)
+                    } else {
+                        Err(rpc_err)
+                    })?;
+
+                Ok(ProcessRequestRetval::Retval(access_level.into()))
+            }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
             }
@@ -469,6 +521,7 @@ const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_stati
     &[],
     r#"(params: ["shv_path", "method"]"#,
 );
+
 const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flag::None as u32, AccessLevel::Read, "void", "RpcValue", &[], "");
 const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flag::None as u32, AccessLevel::Read, "void", "List", &[], "");
 
