@@ -442,14 +442,16 @@ impl ShvNode for BrokerNode {
                 Ok(ProcessRequestRetval::Retval(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
-                if let Some(peer) = ctx.state.peers.read().await.get(&ctx.peer_id) {
+                let rq = &frame.to_rpcmesage()?;
+                let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
+                if let Some(peer) = ctx.state.peers.read().await.get(&peer_id) {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
                         let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).await;
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))
                 } else {
-                    Err(format!("Disconnect client error - peer {} not found.", ctx.peer_id).into())
+                    Err(format!("Disconnect client error - peer {peer_id} not found.").into())
                 }
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
