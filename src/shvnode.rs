@@ -414,7 +414,7 @@ impl ShvNode for BrokerNode {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
-                let peer_id: PeerId = rq.param().unwrap_or_default().as_i64();
+                let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
                 let info = match ctx.state.client_info(peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
@@ -423,7 +423,7 @@ impl ShvNode for BrokerNode {
             }
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
-                let mount_point = rq.param().unwrap_or_default().as_str();
+                let mount_point = rq.param().unwrap_or_default().try_into()?;
                 let info = match ctx.state.mounted_client_info(mount_point).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
