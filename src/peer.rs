@@ -236,6 +236,75 @@ pub(crate) async fn server_peer_loop(
                     let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
+                    const GOOGLE_AUTH_TOKEN_PREFIX: &str = "oauth2-google:";
+                    if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(GOOGLE_AUTH_TOKEN_PREFIX) {
+                        #[cfg(not(feature = "google-auth"))]
+                        {
+                            let _ = access_token;
+                            frame_writer.send_error(resp_meta, "Google login is not supported on this broker.").or(frame_write_timeout()).await?;
+                            continue 'login_loop;
+                        }
+                        #[cfg(feature = "google-auth")]
+                        {
+                            #[derive(Debug, serde::Serialize, serde::Deserialize)]
+                            struct GoogleClaims {
+                                iss: String,    // Issuer (should be https://accounts.google.com)
+                                aud: String,    // Audience (your Client ID)
+                                sub: String,    // Unique Google user ID
+                                email: String,  // The verified email you need
+                                exp: usize,     // Expiration time
+                            }
+
+                            async fn verify_google_token(token: &str, broker_config: SharedBrokerConfig) -> shvrpc::Result<GoogleClaims> {
+                                use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+
+                                // Parse the header to find which key (kid) was used
+                                let header = decode_header(token)?;
+                                let kid = header.kid.ok_or_else(|| "No kid found in header".to_string())?;
+
+                                // Fetch Google's public keys (In production, cache this!)
+                                let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
+                                let response: serde_json::Value = reqwest::get(jwks_url).await?.json().await?;
+
+                                // Find the specific key matching the 'kid'
+                                let n = response["keys"].as_array()
+                                    .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                    .and_then(|k| k["n"].as_str())
+                                    .ok_or_else(|| "Key not found".to_string())?;
+
+                                let e = response["keys"].as_array()
+                                    .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                    .and_then(|k| k["e"].as_str())
+                                    .ok_or_else(|| "Exponent not found".to_string())?;
+
+                                // Create a decoding key from RSA components (n, e)
+                                let decoding_key = DecodingKey::from_rsa_components(n, e)?;
+
+                                // Set up validation (check audience and issuer)
+                                let client_id = broker_config.google_auth.as_ref().map(|c| c.client_id.as_str())
+                                    .ok_or_else(|| "No client ID found in configuration".to_string())?;
+                                let mut validation = Validation::new(Algorithm::RS256);
+                                validation.set_audience(&[client_id]);
+                                validation.set_issuer(&["https://accounts.google.com", "accounts.google.com"]);
+
+                                // Decode and verify
+                                let token_data = decode::<GoogleClaims>(token, &decoding_key, &validation)?;
+
+                                Ok(token_data.claims)
+                            }
+                            match verify_google_token(access_token, broker_config.clone()).await {
+                                Ok(claims) => {
+                                    let user = claims.email;
+                                    break 'login_loop (user, params.get("options").cloned());
+                                }
+                                Err(e) => {
+                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
+                                    continue 'login_loop;
+                                }
+                            }
+                        }
+                    }
+
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {

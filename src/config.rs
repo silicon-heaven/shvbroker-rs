@@ -28,6 +28,8 @@ pub struct BrokerConfig {
     pub tunnelling: TunnellingConfig,
     #[serde(default)]
     pub azure: Option<AzureConfig>,
+    #[serde(default)]
+    pub google_auth: Option<GoogleAuthConfig>,
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
@@ -36,6 +38,11 @@ pub struct AzureConfig {
     pub authorize_url: String,
     pub token_url: String,
     pub scopes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct GoogleAuthConfig {
+    pub client_id: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -355,6 +362,7 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
+            google_auth: Default::default(),
         }
     }
 }

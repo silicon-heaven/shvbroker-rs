@@ -114,6 +114,10 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Ok(());
     }
     info!("-----------------------------------------------------");
+    #[cfg(not(feature = "google-auth"))]
+    if config.google_auth.is_some() {
+        return Err("Googgle auth is configured but not part of this build!".into());
+    }
     let (command_sender, command_receiver) = smol::channel::unbounded();
     let broker_impl = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config), access, command_sender, sql_connection));
     smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
