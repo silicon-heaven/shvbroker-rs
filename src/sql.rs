@@ -73,10 +73,10 @@ async fn create_access_sqlite(sql_conn: &Client, access: &AccessConfig) -> shvrp
     }
 
     info!("Creating SQLite access db");
-    save_table(sql_conn, TBL_MOUNTS, access.mounts.clone()).await?;
-    save_table(sql_conn, TBL_USERS, access.users.clone()).await?;
-    save_table(sql_conn, TBL_ROLES, access.roles.clone()).await?;
-    save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips.clone()).await?;
+    save_table(sql_conn, TBL_MOUNTS, access.mounts().clone()).await?;
+    save_table(sql_conn, TBL_USERS, access.users().clone()).await?;
+    save_table(sql_conn, TBL_ROLES, access.roles().clone()).await?;
+    save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips().clone()).await?;
 
     Ok(())
 }
@@ -109,10 +109,10 @@ async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<AccessConfig> {
         }).await
     }
 
-    Ok(AccessConfig {
-        users: load_table(sql_conn, TBL_USERS).await?,
-        roles: load_table(sql_conn, TBL_ROLES).await?,
-        mounts: load_table(sql_conn, TBL_MOUNTS).await?,
-        allowed_ips: load_table(sql_conn, TBL_ALLOWED_IPS).await?,
-    })
+    Ok(AccessConfig::new(
+        load_table(sql_conn, TBL_USERS).await?,
+        load_table(sql_conn, TBL_ROLES).await?,
+        load_table(sql_conn, TBL_MOUNTS).await?,
+        load_table(sql_conn, TBL_ALLOWED_IPS).await?,
+    ))
 }

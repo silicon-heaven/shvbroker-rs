@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::format;
 use std::sync::Arc;
-use futures::stream::FuturesUnordered;
 use log::{Level, log};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
@@ -11,7 +10,6 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use smol::stream::StreamExt;
 use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles};
 use crate::brokerimpl::NodeRequestContext;
 
@@ -598,9 +596,9 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_CHANGE_PASSWORD => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err("Cannot change password, access database is not available.".into());
-                }
+                };
                 let rq = &frame.to_rpcmesage()?;
                 let params = rq
                     .param()
@@ -626,7 +624,8 @@ impl ShvNode for BrokerCurrentClientNode {
                 if user_name.starts_with("azure:") {
                     return Err("Can't change password, because you are logged in over Azure".into());
                 }
-                let Some(mut user) = ctx.state.access_user(&user_name).await else {
+                let mut access = ctx.state.access.write().await;
+                let Some(user) = access.access_user(&user_name) else {
                     return Err(format!("Invalid user: {user_name})").into());
                 };
                 let current_password_sha1 = match &user.password {
@@ -641,8 +640,9 @@ impl ShvNode for BrokerCurrentClientNode {
                 }
 
                 let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
+                let mut user = user.clone();
                 user.password = crate::config::Password::Sha1(new_password_sha1);
-                let res = ctx.state.set_access_user(&user_name, Some(user)).await?;
+                let res = access.set_access_user(&user_name, Some(user), sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
@@ -682,18 +682,12 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(user_roles) = user_base_roles(&*state.azure_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
+                let access = state.access.read().await;
                 let merged_profile = ctx.state
                     .flatten_roles(user_roles.as_slice())
                     .await
                     .iter()
-                    .map(|role| async {
-                        state.access_role(role).await
-                    })
-                    .collect::<FuturesUnordered<_>>()
-                    .collect::<Vec<_>>()
-                    .await
-                    .into_iter()
-                    .flatten()
+                    .flat_map(|role| access.access_role(role))
                     .flat_map(|role| role.profile.clone())
                     .fold(None, |mut res: Option<crate::config::ProfileValue>, profile| {
                         match &mut res {
@@ -760,7 +754,7 @@ impl ShvNode for BrokerAccessMountsNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.mounts.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -769,7 +763,7 @@ impl ShvNode for BrokerAccessMountsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_mount(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -779,9 +773,9 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -792,7 +786,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_access_mount(key.as_str(), mount).await?;
+                let res = ctx.state.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -822,7 +816,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.users.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.users().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -832,19 +826,21 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
-            let user = ctx.state.access_user(&ctx.node_path).await;
+            let Some(sql_connection) = &ctx.state.sql_connection else {
+                return Err(make_access_ro_error().into())
+            };
+            let mut access = ctx.state.access.write().await;
+            let user = access.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
                     Err(format!("Invalid node key: {}", &ctx.node_path).into())
                 }
-                Some(user) => {
+                Some(mut user) => {
                     if user.deactivated == new_deactivated {
                         return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
                     }
-                    let res = ctx.state.set_access_user(&ctx.node_path, Some(crate::config::User{
-                        deactivated: new_deactivated,
-                        ..user
-                    })).await?;
+                    user.deactivated = new_deactivated;
+                    let res = access.set_access_user(&ctx.node_path, Some(user), sql_connection).await?;
                     Ok(ProcessRequestRetval::Retval(res))
                 }
             }
@@ -852,7 +848,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_user(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -864,9 +860,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             METH_DEACTIVATE => process_activation_change(DEACTIVATE).await,
             METH_ACTIVATE => process_activation_change(ACTIVATE).await,
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -881,7 +877,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                let res = ctx.state.set_access_user(key.as_str(), user).await?;
+                let res = ctx.state.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -911,7 +907,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.roles.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.roles().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -920,7 +916,7 @@ impl ShvNode for BrokerAccessRolesNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_role(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -930,9 +926,9 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?.clone();
@@ -943,7 +939,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_access_role(key.as_str(), role).await?;
+                let res = ctx.state.access.write().await.set_access_role(key.as_str(), role, &ctx.state.role_access_rules, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -973,7 +969,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.allowed_ips.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -982,7 +978,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_allowed_ips(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -992,9 +988,9 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -1012,7 +1008,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Ok(allowed_ips)) => {Some(allowed_ips)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_allowed_ips(key.as_str(), allowed_ips).await?;
+                let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

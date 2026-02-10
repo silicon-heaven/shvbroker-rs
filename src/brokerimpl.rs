@@ -1,9 +1,8 @@
-use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig};
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig, parse_role_access_rules};
 use crate::shvnode::{
     AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
-use crate::sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS};
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -605,8 +604,7 @@ pub(crate) fn user_base_roles(azure_user_groups: &BTreeMap<PeerId, Vec<String>>,
         return Some(roles.clone())
     } else if let Some(user) = peers.get(&peer_id).and_then(Peer::user) {
         return Some(access_config
-            .users
-            .get(user)
+            .access_user(user)
             .map(|user| user.roles.clone())
             .unwrap_or_default())
     }
@@ -623,18 +621,7 @@ fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<Par
         .collect()
 
 }
-fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
-    role.access
-        .iter()
-        .map(ParsedAccessRule::try_from)
-        .collect::<Result<Vec<_>,_>>()
-}
 
-enum UpdateSqlOperation<'a> {
-    Insert { table: &'a str, id: &'a str, json: String },
-    Update { table: &'a str, id: &'a str, json: String },
-    Delete { table: &'a str, id: &'a str },
-}
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
     nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
@@ -642,7 +629,7 @@ pub struct BrokerImpl {
     pub(crate) peers: RwLock<BTreeMap<PeerId, Peer>>,
     mounts: RwLock<BTreeMap<String, Mount>>,
     pub(crate) access: RwLock<AccessConfig>,
-    role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
+    pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
 
     pub(crate) azure_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
 
@@ -911,7 +898,7 @@ impl BrokerImpl {
             );
         }
 
-        let role_access = parse_config_roles(&access.roles);
+        let role_access = parse_config_roles(access.roles());
         Self {
             nodes: RwLock::new(nodes),
             pending_rpc_calls: RwLock::new(vec![]),
@@ -998,7 +985,6 @@ impl BrokerImpl {
                                 peer_id,
                                 node_path: node_path.to_string(),
                                 state: self.clone(),
-                                sql_available: self.sql_connection.is_some(),
                             },
                         },
                     }
@@ -1613,7 +1599,7 @@ impl BrokerImpl {
         }
         let mut flatten_roles = Vec::new();
         while let Some(role_name) = queue.pop_front() {
-            if let Some(role) = self.access.read().await.roles.get(&role_name) {
+            if let Some(role) = self.access.read().await.access_role(&role_name) {
                 for role in role.roles.iter() {
                     enqueue(&mut queue, role);
                 }
@@ -1685,7 +1671,7 @@ impl BrokerImpl {
                         break 'find_mount Some(mount_point.clone());
                     }
                 if let Some(device_id) = &device_id {
-                    match self.access.read().await.mounts.get(device_id) {
+                    match self.access.read().await.access_mount(device_id) {
                         None => {
                             let msg = format!("Cannot find mount point for device ID: '{device_id}'");
                             return Err(DisconnectPeerReason {
@@ -1737,12 +1723,12 @@ impl BrokerImpl {
     }
 
     async fn user_deactivated(&self, user: &str) -> bool {
-        self.access.read().await.users.get(user).is_some_and(|user| user.deactivated)
+        self.access.read().await.access_user(user).is_some_and(|user| user.deactivated)
     }
 
     async fn login_allowed_from_ip(&self, user: &str, ip: core::net::IpAddr) -> bool {
         let access = self.access.read().await;
-        let Some(allowed_ips) = access.allowed_ips.get(user) else {
+        let Some(allowed_ips) = access.access_allowed_ips(user) else {
             return true;
         };
 
@@ -1750,7 +1736,7 @@ impl BrokerImpl {
     }
 
     async fn sha_password(&self, user: &str) -> Option<String> {
-        match self.access.read().await.users.get(user) {
+        match self.access.read().await.access_user(user) {
             None => None,
             Some(user) => match &user.password {
                 Password::Plain(password) => Some(sha1_hash(password.as_bytes())),
@@ -1888,124 +1874,6 @@ impl BrokerImpl {
         self.peers.read().await.get(&peer_id).and_then(Peer::user).map(ToOwned::to_owned)
     }
 
-    pub(crate) async fn access_mount(&self, id: &str) -> Option<crate::config::Mount> {
-        self.access.read().await.mounts.get(id).cloned()
-    }
-    pub(crate) async fn set_access_mount(&self, id: &str, mount: Option<crate::config::Mount>) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(mount) = mount {
-            let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
-                error!("Generate SQL self.ent error: {e}");
-                "".to_string()
-            });
-            let sql = if self.access.read().await.mounts.contains_key(id) {
-                UpdateSqlOperation::Update {table: TBL_MOUNTS, id, json }
-            } else {
-                UpdateSqlOperation::Insert {table: TBL_MOUNTS, id, json }
-            };
-            self.access.write().await.mounts.insert(id.to_string(), mount);
-            sql
-        } else {
-            self.access.write().await.mounts.remove(id);
-            UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
-        };
-        self.update_sql(vec![sqlop]).await
-    }
-
-    pub(crate) async fn access_allowed_ips(&self, id: &str) -> Option<Vec<ipnet::IpNet>> {
-        self.access.read().await.allowed_ips.get(id).cloned()
-    }
-    pub(crate) async fn set_allowed_ips(&self, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(allowed_ips) = allowed_ips {
-            let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
-                error!("Generate SQL self.ent error: {e}");
-                "".to_string()
-            });
-            let sql = if self.access.read().await.allowed_ips.contains_key(id) {
-                UpdateSqlOperation::Update {table: TBL_ALLOWED_IPS, id, json }
-            } else {
-                UpdateSqlOperation::Insert {table: TBL_ALLOWED_IPS, id, json }
-            };
-            self.access.write().await.allowed_ips.insert(id.to_string(), allowed_ips);
-            sql
-        } else {
-            self.access.write().await.allowed_ips.remove(id);
-            UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
-        };
-        self.update_sql(vec![sqlop]).await
-    }
-    pub(crate) async fn access_user(&self, id: &str) -> Option<crate::config::User> {
-        self.access.read().await.users.get(id).cloned()
-    }
-    pub(crate) async fn set_access_user(&self, id: &str, user: Option<crate::config::User>) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(user) = user {
-            let json = serde_json::to_string(&user).unwrap_or_else(|e| {
-                error!("Generate SQL self.ent error: {e}");
-                "".to_string()
-            });
-            let sql = if self.access.read().await.users.contains_key(id) {
-                vec![UpdateSqlOperation::Update { table: TBL_USERS,  id, json }]
-            } else {
-                vec![UpdateSqlOperation::Insert { table: TBL_USERS, id, json }]
-            };
-            self.access.write().await.users.insert(id.to_string(), user);
-            sql
-        } else {
-            self.access.write().await.users.remove(id);
-            let mut res = vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }];
-            if self.access.write().await.allowed_ips.remove(id).is_some() {
-                res.push(UpdateSqlOperation::Delete { table: TBL_USERS, id })
-            }
-            res
-        };
-        self.update_sql(sqlop).await
-    }
-    pub(crate) async fn access_role(&self, id: &str) -> Option<crate::config::Role> {
-        self.access.read().await.roles.get(id).cloned()
-    }
-    pub(crate) async fn set_access_role(&self, role_name: &str, role: Option<Role>) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(role) = role {
-            let parsed_access_rules = parse_role_access_rules(&role)?;
-            let json = serde_json::to_string(&role).expect("JSON should be generated");
-            let sql = if self.access.read().await.roles.contains_key(role_name) {
-                UpdateSqlOperation::Update { table: TBL_ROLES, id: role_name, json }
-            } else {
-                UpdateSqlOperation::Insert { table: TBL_ROLES, id: role_name, json }
-            };
-            self.access.write().await.roles.insert(role_name.to_string(), role);
-            self.role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
-            sql
-        } else {
-            self.access.write().await.roles.remove(role_name);
-            UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
-        };
-        self.update_sql(vec![sqlop]).await
-    }
-    async fn update_sql(&self, oper: Vec<UpdateSqlOperation<'_>>) -> shvrpc::Result<RpcValue> {
-        let Some(sql_connection) = &self.sql_connection else {
-            return Err("SQL is not enabled on this broker".into());
-        };
-
-        let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
-            match oper {
-                UpdateSqlOperation::Insert { table, id, json } => {
-                    acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
-                }
-                UpdateSqlOperation::Update { table, id, json } => {
-                    acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
-                }
-                UpdateSqlOperation::Delete { table, id } => {
-                    acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
-                }
-            };
-            acc
-        });
-
-        sql_connection.conn(move |sql_connection| {
-            sql_connection.execute(&query, ())
-        }).await
-            .map(|v| RpcValue::from(v as i64))
-            .map_err(|err| RpcError::new(RpcErrorCode::MethodCallException, err.to_string()).into())
-    }
     pub(crate) async fn create_tunnel(
         &self,
         request: &RpcMessage,
@@ -2103,7 +1971,6 @@ pub(crate) struct NodeRequestContext {
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
     pub(crate) state: Arc<BrokerImpl>,
-    pub(crate) sql_available: bool,
 }
 
 #[cfg(test)]
@@ -2116,6 +1983,7 @@ mod test {
     use crate::brokerimpl::BrokerToPeerMessage;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
+    use crate::config::AccessConfig;
     use crate::config::Password;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
@@ -2125,7 +1993,7 @@ mod test {
             let access = config.access.clone();
             let (command_sender, _) = channel::unbounded();
             let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), command_sender, None);
-            let roles = broker.flatten_roles(access.users.get("child-broker").unwrap().roles.as_slice()).await;
+            let roles = broker.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice()).await;
             assert_eq!(
                 roles,
                 vec![
@@ -2143,20 +2011,23 @@ mod test {
     smol_macros::test! {
         async fn test_check_auth() {
             let config = BrokerConfig::default();
-            let mut access = config.access.clone();
-            access.users.insert("deactivated_user".to_string(), crate::config::User {
+            let access = config.access.clone();
+            let mut users = access.users().clone();
+            users.insert("deactivated_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
                 roles: Default::default(),
                 deactivated: true,
             });
 
-            access.users.insert("localhost_user".to_string(), crate::config::User {
+            users.insert("localhost_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
                 roles: Default::default(),
                 deactivated: false,
             });
 
-            access.allowed_ips.insert("localhost_user".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
+            let mut allowed_ips = access.allowed_ips().clone();
+            allowed_ips.insert("localhost_user".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
+            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone(), allowed_ips);
 
             for ((user, password, ip_addr), expected_result) in [
                 (("viewer", "viewer", None), true),
