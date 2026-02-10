@@ -48,7 +48,7 @@ use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
-#[cfg(feature = "entra-id")]
+#[cfg(any(feature = "entra-id", feature = "google-auth"))]
 use async_compat::CompatExt;
 
 pub(crate) async fn try_server_peer_loop(
@@ -258,27 +258,41 @@ pub(crate) async fn server_peer_loop(
                             async fn verify_google_token(token: &str, broker_config: SharedBrokerConfig) -> shvrpc::Result<GoogleClaims> {
                                 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 
+                                // Cache for Google JWT public keys (kid -> DecodingKey)
+                                static GOOGLE_KEY_CACHE: std::sync::LazyLock<smol::lock::RwLock<Option<DecodingKey>>> =
+                                    std::sync::LazyLock::new(|| smol::lock::RwLock::new(None));
+
                                 // Parse the header to find which key (kid) was used
                                 let header = decode_header(token)?;
                                 let kid = header.kid.ok_or_else(|| "No kid found in header".to_string())?;
 
-                                // Fetch Google's public keys (In production, cache this!)
-                                let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
-                                let response: serde_json::Value = reqwest::get(jwks_url).await?.json().await?;
+                                // Helper function to fetch key from Google
+                                async fn get_google_decoding_key(kid: &str, force_reload: bool) -> shvrpc::Result<DecodingKey> {
+                                    let key = GOOGLE_KEY_CACHE.read().await.clone();
+                                    if key.is_none() || force_reload {
+                                        // Fetch Google's public keys
+                                        let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
+                                        let response: serde_json::Value = reqwest::get(jwks_url).compat().await?.json().await?;
+                                        // Find the specific key matching the 'kid'
+                                        let n = response["keys"].as_array()
+                                            .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                            .and_then(|k| k["n"].as_str())
+                                        .ok_or_else(|| "Key not found".to_string())?;
 
-                                // Find the specific key matching the 'kid'
-                                let n = response["keys"].as_array()
-                                    .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
-                                    .and_then(|k| k["n"].as_str())
-                                    .ok_or_else(|| "Key not found".to_string())?;
-
-                                let e = response["keys"].as_array()
-                                    .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
-                                    .and_then(|k| k["e"].as_str())
-                                    .ok_or_else(|| "Exponent not found".to_string())?;
-
-                                // Create a decoding key from RSA components (n, e)
-                                let decoding_key = DecodingKey::from_rsa_components(n, e)?;
+                                        let e = response["keys"].as_array()
+                                            .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                            .and_then(|k| k["e"].as_str())
+                                            .ok_or_else(|| "Exponent not found".to_string())?;
+                                        // Create a decoding key from RSA components (n, e)
+                                        let key = DecodingKey::from_rsa_components(n, e)?;
+                                        *GOOGLE_KEY_CACHE.write().await = Some(key);
+                                    };
+                                    if let Some(key) = GOOGLE_KEY_CACHE.read().await.clone() {
+                                        Ok(key)
+                                    } else {
+                                        Err("Internal error - Google key should be cached already".into())
+                                    }
+                                }
 
                                 // Set up validation (check audience and issuer)
                                 let client_id = broker_config.google_auth.as_ref().map(|c| c.client_id.as_str())
@@ -287,9 +301,20 @@ pub(crate) async fn server_peer_loop(
                                 validation.set_audience(&[client_id]);
                                 validation.set_issuer(&["https://accounts.google.com", "accounts.google.com"]);
 
-                                // Decode and verify
-                                let token_data = decode::<GoogleClaims>(token, &decoding_key, &validation)?;
-
+                                // Try with cached key first
+                                let decoding_key = get_google_decoding_key(&kid, false).await?;
+                                let token_data = {
+                                        // Try to verify with cached key
+                                        match decode::<GoogleClaims>(token, &decoding_key, &validation) {
+                                            Ok(data) => data,
+                                            Err(_) => {
+                                                // Cached key failed, fetch new key and retry
+                                                let decoding_key = get_google_decoding_key(&kid, true).await?;
+                                                // Retry verification with new key
+                                                decode::<GoogleClaims>(token, &decoding_key, &validation)?
+                                            }
+                                        }
+                                };
                                 Ok(token_data.claims)
                             }
                             match verify_google_token(access_token, broker_config.clone()).await {

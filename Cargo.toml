@@ -11,7 +11,7 @@ default-run = "shvbroker"
 shvcall = { version = "^3.9.0" }
 
 [features]
-google-auth = ["dep:jsonwebtoken", "dep:reqwest"]
+google-auth = ["dep:jsonwebtoken", "dep:reqwest", "dep:async-compat"]
 entra-id = ["dep:async-compat", "dep:reqwest"]
 can = ["dep:socketcan", "shvrpc/can"]
 
