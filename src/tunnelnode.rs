@@ -11,7 +11,7 @@ use futures::FutureExt;
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use log::{error, log, Level};
 use shvproto::{MetaMap, RpcValue};
-use shvrpc::metamethod::{AccessLevel, Flag, MetaMethod};
+use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
 use shvrpc::{Error, RpcMessageMetaTags};
@@ -22,15 +22,15 @@ use smol::net::TcpStream;
 use std::sync::Arc;
 use std::time::Instant;
 
-const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::SuperService, "DirParam", "DirResult", &[], "");
-const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::SuperService, "LsParam", "LsResult", &[], "");
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flags::empty(), AccessLevel::SuperService, "DirParam", "DirResult", &[], "");
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flags::empty(), AccessLevel::SuperService, "LsParam", "LsResult", &[], "");
 
 const METH_CREATE: &str = "create";
 const METH_WRITE: &str = "write";
 const METH_CLOSE: &str = "close";
-const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flag::None as u32, AccessLevel::Write, "Map", "String", &[], "");
-const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flag::None as u32, AccessLevel::SuperService, "Blob", "Blob", &[], "");
-const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flag::None as u32, AccessLevel::SuperService, "Blob", "Blob", &[], "");
+const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flags::empty(), AccessLevel::Write, "Map", "String", &[], "");
+const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flags::empty(), AccessLevel::SuperService, "Blob", "Blob", &[], "");
+const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flags::empty(), AccessLevel::SuperService, "Blob", "Blob", &[], "");
 
 const TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
