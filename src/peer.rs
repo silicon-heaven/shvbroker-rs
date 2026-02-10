@@ -12,7 +12,7 @@ use futures::io::BufWriter;
 use futures::StreamExt;
 use log::{debug, error, info, warn};
 use rand::distr::{Alphanumeric, SampleString};
-use rand::Rng;
+use rand::RngExt;
 use rustls_platform_verifier::BuilderVerifierExt;
 use shvproto::make_list;
 use shvproto::RpcValue;
