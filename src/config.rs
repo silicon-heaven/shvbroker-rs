@@ -311,27 +311,33 @@ impl AccessConfig {
     }
 
     pub(crate) async fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(user) = user {
+        let sqlop = if let Some(user) = &user {
             let json = serde_json::to_string(&user).unwrap_or_else(|e| {
                 error!("Generate SQL self.ent error: {e}");
                 "".to_string()
             });
-            let sql = if self.users.contains_key(id) {
+            if self.users.contains_key(id) {
                 vec![UpdateSqlOperation::Update { table: TBL_USERS,  id, json }]
             } else {
                 vec![UpdateSqlOperation::Insert { table: TBL_USERS, id, json }]
-            };
-            self.users.insert(id.to_string(), user);
-            sql
+            }
         } else {
-            self.users.remove(id);
             let mut res = vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }];
             if self.allowed_ips.remove(id).is_some() {
                 res.push(UpdateSqlOperation::Delete { table: TBL_USERS, id })
             }
             res
         };
-        self.update_sql(sqlop, sql_connection).await
+
+        let res = self.update_sql(sqlop, sql_connection).await?;
+
+        if let Some(user) = user {
+            self.users.insert(id.to_string(), user);
+        } else {
+            self.users.remove(id);
+        }
+
+        Ok(res)
     }
 
     pub(crate) fn mounts(&self) -> &BTreeMap<String, Mount> {
@@ -343,23 +349,29 @@ impl AccessConfig {
     }
 
     pub(crate) async fn set_access_mount(&mut self, id: &str, mount: Option<crate::config::Mount>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(mount) = mount {
+        let sqlop = if let Some(mount) = &mount {
             let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
                 error!("Generate SQL self.ent error: {e}");
                 "".to_string()
             });
-            let sql = if self.mounts.contains_key(id) {
+            if self.mounts.contains_key(id) {
                 UpdateSqlOperation::Update {table: TBL_MOUNTS, id, json }
             } else {
                 UpdateSqlOperation::Insert {table: TBL_MOUNTS, id, json }
-            };
-            self.mounts.insert(id.to_string(), mount);
-            sql
+            }
         } else {
-            self.mounts.remove(id);
             UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
         };
-        self.update_sql(vec![sqlop], sql_connection).await
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(mount) = mount {
+            self.mounts.insert(id.to_string(), mount);
+        } else {
+            self.mounts.remove(id);
+        }
+
+        Ok(res)
     }
 
     pub(crate) fn allowed_ips(&self) -> &BTreeMap<String, Vec<ipnet::IpNet>> {
@@ -371,23 +383,29 @@ impl AccessConfig {
     }
 
     pub(crate) async fn set_allowed_ips(&mut self, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(allowed_ips) = allowed_ips {
+        let sqlop = if let Some(allowed_ips) = &allowed_ips {
             let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
                 error!("Generate SQL self.ent error: {e}");
                 "".to_string()
             });
-            let sql = if self.allowed_ips.contains_key(id) {
+            if self.allowed_ips.contains_key(id) {
                 UpdateSqlOperation::Update {table: TBL_ALLOWED_IPS, id, json }
             } else {
                 UpdateSqlOperation::Insert {table: TBL_ALLOWED_IPS, id, json }
-            };
-            self.allowed_ips.insert(id.to_string(), allowed_ips);
-            sql
+            }
         } else {
-            self.allowed_ips.remove(id);
             UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
         };
-        self.update_sql(vec![sqlop], sql_connection).await
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(allowed_ips) = allowed_ips {
+            self.allowed_ips.insert(id.to_string(), allowed_ips);
+        } else {
+            self.allowed_ips.remove(id);
+        }
+
+        Ok(res)
     }
 
     pub(crate) fn roles(&self) -> &BTreeMap<String, Role> {
@@ -399,22 +417,28 @@ impl AccessConfig {
     }
 
     pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(role) = role {
-            let parsed_access_rules = parse_role_access_rules(&role)?;
+        let sqlop = if let Some(role) = &role {
             let json = serde_json::to_string(&role).expect("JSON should be generated");
-            let sql = if self.roles.contains_key(role_name) {
+            if self.roles.contains_key(role_name) {
                 UpdateSqlOperation::Update { table: TBL_ROLES, id: role_name, json }
             } else {
                 UpdateSqlOperation::Insert { table: TBL_ROLES, id: role_name, json }
-            };
-            self.roles.insert(role_name.to_string(), role);
-            role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
-            sql
+            }
         } else {
-            self.roles.remove(role_name);
             UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
         };
-        self.update_sql(vec![sqlop], sql_connection).await
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(role) = role {
+            let parsed_access_rules = parse_role_access_rules(&role)?;
+            self.roles.insert(role_name.to_string(), role);
+            role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
+        } else {
+            self.roles.remove(role_name);
+        }
+
+        Ok(res)
     }
 
 }
