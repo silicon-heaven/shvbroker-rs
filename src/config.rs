@@ -29,6 +29,7 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub azure: Option<AzureConfig>,
 }
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
     pub group_mapping: Vec<(String, Vec<String>)>,
@@ -45,16 +46,19 @@ pub struct TunnellingConfig {
     #[serde(default)]
     pub tsub_support: bool,
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionKind {
     ToParentBroker {shv_root: String},
     ToChildBroker {shv_root: String, mount_point: String},
 }
+
 impl Default for ConnectionKind {
     fn default() -> Self {
         ConnectionKind::ToParentBroker { shv_root: "".to_string() }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BrokerConnectionConfig {
     pub name: String,
@@ -64,7 +68,9 @@ pub struct BrokerConnectionConfig {
     pub connection_kind: ConnectionKind,
     pub client: ClientConfig,
 }
+
 type DeviceId = String;
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
     pub users: BTreeMap<String, User>,
@@ -73,10 +79,12 @@ pub struct AccessConfig {
     #[serde(default)]
     pub allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
     pub url: Url,
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct User {
     pub password: Password,
@@ -84,6 +92,7 @@ pub struct User {
     #[serde(default)]
     pub deactivated: bool,
 }
+
 impl User {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
@@ -97,6 +106,7 @@ impl User {
         })
     }
 }
+
 impl TryFrom<&RpcValue> for User {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -112,11 +122,13 @@ impl TryFrom<&RpcValue> for User {
         }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Password {
     Plain(String),
     Sha1(String),
 }
+
 impl Password {
     fn from_v2(password: PasswordV2) -> Result<Self, String> {
         let format = password.format.to_lowercase();
@@ -127,17 +139,20 @@ impl Password {
         }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserV2 {
     pub password: PasswordV2,
     pub roles: Vec<String>,
 }
+
 impl TryFrom<&str> for UserV2 {
     type Error = String;
     fn try_from(cpon: &str) -> Result<Self, Self::Error> {
         serde_json::from_str(cpon).map_err(|e| e.to_string())
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PasswordV2 {
     format: String,
@@ -187,12 +202,14 @@ pub struct Role {
     #[serde(default)]
     pub profile: Option<ProfileValue>,
 }
+
 impl Role {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
         RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
 }
+
 impl TryFrom<&RpcValue> for Role {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -200,12 +217,14 @@ impl TryFrom<&RpcValue> for Role {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AccessRule {
     #[serde(rename = "shvRI")]
     pub shv_ri: String,
     pub grant: String,
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Mount {
     #[serde(rename = "mountPoint")]
@@ -220,6 +239,7 @@ impl Mount {
         RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
 }
+
 impl TryFrom<&RpcValue> for Mount {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -227,18 +247,21 @@ impl TryFrom<&RpcValue> for Mount {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
+
 impl AccessConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
     }
 }
+
 impl BrokerConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
     }
 }
+
 impl Default for BrokerConfig {
     fn default() -> Self {
         let child_tcp_broker_config = BrokerConnectionConfig {
