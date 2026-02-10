@@ -1,9 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::sync::Arc;
+use crate::{brokerimpl::ParsedAccessRule, sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS}};
+use log::error;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
+use smol::lock::RwLock;
 use url::Url;
 
 pub type SharedBrokerConfig = Arc<BrokerConfig>;
@@ -29,6 +32,7 @@ pub struct BrokerConfig {
     #[serde(default)]
     pub azure: Option<AzureConfig>,
 }
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
     pub group_mapping: Vec<(String, Vec<String>)>,
@@ -45,16 +49,19 @@ pub struct TunnellingConfig {
     #[serde(default)]
     pub tsub_support: bool,
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionKind {
     ToParentBroker {shv_root: String},
     ToChildBroker {shv_root: String, mount_point: String},
 }
+
 impl Default for ConnectionKind {
     fn default() -> Self {
         ConnectionKind::ToParentBroker { shv_root: "".to_string() }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct BrokerConnectionConfig {
     pub name: String,
@@ -64,19 +71,23 @@ pub struct BrokerConnectionConfig {
     pub connection_kind: ConnectionKind,
     pub client: ClientConfig,
 }
+
 type DeviceId = String;
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AccessConfig {
-    pub users: BTreeMap<String, User>,
-    pub roles: BTreeMap<String, Role>,
-    pub mounts: BTreeMap<DeviceId, Mount>,
+    users: BTreeMap<String, User>,
+    roles: BTreeMap<String, Role>,
+    mounts: BTreeMap<DeviceId, Mount>,
     #[serde(default)]
-    pub allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
+    allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Listen {
     pub url: Url,
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct User {
     pub password: Password,
@@ -84,6 +95,7 @@ pub struct User {
     #[serde(default)]
     pub deactivated: bool,
 }
+
 impl User {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
@@ -97,6 +109,7 @@ impl User {
         })
     }
 }
+
 impl TryFrom<&RpcValue> for User {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -112,11 +125,13 @@ impl TryFrom<&RpcValue> for User {
         }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Password {
     Plain(String),
     Sha1(String),
 }
+
 impl Password {
     fn from_v2(password: PasswordV2) -> Result<Self, String> {
         let format = password.format.to_lowercase();
@@ -127,17 +142,20 @@ impl Password {
         }
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserV2 {
     pub password: PasswordV2,
     pub roles: Vec<String>,
 }
+
 impl TryFrom<&str> for UserV2 {
     type Error = String;
     fn try_from(cpon: &str) -> Result<Self, Self::Error> {
         serde_json::from_str(cpon).map_err(|e| e.to_string())
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PasswordV2 {
     format: String,
@@ -187,12 +205,14 @@ pub struct Role {
     #[serde(default)]
     pub profile: Option<ProfileValue>,
 }
+
 impl Role {
     pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
         let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
         RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
 }
+
 impl TryFrom<&RpcValue> for Role {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -200,12 +220,14 @@ impl TryFrom<&RpcValue> for Role {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AccessRule {
     #[serde(rename = "shvRI")]
     pub shv_ri: String,
     pub grant: String,
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Mount {
     #[serde(rename = "mountPoint")]
@@ -220,6 +242,7 @@ impl Mount {
         RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
     }
 }
+
 impl TryFrom<&RpcValue> for Mount {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
@@ -227,18 +250,206 @@ impl TryFrom<&RpcValue> for Mount {
         serde_json::from_str(&cpon).map_err(|e| e.to_string())
     }
 }
+
+enum UpdateSqlOperation<'a> {
+    Insert { table: &'a str, id: &'a str, json: String },
+    Update { table: &'a str, id: &'a str, json: String },
+    Delete { table: &'a str, id: &'a str },
+}
+
+pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
+    role.access
+        .iter()
+        .map(ParsedAccessRule::try_from)
+        .collect::<Result<Vec<_>,_>>()
+}
+
 impl AccessConfig {
+    pub fn new(
+        users: BTreeMap<String, User>,
+        roles: BTreeMap<String, Role>,
+        mounts: BTreeMap<DeviceId, Mount>,
+        allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
+    ) -> Self {
+        AccessConfig { users, roles, mounts, allowed_ips }
+    }
+
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
     }
+
+    pub(crate) fn users(&self) -> &BTreeMap<String, User> {
+        &self.users
+    }
+
+    pub(crate) fn access_user(&self, id: &str) -> Option<&crate::config::User> {
+        self.users.get(id)
+    }
+
+    async fn update_sql(&self, oper: Vec<UpdateSqlOperation<'_>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
+            match oper {
+                UpdateSqlOperation::Insert { table, id, json } => {
+                    acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
+                }
+                UpdateSqlOperation::Update { table, id, json } => {
+                    acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
+                }
+                UpdateSqlOperation::Delete { table, id } => {
+                    acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
+                }
+            };
+            acc
+        });
+
+        sql_connection.conn(move |sql_connection| {
+            sql_connection.execute(&query, ())
+        }).await
+            .map(|v| RpcValue::from(v as i64))
+            .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
+    }
+
+    pub(crate) async fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let sqlop = if let Some(user) = &user {
+            let json = serde_json::to_string(&user).unwrap_or_else(|e| {
+                error!("Generate SQL self.ent error: {e}");
+                "".to_string()
+            });
+            if self.users.contains_key(id) {
+                vec![UpdateSqlOperation::Update { table: TBL_USERS,  id, json }]
+            } else {
+                vec![UpdateSqlOperation::Insert { table: TBL_USERS, id, json }]
+            }
+        } else {
+            let mut res = vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }];
+            if self.allowed_ips.remove(id).is_some() {
+                res.push(UpdateSqlOperation::Delete { table: TBL_USERS, id })
+            }
+            res
+        };
+
+        let res = self.update_sql(sqlop, sql_connection).await?;
+
+        if let Some(user) = user {
+            self.users.insert(id.to_string(), user);
+        } else {
+            self.users.remove(id);
+        }
+
+        Ok(res)
+    }
+
+    pub(crate) fn mounts(&self) -> &BTreeMap<String, Mount> {
+        &self.mounts
+    }
+
+    pub(crate) fn access_mount(&self, id: &str) -> Option<&crate::config::Mount> {
+        self.mounts.get(id)
+    }
+
+    pub(crate) async fn set_access_mount(&mut self, id: &str, mount: Option<crate::config::Mount>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let sqlop = if let Some(mount) = &mount {
+            let json = serde_json::to_string(&mount).unwrap_or_else(|e| {
+                error!("Generate SQL self.ent error: {e}");
+                "".to_string()
+            });
+            if self.mounts.contains_key(id) {
+                UpdateSqlOperation::Update {table: TBL_MOUNTS, id, json }
+            } else {
+                UpdateSqlOperation::Insert {table: TBL_MOUNTS, id, json }
+            }
+        } else {
+            UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
+        };
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(mount) = mount {
+            self.mounts.insert(id.to_string(), mount);
+        } else {
+            self.mounts.remove(id);
+        }
+
+        Ok(res)
+    }
+
+    pub(crate) fn allowed_ips(&self) -> &BTreeMap<String, Vec<ipnet::IpNet>> {
+        &self.allowed_ips
+    }
+
+    pub(crate) fn access_allowed_ips(&self, id: &str) -> Option<&Vec<ipnet::IpNet>> {
+        self.allowed_ips.get(id)
+    }
+
+    pub(crate) async fn set_allowed_ips(&mut self, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let sqlop = if let Some(allowed_ips) = &allowed_ips {
+            let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
+                error!("Generate SQL self.ent error: {e}");
+                "".to_string()
+            });
+            if self.allowed_ips.contains_key(id) {
+                UpdateSqlOperation::Update {table: TBL_ALLOWED_IPS, id, json }
+            } else {
+                UpdateSqlOperation::Insert {table: TBL_ALLOWED_IPS, id, json }
+            }
+        } else {
+            UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
+        };
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(allowed_ips) = allowed_ips {
+            self.allowed_ips.insert(id.to_string(), allowed_ips);
+        } else {
+            self.allowed_ips.remove(id);
+        }
+
+        Ok(res)
+    }
+
+    pub(crate) fn roles(&self) -> &BTreeMap<String, Role> {
+        &self.roles
+    }
+
+    pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
+        self.roles.get(id)
+    }
+
+    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let sqlop = if let Some(role) = &role {
+            let json = serde_json::to_string(&role).expect("JSON should be generated");
+            if self.roles.contains_key(role_name) {
+                UpdateSqlOperation::Update { table: TBL_ROLES, id: role_name, json }
+            } else {
+                UpdateSqlOperation::Insert { table: TBL_ROLES, id: role_name, json }
+            }
+        } else {
+            UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
+        };
+
+        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(role) = role {
+            let parsed_access_rules = parse_role_access_rules(&role)?;
+            self.roles.insert(role_name.to_string(), role);
+            role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
+        } else {
+            self.roles.remove(role_name);
+        }
+
+        Ok(res)
+    }
+
 }
+
 impl BrokerConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
         let content = fs::read_to_string(file_name)?;
         Ok(serde_yaml::from_str(&content)?)
     }
 }
+
 impl Default for BrokerConfig {
     fn default() -> Self {
         let child_tcp_broker_config = BrokerConnectionConfig {
