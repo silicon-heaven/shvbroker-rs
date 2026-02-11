@@ -42,6 +42,9 @@ pub struct AzureConfig {
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct GoogleAuthConfig {
+    // higher mapping is used first
+    // '*' is matching any google group
+    pub group_mapping: Vec<(String, Vec<String>)>,
     pub client_id: String,
 }
 

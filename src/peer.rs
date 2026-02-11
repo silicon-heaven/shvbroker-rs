@@ -319,7 +319,31 @@ pub(crate) async fn server_peer_loop(
                             }
                             match verify_google_token(access_token, broker_config.clone()).await {
                                 Ok(claims) => {
+                                    let Some(google_auth_config) = &broker_config.google_auth else {
+                                        frame_writer.send_error(resp_meta, "Google auth is not configured on this broker.").or(frame_write_timeout()).await?;
+                                        continue 'login_loop;
+                                    };
+
+                                    let mut mapped_groups = google_auth_config.group_mapping
+                                        .iter()
+                                        .filter_map(|(native_group, shv_groups)| if native_group == "*" { Some(shv_groups.clone()) } else { None })
+                                        .flatten()
+                                        .collect::<Vec<_>>();
+
+
+                                    if mapped_groups.is_empty() {
+                                        peer_log!(warn, target: "GoogleAuth", "no relevant groups in Google");
+                                        frame_writer.send_error(resp_meta, "No relevant Google groups found.").or(frame_write_timeout()).await?;
+                                        continue 'login_loop;
+                                    }
+
+                                    let result = make_map!("clientId" => peer_id);
+                                    frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                                     let user = claims.email;
+
+                                    mapped_groups.insert(0, user.clone());
+                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
+
                                     break 'login_loop (user, params.get("options").cloned());
                                 }
                                 Err(e) => {
@@ -416,7 +440,7 @@ pub(crate) async fn server_peer_loop(
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
+                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
                             break 'login_loop (user, params.get("options").cloned());
                         }
                     }

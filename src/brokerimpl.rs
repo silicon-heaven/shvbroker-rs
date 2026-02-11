@@ -69,8 +69,8 @@ pub enum BrokerCommand {
         password: String,
         login_type: String,
     },
-    #[cfg(feature = "entra-id")]
-    SetAzureGroups {
+    #[cfg(any(feature = "entra-id", feature = "google-auth"))]
+    SetOAuth2Groups {
         peer_id: PeerId,
         groups: Vec<String>,
     },
@@ -600,10 +600,11 @@ struct DisconnectPeerReason {
 }
 
 // Fetches base defined roles for a user.
-pub(crate) fn user_base_roles(azure_user_groups: &BTreeMap<PeerId, Vec<String>>, peers: &BTreeMap<PeerId, Peer>, access_config: &AccessConfig, peer_id: PeerId) -> Option<Vec<String>> {
-    if let Some(roles) = azure_user_groups.get(&peer_id) {
+pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>, peers: &BTreeMap<PeerId, Peer>, access_config: &AccessConfig, peer_id: PeerId) -> Option<Vec<String>> {
+    if let Some(roles) = oauth2_user_groups.get(&peer_id) {
         return Some(roles.clone())
-    } else if let Some(user) = peers.get(&peer_id).and_then(Peer::user) {
+    }
+    if let Some(user) = peers.get(&peer_id).and_then(Peer::user) {
         return Some(access_config
             .users
             .get(user)
@@ -644,7 +645,7 @@ pub struct BrokerImpl {
     pub(crate) access: RwLock<AccessConfig>,
     role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
 
-    pub(crate) azure_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
+    pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
 
     pub(crate) command_sender: Sender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
@@ -921,7 +922,7 @@ impl BrokerImpl {
             mounts: RwLock::new(mounts),
             access: RwLock::new(access),
             role_access_rules: RwLock::new(role_access),
-            azure_user_groups: Default::default(),
+            oauth2_user_groups: Default::default(),
             subscr_cmd_sender,
             active_tunnels: Default::default(),
             next_tunnel_number: RwLock::new(1),
@@ -1323,10 +1324,10 @@ impl BrokerImpl {
                     .send(BrokerToPeerMessage::AuthResult(result))
                     .await?;
             }
-            #[cfg(feature = "entra-id")]
-            BrokerCommand::SetAzureGroups { peer_id, groups } => {
+            #[cfg(any(feature = "entra-id", feature = "google-auth"))]
+            BrokerCommand::SetOAuth2Groups { peer_id, groups } => {
                 self
-                    .azure_user_groups
+                    .oauth2_user_groups
                     .write()
                     .await
                     .insert(peer_id, groups);
@@ -1549,9 +1550,9 @@ impl BrokerImpl {
                 ),
             }
         };
-        let azure_user_groups = self.azure_user_groups.read().await;
+        let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access_config = self.access.read().await;
-        if let Some(user_roles) = user_base_roles(&azure_user_groups, &peers, &access_config, peer_id) {
+        if let Some(user_roles) = user_base_roles(&oauth2_user_groups, &peers, &access_config, peer_id) {
             // request from logged-in user,
             // it can be client, device, child broker or parent broker as client
             let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
