@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 use std::format;
 use std::sync::Arc;
-use futures::stream::FuturesUnordered;
 use log::{Level, log};
-use shvrpc::metamethod::{Flag, MetaMethod};
+use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
 use shvrpc::{metamethod, RpcMessageMetaTags};
 use shvproto::{List, RpcValue, rpcvalue};
@@ -11,7 +10,6 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use smol::stream::StreamExt;
 use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles};
 use crate::brokerimpl::NodeRequestContext;
 
@@ -27,8 +25,8 @@ pub const METH_PING: &str = "ping";
 pub const METH_SUBSCRIBE: &str = "subscribe";
 pub const METH_UNSUBSCRIBE: &str = "unsubscribe";
 
-pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Browse, "DirParam",  "DirResult", &[], "");
-pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Browse, "LsParam",  "LsResult", &[], "");
+pub const META_METHOD_PUBLIC_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flags::empty(), AccessLevel::Browse, "DirParam",  "DirResult", &[], "");
+pub const META_METHOD_PUBLIC_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flags::empty(), AccessLevel::Browse, "LsParam",  "LsResult", &[], "");
 pub const PUBLIC_DIR_LS_METHODS: [MetaMethod; 2] = [META_METHOD_PUBLIC_DIR, META_METHOD_PUBLIC_LS];
 pub const DOT_LOCAL_GRANT: &str = "dot_local";
 pub const DOT_LOCAL_DIR: &str = ".local";
@@ -227,11 +225,11 @@ impl AppNode {
     }
 }
 
-const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MAJOR, Flag::IsGetter as u32, AccessLevel::Browse, "", "i", &[], "");
-const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MINOR, Flag::IsGetter as u32, AccessLevel::Browse, "", "i", &[], "");
-const META_METH_APP_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, AccessLevel::Browse, "", "s", &[], "");
-const META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "s", &[], "");
-const META_METH_APP_PING: MetaMethod = MetaMethod::new_static(METH_PING, Flag::None as u32, AccessLevel::Browse, "", "n", &[], "");
+const META_METH_APP_SHV_VERSION_MAJOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MAJOR, Flags::IsGetter, AccessLevel::Browse, "", "i", &[], "");
+const META_METH_APP_SHV_VERSION_MINOR: MetaMethod = MetaMethod::new_static(METH_SHV_VERSION_MINOR, Flags::IsGetter, AccessLevel::Browse, "", "i", &[], "");
+const META_METH_APP_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flags::IsGetter, AccessLevel::Browse, "", "s", &[], "");
+const META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flags::IsGetter, AccessLevel::Browse, "", "s", &[], "");
+const META_METH_APP_PING: MetaMethod = MetaMethod::new_static(METH_PING, Flags::empty(), AccessLevel::Browse, "", "n", &[], "");
 
 const APP_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
@@ -281,9 +279,9 @@ impl ShvNode for AppNode {
     }
 }
 
-const META_METH_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
-const META_METH_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
-const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod::new_static("serialNumber", Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
+const META_METH_VERSION: MetaMethod = MetaMethod::new_static(METH_VERSION, Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
+const META_METH_NAME: MetaMethod = MetaMethod::new_static(METH_NAME, Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
+const META_METH_SERIAL_NUMBER: MetaMethod = MetaMethod::new_static("serialNumber", Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
 
 pub struct AppDeviceNode {
     pub device_name: &'static str,
@@ -353,12 +351,12 @@ pub const METH_CLIENTS: &str = "clients";
 pub const METH_MOUNTS: &str = "mounts";
 pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
 
-const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "Int", "ClientInfo", &[], "");
-const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flag::None as u32, AccessLevel::Service, "String", "ClientInfo", &[], "");
-const META_METH_CLIENTS: MetaMethod = MetaMethod::new_static(METH_CLIENTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[Int]", &[], "");
+const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "Int", "ClientInfo", &[], "");
+const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "String", "ClientInfo", &[], "");
+const META_METH_CLIENTS: MetaMethod = MetaMethod::new_static(METH_CLIENTS, Flags::empty(), AccessLevel::SuperService, "void", "List[Int]", &[], "");
 const META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_static(
     METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL,
-    Flag::None as u32,
+    Flags::empty(),
     AccessLevel::Service,
     "[s:username,s:path,s:method]",
     "Int",
@@ -366,8 +364,8 @@ const META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_
     r#"params: ["username", "shv_path", "method"]
     only works for currently logged-in clients"#,
 );
-const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flag::None as u32, AccessLevel::SuperService, "void", "List[String]", &[], "");
-const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flag::None as u32, AccessLevel::SuperService, "Int", "void", &[], "");
+const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flags::empty(), AccessLevel::SuperService, "void", "List[String]", &[], "");
+const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flags::empty(), AccessLevel::SuperService, "Int", "void", &[], "");
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
@@ -501,13 +499,13 @@ impl ShvNode for BrokerNode {
     }
 }
 
-const META_METH_INFO: MetaMethod = MetaMethod::new_static(METH_INFO, Flag::None as u32, AccessLevel::Browse, "Int", "ClientInfo", &[], "");
-const META_METH_SUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_SUBSCRIBE, Flag::None as u32, AccessLevel::Browse, "SubscribeParams", "void", &[], "");
-const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_UNSUBSCRIBE, Flag::None as u32, AccessLevel::Browse, "SubscribeParams", "void", &[], "");
-const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod::new_static(METH_SUBSCRIPTIONS, Flag::None as u32, AccessLevel::Browse, "void", "Map", &[], "");
+const META_METH_INFO: MetaMethod = MetaMethod::new_static(METH_INFO, Flags::empty(), AccessLevel::Browse, "Int", "ClientInfo", &[], "");
+const META_METH_SUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_SUBSCRIBE, Flags::empty(), AccessLevel::Browse, "SubscribeParams", "void", &[], "");
+const META_METH_UNSUBSCRIBE: MetaMethod = MetaMethod::new_static(METH_UNSUBSCRIBE, Flags::empty(), AccessLevel::Browse, "SubscribeParams", "void", &[], "");
+const META_METH_SUBSCRIPTIONS: MetaMethod = MetaMethod::new_static(METH_SUBSCRIPTIONS, Flags::empty(), AccessLevel::Browse, "void", "Map", &[], "");
 const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod::new_static(
     METH_CHANGE_PASSWORD,
-    Flag::None as u32,
+    Flags::empty(),
     AccessLevel::Write,
     "[s:old_password,s:new_password]",
     "Bool",
@@ -516,7 +514,7 @@ const META_METH_CHANGE_PASSWORD: MetaMethod = MetaMethod::new_static(
 );
 const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_static(
     METH_ACCESS_LEVEL_FOR_METHOD_CALL,
-    Flag::None as u32,
+    Flags::empty(),
     AccessLevel::Read,
     "[s:path,s:method]",
     "Int",
@@ -524,8 +522,8 @@ const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_stati
     r#"(params: ["shv_path", "method"]"#,
 );
 
-const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flag::None as u32, AccessLevel::Read, "void", "RpcValue", &[], "");
-const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flag::None as u32, AccessLevel::Read, "void", "List", &[], "");
+const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flags::empty(), AccessLevel::Read, "void", "RpcValue", &[], "");
+const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flags::empty(), AccessLevel::Read, "void", "List", &[], "");
 
 pub(crate) struct BrokerCurrentClientNode {}
 impl BrokerCurrentClientNode {
@@ -598,9 +596,9 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_CHANGE_PASSWORD => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err("Cannot change password, access database is not available.".into());
-                }
+                };
                 let rq = &frame.to_rpcmesage()?;
                 let params = rq
                     .param()
@@ -626,7 +624,8 @@ impl ShvNode for BrokerCurrentClientNode {
                 if user_name.starts_with("azure:") {
                     return Err("Can't change password, because you are logged in over Azure".into());
                 }
-                let Some(mut user) = ctx.state.access_user(&user_name).await else {
+                let mut access = ctx.state.access.write().await;
+                let Some(user) = access.access_user(&user_name) else {
                     return Err(format!("Invalid user: {user_name})").into());
                 };
                 let current_password_sha1 = match &user.password {
@@ -641,8 +640,9 @@ impl ShvNode for BrokerCurrentClientNode {
                 }
 
                 let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
+                let mut user = user.clone();
                 user.password = crate::config::Password::Sha1(new_password_sha1);
-                let res = ctx.state.set_access_user(&user_name, Some(user)).await?;
+                let res = access.set_access_user(&user_name, Some(user), sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
@@ -682,18 +682,12 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(user_roles) = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
+                let access = state.access.read().await;
                 let merged_profile = ctx.state
                     .flatten_roles(user_roles.as_slice())
                     .await
                     .iter()
-                    .map(|role| async {
-                        state.access_role(role).await
-                    })
-                    .collect::<FuturesUnordered<_>>()
-                    .collect::<Vec<_>>()
-                    .await
-                    .into_iter()
-                    .flatten()
+                    .flat_map(|role| access.access_role(role))
                     .flat_map(|role| role.profile.clone())
                     .fold(None, |mut res: Option<crate::config::ProfileValue>, profile| {
                         match &mut res {
@@ -723,18 +717,18 @@ impl ShvNode for BrokerCurrentClientNode {
     }
 }
 
-const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flag::None as u32, AccessLevel::Read, "DirParam", "DirResult", &[], "");
-const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flag::None as u32, AccessLevel::Read, "LsParam", "LsResult", &[], "");
+const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flags::empty(), AccessLevel::Read, "DirParam", "DirResult", &[], "");
+const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flags::empty(), AccessLevel::Read, "LsParam", "LsResult", &[], "");
 
 pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 pub const METH_DEACTIVATE: &str = "deactivate";
 pub const METH_ACTIVATE: &str = "activate";
 
-const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flag::None as u32, AccessLevel::Superuser, "void", "Map", &[], "");
-const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flag::None as u32, AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
-const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flag::None as u32, AccessLevel::Superuser, "Null", "void", &[], "");
-const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flag::None as u32, AccessLevel::Superuser, "Null", "void", &[], "");
+const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flags::empty(), AccessLevel::Superuser, "void", "Map", &[], "");
+const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flags::empty(), AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
+const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
+const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
 const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
@@ -760,7 +754,7 @@ impl ShvNode for BrokerAccessMountsNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.mounts.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -769,7 +763,7 @@ impl ShvNode for BrokerAccessMountsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_mount(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -779,9 +773,9 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -792,7 +786,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_access_mount(key.as_str(), mount).await?;
+                let res = ctx.state.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -822,7 +816,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.users.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.users().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -832,19 +826,21 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
-            let user = ctx.state.access_user(&ctx.node_path).await;
+            let Some(sql_connection) = &ctx.state.sql_connection else {
+                return Err(make_access_ro_error().into())
+            };
+            let mut access = ctx.state.access.write().await;
+            let user = access.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
                     Err(format!("Invalid node key: {}", &ctx.node_path).into())
                 }
-                Some(user) => {
+                Some(mut user) => {
                     if user.deactivated == new_deactivated {
                         return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
                     }
-                    let res = ctx.state.set_access_user(&ctx.node_path, Some(crate::config::User{
-                        deactivated: new_deactivated,
-                        ..user
-                    })).await?;
+                    user.deactivated = new_deactivated;
+                    let res = access.set_access_user(&ctx.node_path, Some(user), sql_connection).await?;
                     Ok(ProcessRequestRetval::Retval(res))
                 }
             }
@@ -852,7 +848,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_user(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -864,9 +860,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             METH_DEACTIVATE => process_activation_change(DEACTIVATE).await,
             METH_ACTIVATE => process_activation_change(ACTIVATE).await,
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -881,7 +877,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                let res = ctx.state.set_access_user(key.as_str(), user).await?;
+                let res = ctx.state.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -911,7 +907,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.roles.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.roles().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -920,7 +916,7 @@ impl ShvNode for BrokerAccessRolesNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_role(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -930,9 +926,9 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?.clone();
@@ -943,7 +939,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_access_role(key.as_str(), role).await?;
+                let res = ctx.state.access.write().await.set_access_role(key.as_str(), role, &ctx.state.role_access_rules, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -973,7 +969,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.allowed_ips.keys().map(|m| m.to_string()).collect())
+            Some(broker_state.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -982,7 +978,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access_allowed_ips(&ctx.node_path).await {
+                match ctx.state.access.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -992,9 +988,9 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 }
             }
             METH_SET_VALUE => {
-                if !ctx.sql_available {
+                let Some(sql_connection) = &ctx.state.sql_connection else {
                     return Err(make_access_ro_error().into())
-                }
+                };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
@@ -1012,7 +1008,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Ok(allowed_ips)) => {Some(allowed_ips)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.set_allowed_ips(key.as_str(), allowed_ips).await?;
+                let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -1023,7 +1019,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
 }
 
 pub const SHV2_METH_APP_VERSION: &str = "appVersion";
-const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(SHV2_METH_APP_VERSION, Flag::IsGetter as u32, AccessLevel::Browse, "", "", &[], "");
+const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(SHV2_METH_APP_VERSION, Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
 const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
 
 pub(crate) struct Shv2BrokerAppNode {}

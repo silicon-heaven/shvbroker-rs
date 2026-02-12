@@ -10,7 +10,7 @@ use shvclient::clientnode::SIG_CHNG;
 use shvproto::{RpcValue, rpcvalue};
 use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
-use shvrpc::metamethod::{Flag, MetaMethod};
+use shvrpc::metamethod::{Flags, MetaMethod};
 use smol::lock::RwLock;
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
 use url::Url;
@@ -89,10 +89,10 @@ fn test_broker() -> shvrpc::Result<()> {
     {
         println!("---broker---: .app:dir()");
         let expected_methods = [
-            MetaMethod::new_static(METH_DIR, Flag::None as u32, metamethod::AccessLevel::Browse, "DirParam", "DirResult", &[], ""),
-            MetaMethod::new_static(METH_LS, Flag::None as u32, metamethod::AccessLevel::Browse, "LsParam", "LsResult", &[], ""),
-            MetaMethod::new_static(METH_NAME, Flag::IsGetter as u32, metamethod::AccessLevel::Browse, "", "", &[], ""),
-            MetaMethod::new_static(METH_PING, Flag::None as u32, metamethod::AccessLevel::Browse, "", "", &[], ""),
+            MetaMethod::new_static(METH_DIR, Flags::empty(), metamethod::AccessLevel::Browse, "DirParam", "DirResult", &[], ""),
+            MetaMethod::new_static(METH_LS, Flags::empty(), metamethod::AccessLevel::Browse, "LsParam", "LsResult", &[], ""),
+            MetaMethod::new_static(METH_NAME, Flags::IsGetter, metamethod::AccessLevel::Browse, "", "", &[], ""),
+            MetaMethod::new_static(METH_PING, Flags::empty(), metamethod::AccessLevel::Browse, "", "", &[], ""),
         ];
         {
             let methods = shv_call_child(".app", "dir", "")?;

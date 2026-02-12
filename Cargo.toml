@@ -18,10 +18,10 @@ can = ["dep:socketcan", "shvrpc/can"]
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.1"
-shvclient = { version = "0.22.1", features = ["smol"] }
+shvclient = { version = "0.27.0", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.35"
-anyhow = "1.0.100"
+anyhow = "1.0.101"
 rcgen = "0.14.7"
 async-trait = "0.1.89"
 
@@ -31,20 +31,20 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-shvproto = { version = "3.6.22", features = [ "serde" ] }
-shvrpc = { version = "9.0.1", features = ["websocket"] }
+shvproto = { version = "6.0.1", features = [ "serde" ] }
+shvrpc = { version = "11.0.0", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.30"
 log = "0.4.21"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 duration-str = "0.19"
-rand = "0.9.0"
+rand = "0.10.0"
 url = "2.5"
 serde = "1.0.203"
 serde_yaml = "0.9"
 serde_json = "1.0"
-clap = { version = "4.5.56", features = ["derive"] }
+clap = { version = "4.5.57", features = ["derive"] }
 async-sqlite = { version = "0.5.6", features = ["bundled", "modern-full"] }
 reqwest = { version = "0.12.28", features = ["json", "http2", "rustls-tls"], default-features = false, optional = true }
 serialport = "4.7.1"

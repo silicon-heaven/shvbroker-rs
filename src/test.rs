@@ -218,8 +218,8 @@ async fn test_broker_loop_as_admin_async() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
 
     let config = BrokerConfig::default();
-    let users: Vec<_> = config.access.users.keys().map(|k| k.to_string()).collect();
-    let roles: Vec<_> = config.access.roles.keys().map(|k| k.to_string()).collect();
+    let users: Vec<_> = config.access.users().keys().map(|k| k.to_string()).collect();
+    let roles: Vec<_> = config.access.roles().keys().map(|k| k.to_string()).collect();
     // access/mounts
     {
         let path = ".broker/access/mounts";
@@ -277,7 +277,7 @@ async fn test_broker_loop_as_admin_async() {
                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
                 let role1 = Role::try_from(&resp).unwrap();
-                let role2 = config.access.roles.get("tester").unwrap();
+                let role2 = config.access.access_role("tester").unwrap();
                 assert_eq!(&role1, role2);
             }
             {
