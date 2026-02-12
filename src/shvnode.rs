@@ -679,7 +679,7 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_PROFILE => {
                 let state = ctx.state.clone();
-                let Some(user_roles) = user_base_roles(&*state.azure_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
+                let Some(user_roles) = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
                 let access = state.access.read().await;
@@ -700,7 +700,7 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_ROLES => {
                 let state = ctx.state.clone();
-                let Some(user_roles) = user_base_roles(&*state.azure_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
+                let Some(user_roles) = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
                     return Err("This connection does not have any roles associated with it".into());
                 };
 

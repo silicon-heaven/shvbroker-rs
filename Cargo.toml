@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.22.7"
+version = "3.23.0"
 edition = "2024"
 default-run = "shvbroker"
 
@@ -11,6 +11,7 @@ default-run = "shvbroker"
 shvcall = { version = "^3.9.0" }
 
 [features]
+google-auth = ["dep:jsonwebtoken", "dep:reqwest", "dep:async-compat"]
 entra-id = ["dep:async-compat", "dep:reqwest"]
 can = ["dep:socketcan", "shvrpc/can"]
 
@@ -56,6 +57,7 @@ rustls-platform-verifier = "0.6.1"
 smol-macros = "0.1.1"
 ipnet = { version = "2.11.0", features = ["serde"] }
 async-trait = "0.1.89"
+jsonwebtoken = { version = "8.0.0", optional = true }
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

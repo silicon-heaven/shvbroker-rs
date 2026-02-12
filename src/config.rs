@@ -31,15 +31,26 @@ pub struct BrokerConfig {
     pub tunnelling: TunnellingConfig,
     #[serde(default)]
     pub azure: Option<AzureConfig>,
+    #[serde(default)]
+    pub google_auth: Option<GoogleAuthConfig>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
+    // higher mapping is used first
     pub group_mapping: Vec<(String, Vec<String>)>,
     pub client_id: String,
     pub authorize_url: String,
     pub token_url: String,
     pub scopes: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
+pub struct GoogleAuthConfig {
+    // email -> broker role
+    // '*' is matching any google user
+    pub user_mapping: BTreeMap<String, Vec<String>>,
+    pub client_id: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -566,6 +577,7 @@ impl Default for BrokerConfig {
             },
             tunnelling: Default::default(),
             azure: Default::default(),
+            google_auth: Default::default(),
         }
     }
 }

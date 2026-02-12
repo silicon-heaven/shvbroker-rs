@@ -525,6 +525,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             access: shvbroker::config::AccessConfig::default(),
             tunnelling: shvbroker::config::TunnellingConfig::default(),
             azure,
+            google_auth: None,
         }
     }
 }
@@ -614,4 +615,3 @@ fn main() -> shvrpc::Result<()> {
 
     Ok(())
 }
-

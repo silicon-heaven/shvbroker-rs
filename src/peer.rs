@@ -48,7 +48,7 @@ use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
-#[cfg(feature = "entra-id")]
+#[cfg(any(feature = "entra-id", feature = "google-auth"))]
 use async_compat::CompatExt;
 
 pub(crate) async fn try_server_peer_loop(
@@ -236,6 +236,120 @@ pub(crate) async fn server_peer_loop(
                     let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
+                    const GOOGLE_AUTH_TOKEN_PREFIX: &str = "oauth2-google:";
+                    if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(GOOGLE_AUTH_TOKEN_PREFIX) {
+                        #[cfg(not(feature = "google-auth"))]
+                        {
+                            let _ = access_token;
+                            frame_writer.send_error(resp_meta, "Google login is not supported on this broker.").or(frame_write_timeout()).await?;
+                            continue 'login_loop;
+                        }
+                        #[cfg(feature = "google-auth")]
+                        {
+                            #[derive(Debug, serde::Serialize, serde::Deserialize)]
+                            struct GoogleClaims {
+                                iss: String,    // Issuer (should be https://accounts.google.com)
+                                aud: String,    // Audience (your Client ID)
+                                sub: String,    // Unique Google user ID
+                                email: String,  // The verified email you need
+                                exp: usize,     // Expiration time
+                            }
+
+                            async fn verify_google_token(token: &str, broker_config: SharedBrokerConfig) -> shvrpc::Result<GoogleClaims> {
+                                use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+
+                                // Cache for Google JWT public keys (kid -> DecodingKey)
+                                static GOOGLE_KEY_CACHE: std::sync::LazyLock<smol::lock::RwLock<Option<DecodingKey>>> =
+                                    std::sync::LazyLock::new(|| smol::lock::RwLock::new(None));
+
+                                // Parse the header to find which key (kid) was used
+                                let header = decode_header(token)?;
+                                let kid = header.kid.ok_or_else(|| "No kid found in header".to_string())?;
+
+                                // Helper function to fetch key from Google
+                                async fn get_google_decoding_key(kid: &str, force_reload: bool) -> shvrpc::Result<DecodingKey> {
+                                    let key = GOOGLE_KEY_CACHE.read().await.clone();
+                                    if key.is_none() || force_reload {
+                                        // Fetch Google's public keys
+                                        let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
+                                        let response: serde_json::Value = reqwest::get(jwks_url).compat().await?.json().await?;
+                                        // Find the specific key matching the 'kid'
+                                        let n = response["keys"].as_array()
+                                            .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                            .and_then(|k| k["n"].as_str())
+                                        .ok_or_else(|| "Key not found".to_string())?;
+
+                                        let e = response["keys"].as_array()
+                                            .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
+                                            .and_then(|k| k["e"].as_str())
+                                            .ok_or_else(|| "Exponent not found".to_string())?;
+                                        // Create a decoding key from RSA components (n, e)
+                                        let key = DecodingKey::from_rsa_components(n, e)?;
+                                        *GOOGLE_KEY_CACHE.write().await = Some(key);
+                                    };
+                                    if let Some(key) = GOOGLE_KEY_CACHE.read().await.clone() {
+                                        Ok(key)
+                                    } else {
+                                        Err("Internal error - Google key should be cached already".into())
+                                    }
+                                }
+
+                                // Set up validation (check audience and issuer)
+                                let client_id = broker_config.google_auth.as_ref().map(|c| c.client_id.as_str())
+                                    .ok_or_else(|| "No client ID found in configuration".to_string())?;
+                                let mut validation = Validation::new(Algorithm::RS256);
+                                validation.set_audience(&[client_id]);
+                                validation.set_issuer(&["https://accounts.google.com", "accounts.google.com"]);
+
+                                // Try with cached key first
+                                let decoding_key = get_google_decoding_key(&kid, false).await?;
+                                let token_data = {
+                                        // Try to verify with cached key
+                                        match decode::<GoogleClaims>(token, &decoding_key, &validation) {
+                                            Ok(data) => data,
+                                            Err(_) => {
+                                                // Cached key failed, fetch new key and retry
+                                                let decoding_key = get_google_decoding_key(&kid, true).await?;
+                                                // Retry verification with new key
+                                                decode::<GoogleClaims>(token, &decoding_key, &validation)?
+                                            }
+                                        }
+                                };
+                                Ok(token_data.claims)
+                            }
+                            match verify_google_token(access_token, broker_config.clone()).await {
+                                Ok(claims) => {
+                                    let Some(google_auth_config) = &broker_config.google_auth else {
+                                        frame_writer.send_error(resp_meta, "Google auth is not configured on this broker.").or(frame_write_timeout()).await?;
+                                        continue 'login_loop;
+                                    };
+
+                                    let user = claims.email;
+                                    let user_mapping = &google_auth_config.user_mapping;
+
+                                    let Some(broker_mapped_groups) = user_mapping.get(&user)
+                                        .or_else(|| user_mapping.get("*")) else {
+                                            frame_writer.send_error(resp_meta, "No relevant user mapping found.").or(frame_write_timeout()).await?;
+                                            continue 'login_loop;
+                                        };
+
+                                    let result = make_map!("clientId" => peer_id);
+                                    frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
+
+                                    let mut mapped_groups = vec![user.clone()];
+                                    mapped_groups.extend(broker_mapped_groups.iter().cloned());
+                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
+
+                                    break 'login_loop (user, params.get("options").cloned());
+                                }
+                                Err(e) => {
+                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
+                                    continue 'login_loop;
+                                }
+                            }
+                        }
+                    }
+
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {
@@ -322,7 +436,7 @@ pub(crate) async fn server_peer_loop(
                             frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            broker_writer.send(BrokerCommand::SetAzureGroups { peer_id, groups: mapped_groups}).await?;
+                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
                             break 'login_loop (user, params.get("options").cloned());
                         }
                     }
