@@ -33,6 +33,7 @@ pub struct BrokerConfig {
 }
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AzureConfig {
+    // higher mapping is used first
     pub group_mapping: Vec<(String, Vec<String>)>,
     pub client_id: String,
     pub authorize_url: String,
@@ -42,9 +43,9 @@ pub struct AzureConfig {
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct GoogleAuthConfig {
-    // higher mapping is used first
-    // '*' is matching any google group
-    pub group_mapping: Vec<(String, Vec<String>)>,
+    // email -> broker role
+    // '*' is matching any google user
+    pub user_mapping: BTreeMap<String, Vec<String>>,
     pub client_id: String,
 }
 
