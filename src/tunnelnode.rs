@@ -28,9 +28,9 @@ const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flags
 const METH_CREATE: &str = "create";
 const METH_WRITE: &str = "write";
 const METH_CLOSE: &str = "close";
-const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flags::empty(), AccessLevel::Write, "Map", "String", &[], "");
-const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flags::empty(), AccessLevel::SuperService, "Blob", "Blob", &[], "");
-const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flags::empty(), AccessLevel::SuperService, "Blob", "Blob", &[], "");
+const META_METH_CREATE: MetaMethod = MetaMethod::new_static(METH_CREATE, Flags::empty(), AccessLevel::Write, "{s:host}", "s", &[], "");
+const META_METH_WRITE: MetaMethod = MetaMethod::new_static(METH_WRITE, Flags::empty(), AccessLevel::Write, "x", "x", &[], "");
+const META_METH_CLOSE: MetaMethod = MetaMethod::new_static(METH_CLOSE, Flags::empty(), AccessLevel::Write, "", "b", &[], "");
 
 const TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METHOD_PUBLIC_DIR,
