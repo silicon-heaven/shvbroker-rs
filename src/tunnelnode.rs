@@ -165,12 +165,12 @@ pub(crate) struct ActiveTunnel {
 
 pub(crate) async fn tunnel_task(
     tunnel_id: TunnelId,
-    request_meta: MetaMap,
+    mut request_meta: MetaMap,
     addr: String,
     from_broker_receiver: Receiver<ToRemoteMsg>,
     state: Arc<BrokerImpl>,
 ) -> shvrpc::Result<()> {
-    let peer_id = *request_meta.caller_ids().first().ok_or("Invalid peer id")?;
+    let peer_id = request_meta.pop_caller_id().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
     let to_broker_sender = state.command_sender.clone();
     log!(target: "Tunnel", Level::Debug, "Tunnel: {tunnel_id}, connecting to: {addr} ...");
