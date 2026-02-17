@@ -540,11 +540,7 @@ pub(crate) async fn server_peer_loop(
                                 let broker_id = broker_config.name.as_ref()
                                     .map(|name| format!(":{name}"))
                                     .unwrap_or_default();
-                                let user_id_chain = if req_user_id.is_empty() {
-                                    format!("{user}{broker_id}")
-                                } else {
-                                    format!("{req_user_id};{user}{broker_id}")
-                                };
+                                let user_id_chain = format!("{req_user_id};{user}{broker_id}");
                                 frame.set_user_id(&user_id_chain);
                             }
                             broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
