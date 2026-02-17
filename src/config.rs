@@ -58,7 +58,7 @@ pub struct TunnellingConfig {
     #[serde(default)]
     pub enabled:bool,
     #[serde(default)]
-    pub tsub_support: bool,
+    pub tsub_dir: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
