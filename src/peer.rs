@@ -469,8 +469,7 @@ pub(crate) async fn server_peer_loop(
             }
         };
 
-        let result = make_map!("clientId" => peer_id);
-        frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
+        frame_writer.send_result(resp_meta.clone(), ().into()).or(frame_write_timeout()).await?;
 
         let options = options.as_ref().map(RpcValue::as_map);
 
