@@ -602,7 +602,7 @@ pub(crate) async fn server_peer_loop(
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
                                 if let Some(reason) = reason {
-                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker", Some(reason.into())).to_frame().unwrap())?
+                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().unwrap())?
                                 }
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
@@ -1239,7 +1239,7 @@ async fn broker_as_client_peer_loop(
         select! {
             _ = fut_timeout => {
                 // send heartbeat
-                let msg = RpcMessage::new_request(".app", METH_PING, None);
+                let msg = RpcMessage::new_request(".app", METH_PING);
                 debug!("sending ping");
                 frames_tx.unbounded_send(msg.to_frame()?)?;
                 fut_timeout = make_timeout();
