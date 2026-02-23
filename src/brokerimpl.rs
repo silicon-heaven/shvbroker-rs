@@ -710,7 +710,7 @@ async fn forward_subscriptions_task(
         let (response_sender, response_receiver) = unbounded();
         let cmd = BrokerCommand::RpcCall {
             peer_id,
-            request: RpcMessage::new_request(path, method, Some(param)),
+            request: RpcMessage::new_request(path, method).with_param(param),
             response_sender,
         };
         broker_command_sender
@@ -1209,20 +1209,13 @@ impl BrokerImpl {
                 let mount_point = self.mount_point(peer_id).await;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
-                    let msg = RpcMessage::new_signal_with_source(
-                        shv_path,
-                        SIG_LSMOD,
-                        METH_LS,
-                        Some(Map::from([(dir.to_string(), true.into())]).into()),
-                    );
+                    let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS)
+                        .with_param(Map::from([(dir.to_string(), true.into())]));
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
 
-                    let msg = RpcMessage::new_signal(
-                        &mount_point,
-                        SIG_MNTMOD,
-                        Some(true.into()),
-                    );
+                    let msg = RpcMessage::new_signal(&mount_point, SIG_MNTMOD)
+                        .with_param(true);
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
@@ -1242,20 +1235,13 @@ impl BrokerImpl {
                     }
 
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
-                    let msg = RpcMessage::new_signal_with_source(
-                        lsmod_path,
-                        SIG_LSMOD,
-                        METH_LS,
-                        Some(Map::from([(lsmod_value.to_string(), false.into())]).into()),
-                    );
+                    let msg = RpcMessage::new_signal_with_source( lsmod_path, SIG_LSMOD, METH_LS)
+                        .with_param(Map::from([(lsmod_value.to_string(), false.into())]));
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
 
-                    let msg = RpcMessage::new_signal(
-                        &mount_point,
-                        SIG_MNTMOD,
-                        Some(false.into()),
-                    );
+                    let msg = RpcMessage::new_signal( &mount_point, SIG_MNTMOD)
+                        .with_param(false);
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
@@ -1356,12 +1342,8 @@ impl BrokerImpl {
                 .await?
             }
             BrokerCommand::TunnelActive(tunnel_id) => {
-                let msg = RpcMessage::new_signal_with_source(
-                    &format!(".app/tunnel/{tunnel_id}"),
-                    SIG_LSMOD,
-                    METH_LS,
-                    Some(Map::from([(format!("{tunnel_id}"), true.into())]).into()),
-                );
+                let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
+                    .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
                 self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 let command_sender = self.command_sender.clone();
                 let state = self.clone();
@@ -1386,12 +1368,8 @@ impl BrokerImpl {
             BrokerCommand::TunnelClosed(tunnel_id) => {
                 let closed = self.close_tunnel(tunnel_id).await?;
                 if let Some(true) = closed {
-                    let msg = RpcMessage::new_signal_with_source(
-                        &format!(".app/tunnel/{tunnel_id}"),
-                        SIG_LSMOD,
-                        METH_LS,
-                        Some(Map::from([(format!("{tunnel_id}"), false.into())]).into()),
-                    );
+                    let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
+                        .with_param(Map::from([(format!("{tunnel_id}"), false.into())]));
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 }
             }
@@ -1434,7 +1412,7 @@ impl BrokerImpl {
         let broker_command_sender = self.command_sender.clone();
         let subscribe_api = {
             let (response_sender, response_receiver) = unbounded();
-            let request = RpcMessage::new_request(".broker", METH_LS, None);
+            let request = RpcMessage::new_request(".broker", METH_LS);
             let cmd = BrokerCommand::RpcCall {
                 peer_id,
                 request,
@@ -1477,8 +1455,8 @@ impl BrokerImpl {
             peer_id,
             frame.shv_path().unwrap_or_default(),
             frame.method().unwrap_or_default(),
-            frame.tag(Tag::AccessLevel as _).map(RpcValue::as_i32),
-            frame.tag(Tag::Access as _).map(RpcValue::as_str)
+            frame.tag(Tag::AccessLevel as i32).map(RpcValue::as_i32),
+            frame.tag(Tag::Access as i32).map(RpcValue::as_str)
         ).await
     }
 

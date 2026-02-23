@@ -196,7 +196,7 @@ shvclient::impl_static_node!{
         "set" [IsSetter, Write, "Int", "Null"] (param: i32) => {
             if self.state.number.load(Ordering::SeqCst) != param {
                 self.state.number.store(param, Ordering::SeqCst);
-                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG, Some(param.into()));
+                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG).with_param(param);
                 let _ = client_cmd_tx.send_message(sigchng);
             }
             Some(Ok(().into()))
@@ -217,7 +217,7 @@ shvclient::impl_static_node!{
         "set" [IsSetter, Write, "Null", "String"] (param: String) => {
             if *self.state.text.read().await != param {
                 *self.state.text.write().await = param.clone();
-                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG, Some(param.into()));
+                let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG).with_param(param);
                 let _ = client_cmd_tx.send_message(sigchng);
             }
             Some(Ok(().into()))

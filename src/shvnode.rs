@@ -480,7 +480,7 @@ impl ShvNode for BrokerNode {
                         shv_path,
                         method,
                         None,
-                        frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
+                        frame.tag(shvrpc::rpcmessage::Tag::Access as i32).map(RpcValue::as_str),
                     )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
@@ -665,7 +665,7 @@ impl ShvNode for BrokerCurrentClientNode {
                         shv_path,
                         method,
                         None,
-                        frame.tag(shvrpc::rpcmessage::Tag::Access as _).map(RpcValue::as_str),
+                        frame.tag(shvrpc::rpcmessage::Tag::Access as i32).map(RpcValue::as_str),
                     )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
