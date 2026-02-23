@@ -159,7 +159,7 @@ pub(crate) async fn server_peer_loop(
     'session_loop: loop {
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
         let mut nonce = None;
-        let (user, options) = 'login_loop: loop {
+        let (user, options, resp_meta) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
@@ -333,14 +333,11 @@ pub(crate) async fn server_peer_loop(
                                             continue 'login_loop;
                                         };
 
-                                    let result = make_map!("clientId" => peer_id);
-                                    frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
-
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
                                     broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
 
-                                    break 'login_loop (user, params.get("options").cloned());
+                                    break 'login_loop (user, params.get("options").cloned(), resp_meta);
                                 }
                                 Err(e) => {
                                     frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
@@ -432,12 +429,10 @@ pub(crate) async fn server_peer_loop(
                             }
 
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
-                            let result = make_map!("clientId" => peer_id);
-                            frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
                             broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
-                            break 'login_loop (user, params.get("options").cloned());
+                            break 'login_loop (user, params.get("options").cloned(), resp_meta);
                         }
                     }
 
@@ -456,9 +451,7 @@ pub(crate) async fn server_peer_loop(
                         BrokerToPeerMessage::AuthResult(result) => {
                             if result {
                                 peer_log!(debug, "password OK");
-                                let result = make_map!{"clientId" => peer_id};
-                                frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
-                                break 'login_loop (user, params.get("options").cloned());
+                                break 'login_loop (user, params.get("options").cloned(), resp_meta);
                             } else {
                                 peer_log!(warn, "invalid login credentials, user: {user}");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
@@ -475,6 +468,9 @@ pub(crate) async fn server_peer_loop(
                 }
             }
         };
+
+        let result = make_map!("clientId" => peer_id);
+        frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
 
         let options = options.as_ref().map(RpcValue::as_map);
 
