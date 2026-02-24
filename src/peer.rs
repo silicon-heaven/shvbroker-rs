@@ -350,7 +350,7 @@ pub(crate) async fn server_peer_loop(
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {
-                            frame_writer.send_error(resp_meta, "Entra ID login is not supported on this broker.").or(frame_write_timeout()).await?;
+                            frame_writer.send_error(resp_meta, "Unsupported token type.").or(frame_write_timeout()).await?;
                             continue 'login_loop;
                         }
                         #[cfg(feature = "entra-id")]
