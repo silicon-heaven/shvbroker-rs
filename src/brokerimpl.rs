@@ -1184,6 +1184,19 @@ impl BrokerImpl {
         Ok(())
     }
 
+    async fn user_is_allowed_to_login(self: &Arc<Self>, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
+        if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(user, ip_addr).await {
+            info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
+            return false;
+        }
+
+        if self.user_deactivated(&user).await {
+            return false;
+        }
+
+        true
+    }
+
     async fn process_broker_command(self: &Arc<Self>, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
@@ -1257,12 +1270,7 @@ impl BrokerImpl {
                 login_type
             } => {
                 let result = 'result: {
-                    if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(&user, ip_addr).await {
-                        info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
-                        break 'result false;
-                    }
-
-                    if self.user_deactivated(&user).await {
+                    if !self.user_is_allowed_to_login(peer_id, &user, ip_addr).await {
                         break 'result false;
                     }
 
