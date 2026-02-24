@@ -58,6 +58,7 @@ smol-macros = "0.1.1"
 ipnet = { version = "2.11.0", features = ["serde"] }
 async-trait = "0.1.89"
 jsonwebtoken = { version = "10.3.0", optional = true }
+uuid = { version = "1.21.0", features = ["v4"] }
 
 # For local development
 #[patch."https://github.com/silicon-heaven/libshvproto-rs"]

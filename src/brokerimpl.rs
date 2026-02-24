@@ -13,7 +13,7 @@ use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{rpcvalue, Map, MetaMap, RpcValue};
+use shvproto::{DateTime, Map, MetaMap, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use smol::lock::RwLock;
 use std::time::{Duration, Instant};
+use peer::SESSION_TOKEN_PREFIX;
 
 #[derive(Debug)]
 pub(crate) struct Subscription {
@@ -68,9 +69,17 @@ pub enum BrokerCommand {
         password: String,
         login_type: String,
     },
+    CheckToken {
+        sender: Sender<BrokerToPeerMessage>,
+        peer_id: PeerId,
+        ip_addr: Option<core::net::IpAddr>,
+        token: String,
+    },
     #[cfg(any(feature = "entra-id", feature = "google-auth"))]
     SetOAuth2Groups {
+        sender: Sender<BrokerToPeerMessage>,
         peer_id: PeerId,
+        user: String,
         groups: Vec<String>,
     },
     NewPeer {
@@ -102,6 +111,8 @@ pub enum BrokerCommand {
 #[derive(Debug)]
 pub enum BrokerToPeerMessage {
     AuthResult(bool),
+    TokenAuthResult(Option<String>),
+    SessionToken(String),
     SendFrame(RpcFrame),
     DisconnectByBroker {
         reason: Option<String>,
@@ -318,6 +329,27 @@ pub(crate) struct PendingRpcCall {
 }
 
 pub(crate) async fn broker_loop(broker: Arc<BrokerImpl>, command_receiver: Receiver<BrokerCommand>) {
+    let session_token_expiration_task = {
+        let broker = broker.clone();
+
+        smol::spawn(async move {
+            loop {
+                let mut interval = futures::FutureExt::fuse(smol::Timer::interval(Duration::from_hours(1)));
+                select! {
+                    _ = interval => {
+                        let mut session_tokens = broker.session_tokens.write().await;
+                        const HOURS_BEFORE_EXPIRATION: i64 = 12;
+                        let threshold = shvproto::DateTime::now().add_hours(-HOURS_BEFORE_EXPIRATION);
+                        session_tokens.retain(|session| {
+                            session.last_activity >= threshold
+                        });
+                    },
+                    complete => break,
+                }
+            }
+            log::debug!("periodic sync task finished");
+        })
+    };
     loop {
         select! {
             command = command_receiver.recv().fuse() => match command {
@@ -330,8 +362,11 @@ pub(crate) async fn broker_loop(broker: Arc<BrokerImpl>, command_receiver: Recei
                     warn!("Receive broker command error: {err}");
                 }
             },
+            complete => break,
         }
     }
+
+    session_token_expiration_task.cancel().await;
 }
 
 #[derive(Copy, Clone)]
@@ -623,6 +658,13 @@ fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<Par
 
 }
 
+#[derive(Debug)]
+pub(crate) struct Session {
+    last_activity: DateTime,
+    user: String,
+    token: String,
+}
+
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
     nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
@@ -633,6 +675,9 @@ pub struct BrokerImpl {
     pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
 
     pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
+
+    // session_token -> username
+    pub(crate) session_tokens: RwLock<Vec<Session>>,
 
     pub(crate) command_sender: Sender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
@@ -914,6 +959,7 @@ impl BrokerImpl {
             active_tunnels: Default::default(),
             next_tunnel_number: RwLock::new(1),
             sql_connection,
+            session_tokens: RwLock::default(),
         }
     }
     pub(crate) async fn process_rpc_frame(self: &Arc<Self>, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
@@ -1190,11 +1236,24 @@ impl BrokerImpl {
             return false;
         }
 
-        if self.user_deactivated(&user).await {
+        if self.user_deactivated(user).await {
             return false;
         }
 
         true
+    }
+
+    async fn get_or_create_token(self: &Arc<Self>, user: &str) -> String {
+        let mut session_tokens = self.session_tokens.write().await;
+        let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
+            token.clone()
+        } else {
+            let token = uuid::Uuid::new_v4().to_string();
+            session_tokens.push(Session { last_activity: shvproto::DateTime::now(), user: user.to_string(), token: token.clone() });
+            token
+        };
+
+        format!("{SESSION_TOKEN_PREFIX}{token}")
     }
 
     async fn process_broker_command(self: &Arc<Self>, broker_command: BrokerCommand) -> shvrpc::Result<()> {
@@ -1260,6 +1319,34 @@ impl BrokerImpl {
                 }
                 self.pending_rpc_calls.write().await.retain(|c| c.peer_id != peer_id);
             }
+            BrokerCommand::CheckToken { sender, peer_id, ip_addr, token } => {
+                let result = 'result: {
+                    let mut session_tokens = self.session_tokens.write().await;
+                    let Some(Session { last_activity, user, ..}) = session_tokens.iter_mut().find(|session| session.token == token) else {
+                        break 'result None;
+                    };
+
+                    if !self.user_is_allowed_to_login(peer_id, user, ip_addr).await {
+                        break 'result None;
+                    }
+
+                    *last_activity = shvproto::DateTime::now();
+
+                    Some(user.clone())
+                };
+
+                let success = result.is_some();
+
+                sender
+                    .send(BrokerToPeerMessage::TokenAuthResult(result))
+                    .await?;
+
+                if success {
+                    sender
+                        .send(BrokerToPeerMessage::SessionToken(token))
+                        .await?;
+                }
+            },
             BrokerCommand::CheckAuth {
                 sender,
                 ip_addr,
@@ -1303,14 +1390,26 @@ impl BrokerImpl {
                 sender
                     .send(BrokerToPeerMessage::AuthResult(result))
                     .await?;
+
+                if result {
+                    let session_token = self.get_or_create_token(&user).await;
+                    sender
+                        .send(BrokerToPeerMessage::SessionToken(session_token))
+                        .await?;
+                }
             }
             #[cfg(any(feature = "entra-id", feature = "google-auth"))]
-            BrokerCommand::SetOAuth2Groups { peer_id, groups } => {
+            BrokerCommand::SetOAuth2Groups { peer_id, sender, user, groups } => {
                 self
                     .oauth2_user_groups
                     .write()
                     .await
                     .insert(peer_id, groups);
+
+                let session_token = self.get_or_create_token(&user).await;
+                sender
+                    .send(BrokerToPeerMessage::SessionToken(session_token))
+                    .await?;
             }
             BrokerCommand::SendResponse {
                 peer_id,
