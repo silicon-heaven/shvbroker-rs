@@ -51,6 +51,8 @@ use crate::serial::create_serial_frame_reader_writer;
 #[cfg(any(feature = "entra-id", feature = "google-auth"))]
 use async_compat::CompatExt;
 
+pub(crate) const SESSION_TOKEN_PREFIX: &str = "session-token:";
+
 pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
@@ -159,7 +161,7 @@ pub(crate) async fn server_peer_loop(
     'session_loop: loop {
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
         let mut nonce = None;
-        let (user, options) = 'login_loop: loop {
+        let (user, options, resp_meta) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
@@ -210,6 +212,7 @@ pub(crate) async fn server_peer_loop(
                     let mut workflows = make_list!(
                         "PLAIN",
                         "SHA1",
+                        "TOKEN",
                     );
 
                     #[cfg(feature = "entra-id")]
@@ -333,14 +336,10 @@ pub(crate) async fn server_peer_loop(
                                             continue 'login_loop;
                                         };
 
-                                    let result = make_map!("clientId" => peer_id);
-                                    frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
-
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
-                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
-
-                                    break 'login_loop (user, params.get("options").cloned());
+                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender: peer_writer.clone(), user: user.clone(), groups: mapped_groups}).await?;
+                                    break 'login_loop (user, params.get("options").cloned(), resp_meta);
                                 }
                                 Err(e) => {
                                     frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
@@ -350,10 +349,34 @@ pub(crate) async fn server_peer_loop(
                         }
                     }
 
+                    if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(SESSION_TOKEN_PREFIX) {
+                        broker_writer.send(BrokerCommand::CheckToken {
+                            peer_id,
+                            ip_addr,
+                            sender: peer_writer.clone(),
+                            token: access_token.to_string(),
+                        }).await?;
+                        match peer_reader.recv().await? {
+                            BrokerToPeerMessage::TokenAuthResult(user) => {
+                                if let Some(user) = user {
+                                    peer_log!(debug, "token OK");
+                                    break 'login_loop (user, params.get("options").cloned(), resp_meta);
+                                } else {
+                                    peer_log!(warn, "invalid token");
+                                    frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
+                                    continue 'login_loop;
+                                }
+                            }
+                            _ => {
+                                panic!("Internal error, PeerEvent::AuthResult expected");
+                            }
+                        }
+                    }
+
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {
-                            frame_writer.send_error(resp_meta, "Entra ID login is not supported on this broker.").or(frame_write_timeout()).await?;
+                            frame_writer.send_error(resp_meta, "Unsupported token type.").or(frame_write_timeout()).await?;
                             continue 'login_loop;
                         }
                         #[cfg(feature = "entra-id")]
@@ -432,12 +455,10 @@ pub(crate) async fn server_peer_loop(
                             }
 
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
-                            let result = make_map!("clientId" => peer_id);
-                            frame_writer.send_result(resp_meta.clone(), result.into()).or(frame_write_timeout()).await?;
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, groups: mapped_groups}).await?;
-                            break 'login_loop (user, params.get("options").cloned());
+                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender: peer_writer.clone(), user: user.clone(), groups: mapped_groups}).await?;
+                            break 'login_loop (user, params.get("options").cloned(), resp_meta);
                         }
                     }
 
@@ -456,9 +477,7 @@ pub(crate) async fn server_peer_loop(
                         BrokerToPeerMessage::AuthResult(result) => {
                             if result {
                                 peer_log!(debug, "password OK");
-                                let result = make_map!{"clientId" => peer_id};
-                                frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
-                                break 'login_loop (user, params.get("options").cloned());
+                                break 'login_loop (user, params.get("options").cloned(), resp_meta);
                             } else {
                                 peer_log!(warn, "invalid login credentials, user: {user}");
                                 frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
@@ -476,7 +495,18 @@ pub(crate) async fn server_peer_loop(
             }
         };
 
+        let BrokerToPeerMessage::SessionToken(session_token) = peer_reader.recv().await? else {
+            panic!("Internal error, PeerEvent::AuthResult expected");
+        };
+
         let options = options.as_ref().map(RpcValue::as_map);
+        let result: RpcValue = if options.and_then(|options| options.get("session")).map(RpcValue::as_bool).is_some_and(|x| x) {
+            session_token.into()
+        } else {
+            RpcValue::null()
+        };
+
+        frame_writer.send_result(resp_meta.clone(), result).or(frame_write_timeout()).await?;
 
         let device_options = options.and_then(|map| map.get("device"));
         let idle_watchdog_timeout = options
@@ -596,6 +626,12 @@ pub(crate) async fn server_peer_loop(
                     }
                     Ok(event) => {
                         match event {
+                            BrokerToPeerMessage::SessionToken(_) => {
+                                panic!("SessionToken cannot be received here")
+                            }
+                            BrokerToPeerMessage::TokenAuthResult(_) => {
+                                panic!("TokenAuthResult cannot be received here")
+                            }
                             BrokerToPeerMessage::AuthResult(_) => {
                                 panic!("AuthResult cannot be received here")
                             }
@@ -1291,6 +1327,12 @@ async fn broker_as_client_peer_loop(
                 }
                 Ok(event) => {
                     match event {
+                        BrokerToPeerMessage::SessionToken(_) => {
+                            panic!("SessionToken cannot be received here")
+                        }
+                        BrokerToPeerMessage::TokenAuthResult(_) => {
+                            panic!("TokenAuthResult cannot be received here")
+                        }
                         BrokerToPeerMessage::AuthResult(_) => {
                             panic!("AuthResult cannot be received here")
                         }
