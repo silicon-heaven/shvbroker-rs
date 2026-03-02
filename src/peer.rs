@@ -33,7 +33,7 @@ use crate::brokerimpl::load_certs;
 use crate::brokerimpl::AsyncReadWriteBox;
 use crate::brokerimpl::ServerMode;
 use crate::shvnode::{DOT_LOCAL_DIR, DOT_LOCAL_HACK, DOT_LOCAL_GRANT, METH_PING, METH_SUBSCRIBE, METH_UNSUBSCRIBE};
-use shvrpc::util::{join_path, login_from_url, starts_with_path, strip_prefix_path};
+use shvrpc::util::{join_path, parse_query_params, starts_with_path, strip_prefix_path};
 use crate::brokerimpl::{BrokerCommand, BrokerToPeerMessage, PeerKind};
 use shvrpc::framerw::{FrameReader, FrameWriter};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
@@ -838,7 +838,7 @@ async fn broker_as_client_peer_loop_from_url(
 }
 
 pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> LoginParams {
-    let (user, password) = login_from_url(&client_config.url);
+    let shvrpc::util::LoginQueryParams { user, password, .. } = parse_query_params(&client_config.url);
     LoginParams {
         user,
         password,
