@@ -167,6 +167,10 @@ fn ssl() {
         let (parent_broker_config, child_broker_config) = create_broker_configs();
         start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL]).await;
         start_broker(child_broker_config, &[CHILD_BROKER_ADDRESS]).await;
+        // We need to wait at least 1 second, because the parent broker waits 1 second, before
+        // accepting another connection. Then wait a little bit more (here, 1 second), so that the
+        // child broker has enough time, to make the connection to the parent broker.
+        smol::Timer::after(std::time::Duration::from_millis(2000)).await;
 
         let (client_cmd, mut client_events) = start_client().await.expect("Client start");
         match client_events.wait_for_event().timeout(Duration::from_secs(5)).await {
