@@ -28,7 +28,7 @@ const CHILD_BROKER_LISTEN_URL: &str = formatcp!("tcp://{CHILD_BROKER_ADDRESS}");
 
 // client === TCP ===> parent_broker <=== SSL === child_broker
 
-async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
+async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let access_config = broker_config.access.clone();
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
@@ -39,13 +39,15 @@ async fn start_broker(broker_config: BrokerConfig, broker_address: &str) {
     }).detach();
     // Wait for the broker
     let start = std::time::Instant::now();
-    while start.elapsed() < std::time::Duration::from_secs(5) {
-        if smol::net::TcpStream::connect(broker_address).await.is_ok() {
-            return;
+    'main_loop: for broker_address in broker_addresses {
+        while start.elapsed() < std::time::Duration::from_secs(5) {
+            if smol::net::TcpStream::connect(broker_address).await.is_ok() {
+                continue 'main_loop;
+            }
+            smol::Timer::after(std::time::Duration::from_millis(200)).await;
         }
-        smol::Timer::after(std::time::Duration::from_millis(200)).await;
+        panic!("Could not start the broker");
     }
-    panic!("Could not start the broker");
 }
 
 async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
@@ -163,8 +165,8 @@ fn ssl() {
             .unwrap();
 
         let (parent_broker_config, child_broker_config) = create_broker_configs();
-        start_broker(parent_broker_config, PARENT_BROKER_ADDRESS).await;
-        start_broker(child_broker_config, CHILD_BROKER_ADDRESS).await;
+        start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL]).await;
+        start_broker(child_broker_config, &[CHILD_BROKER_ADDRESS]).await;
 
         let (client_cmd, mut client_events) = start_client().await.expect("Client start");
         match client_events.wait_for_event().timeout(Duration::from_secs(5)).await {
