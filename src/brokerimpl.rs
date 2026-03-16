@@ -2127,7 +2127,7 @@ mod test {
                     login_type: "PLAIN".to_string()
                 }).await.expect("Sending commands must work");
 
-                let resp = reader.recv().await.expect("Receiving resposnses must work");
+                let resp = reader.recv().await.expect("Receiving responses must work");
                 assert_eq!(resp.is_some(), expected_result);
             }
         }
