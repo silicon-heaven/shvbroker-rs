@@ -161,7 +161,7 @@ pub(crate) async fn server_peer_loop(
     'session_loop: loop {
         let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
         let mut nonce = None;
-        let (user, options, resp_meta) = 'login_loop: loop {
+        let (user, options, session_token, resp_meta) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
                 // Kick out clients that do not send initial hello right after establishing the connection and/or sending ResetSession
                 Duration::from_secs(5)
@@ -280,7 +280,7 @@ pub(crate) async fn server_peer_loop(
                                         let n = response["keys"].as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
                                             .and_then(|k| k["n"].as_str())
-                                        .ok_or_else(|| "Key not found".to_string())?;
+                                            .ok_or_else(|| "Key not found".to_string())?;
 
                                         let e = response["keys"].as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
@@ -307,16 +307,16 @@ pub(crate) async fn server_peer_loop(
                                 // Try with cached key first
                                 let decoding_key = get_google_decoding_key(&kid, false).await?;
                                 let token_data = {
-                                        // Try to verify with cached key
-                                        match decode::<GoogleClaims>(token, &decoding_key, &validation) {
-                                            Ok(data) => data,
-                                            Err(_) => {
-                                                // Cached key failed, fetch new key and retry
-                                                let decoding_key = get_google_decoding_key(&kid, true).await?;
-                                                // Retry verification with new key
-                                                decode::<GoogleClaims>(token, &decoding_key, &validation)?
-                                            }
+                                    // Try to verify with cached key
+                                    match decode::<GoogleClaims>(token, &decoding_key, &validation) {
+                                        Ok(data) => data,
+                                        Err(_) => {
+                                            // Cached key failed, fetch new key and retry
+                                            let decoding_key = get_google_decoding_key(&kid, true).await?;
+                                            // Retry verification with new key
+                                            decode::<GoogleClaims>(token, &decoding_key, &validation)?
                                         }
+                                    }
                                 };
                                 Ok(token_data.claims)
                             }
@@ -338,8 +338,10 @@ pub(crate) async fn server_peer_loop(
 
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
-                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender: peer_writer.clone(), user: user.clone(), groups: mapped_groups}).await?;
-                                    break 'login_loop (user, params.get("options").cloned(), resp_meta);
+                                    let (sender, receiver) = channel::unbounded();
+                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
+                                    let session_token = receiver.recv().await?;
+                                    break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
                                 Err(e) => {
                                     frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
@@ -350,26 +352,20 @@ pub(crate) async fn server_peer_loop(
                     }
 
                     if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(SESSION_TOKEN_PREFIX) {
+                        let (sender, receiver) = channel::unbounded();
                         broker_writer.send(BrokerCommand::CheckToken {
                             peer_id,
                             ip_addr,
-                            sender: peer_writer.clone(),
+                            sender,
                             token: access_token.to_string(),
                         }).await?;
-                        match peer_reader.recv().await? {
-                            BrokerToPeerMessage::TokenAuthResult(user) => {
-                                if let Some(user) = user {
-                                    peer_log!(debug, "token OK");
-                                    break 'login_loop (user, params.get("options").cloned(), resp_meta);
-                                } else {
-                                    peer_log!(warn, "invalid token");
-                                    frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                                    continue 'login_loop;
-                                }
-                            }
-                            _ => {
-                                panic!("Internal error, PeerEvent::AuthResult expected");
-                            }
+                        if let Some((user, session_token)) = receiver.recv().await? {
+                            peer_log!(debug, "token OK");
+                            break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
+                        } else {
+                            peer_log!(warn, "invalid token");
+                            frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
+                            continue 'login_loop;
                         }
                     }
 
@@ -457,36 +453,33 @@ pub(crate) async fn server_peer_loop(
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender: peer_writer.clone(), user: user.clone(), groups: mapped_groups}).await?;
-                            break 'login_loop (user, params.get("options").cloned(), resp_meta);
+                            let (sender, receiver) = channel::unbounded();
+                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
+                            let session_token = receiver.recv().await?;
+                            break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         }
                     }
 
                     let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
+                    let (sender, receiver) = channel::unbounded();
                     broker_writer.send(BrokerCommand::CheckAuth {
                         peer_id,
                         ip_addr,
-                        sender: peer_writer.clone(),
+                        sender,
                         user: user.as_str().to_string(),
                         password: password.to_string(),
                         nonce: nonce.clone(),
                         login_type: login_type.to_string(),
                     }).await?;
-                    match peer_reader.recv().await? {
-                        BrokerToPeerMessage::AuthResult(result) => {
-                            if result {
-                                peer_log!(debug, "password OK");
-                                break 'login_loop (user, params.get("options").cloned(), resp_meta);
-                            } else {
-                                peer_log!(warn, "invalid login credentials, user: {user}");
-                                frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                                continue 'login_loop;
-                            }
-                        }
-                        _ => {
-                            panic!("Internal error, PeerEvent::AuthResult expected");
-                        }
+
+                    if let Some(session_token) = receiver.recv().await? {
+                        peer_log!(debug, "password OK");
+                        break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
+                    } else {
+                        peer_log!(warn, "invalid login credentials, user: {user}");
+                        frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
+                        continue 'login_loop;
                     }
                 },
                 _ => {
@@ -495,13 +488,9 @@ pub(crate) async fn server_peer_loop(
             }
         };
 
-        let BrokerToPeerMessage::SessionToken(session_token) = peer_reader.recv().await? else {
-            panic!("Internal error, PeerEvent::AuthResult expected");
-        };
-
         let options = options.as_ref().map(RpcValue::as_map);
         let result: RpcValue = if options.and_then(|options| options.get("session")).map(RpcValue::as_bool).is_some_and(|x| x) {
-            session_token.into()
+            session_token.0.into()
         } else {
             RpcValue::null()
         };
@@ -626,15 +615,6 @@ pub(crate) async fn server_peer_loop(
                     }
                     Ok(event) => {
                         match event {
-                            BrokerToPeerMessage::SessionToken(_) => {
-                                panic!("SessionToken cannot be received here")
-                            }
-                            BrokerToPeerMessage::TokenAuthResult(_) => {
-                                panic!("TokenAuthResult cannot be received here")
-                            }
-                            BrokerToPeerMessage::AuthResult(_) => {
-                                panic!("AuthResult cannot be received here")
-                            }
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
                                 if let Some(reason) = reason {
@@ -1327,15 +1307,6 @@ async fn broker_as_client_peer_loop(
                 }
                 Ok(event) => {
                     match event {
-                        BrokerToPeerMessage::SessionToken(_) => {
-                            panic!("SessionToken cannot be received here")
-                        }
-                        BrokerToPeerMessage::TokenAuthResult(_) => {
-                            panic!("TokenAuthResult cannot be received here")
-                        }
-                        BrokerToPeerMessage::AuthResult(_) => {
-                            panic!("AuthResult cannot be received here")
-                        }
                         BrokerToPeerMessage::DisconnectByBroker {reason} => {
                             info!("Disconnected by parent broker, client ID: {peer_id}, reason: {reason:?}");
                             break;

@@ -58,10 +58,12 @@ impl Subscription {
     }
 }
 
+pub struct SessionToken(pub String);
+
 #[derive(Debug)]
 pub enum BrokerCommand {
     CheckAuth {
-        sender: Sender<BrokerToPeerMessage>,
+        sender: Sender<Option<SessionToken>>,
         peer_id: PeerId,
         ip_addr: Option<core::net::IpAddr>,
         nonce: Option<String>,
@@ -70,14 +72,14 @@ pub enum BrokerCommand {
         login_type: String,
     },
     CheckToken {
-        sender: Sender<BrokerToPeerMessage>,
+        sender: Sender<Option<(String, SessionToken)>>,
         peer_id: PeerId,
         ip_addr: Option<core::net::IpAddr>,
         token: String,
     },
     #[cfg(any(feature = "entra-id", feature = "google-auth"))]
     SetOAuth2Groups {
-        sender: Sender<BrokerToPeerMessage>,
+        sender: Sender<SessionToken>,
         peer_id: PeerId,
         user: String,
         groups: Vec<String>,
@@ -110,9 +112,6 @@ pub enum BrokerCommand {
 
 #[derive(Debug)]
 pub enum BrokerToPeerMessage {
-    AuthResult(bool),
-    TokenAuthResult(Option<String>),
-    SessionToken(String),
     SendFrame(RpcFrame),
     DisconnectByBroker {
         reason: Option<String>,
@@ -1243,7 +1242,7 @@ impl BrokerImpl {
         true
     }
 
-    async fn get_or_create_token(self: &Arc<Self>, user: &str) -> String {
+    async fn get_or_create_token(self: &Arc<Self>, user: &str) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
             token.clone()
@@ -1253,7 +1252,7 @@ impl BrokerImpl {
             token
         };
 
-        format!("{SESSION_TOKEN_PREFIX}{token}")
+        SessionToken(format!("{SESSION_TOKEN_PREFIX}{token}"))
     }
 
     async fn process_broker_command(self: &Arc<Self>, broker_command: BrokerCommand) -> shvrpc::Result<()> {
@@ -1332,20 +1331,12 @@ impl BrokerImpl {
 
                     *last_activity = shvproto::DateTime::now();
 
-                    Some(user.clone())
+                    Some((user.clone(), SessionToken(token)))
                 };
 
-                let success = result.is_some();
-
                 sender
-                    .send(BrokerToPeerMessage::TokenAuthResult(result))
+                    .send(result)
                     .await?;
-
-                if success {
-                    sender
-                        .send(BrokerToPeerMessage::SessionToken(token))
-                        .await?;
-                }
             },
             BrokerCommand::CheckAuth {
                 sender,
@@ -1387,16 +1378,15 @@ impl BrokerImpl {
                     }
                 };
 
+                let result = if result {
+                    Some(self.get_or_create_token(&user).await)
+                } else {
+                    None
+                };
                 sender
-                    .send(BrokerToPeerMessage::AuthResult(result))
+                    .send(result)
                     .await?;
 
-                if result {
-                    let session_token = self.get_or_create_token(&user).await;
-                    sender
-                        .send(BrokerToPeerMessage::SessionToken(session_token))
-                        .await?;
-                }
             }
             #[cfg(any(feature = "entra-id", feature = "google-auth"))]
             BrokerCommand::SetOAuth2Groups { peer_id, sender, user, groups } => {
@@ -1408,7 +1398,7 @@ impl BrokerImpl {
 
                 let session_token = self.get_or_create_token(&user).await;
                 sender
-                    .send(BrokerToPeerMessage::SessionToken(session_token))
+                    .send(session_token)
                     .await?;
             }
             BrokerCommand::SendResponse {
@@ -2066,7 +2056,6 @@ mod test {
     use smol::channel;
 
     use crate::brokerimpl::BrokerCommand;
-    use crate::brokerimpl::BrokerToPeerMessage;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
@@ -2127,7 +2116,7 @@ mod test {
             ] {
                 let (command_sender, _) = channel::unbounded();
                 let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), command_sender, None));
-                let (sender, reader) = channel::unbounded::<BrokerToPeerMessage>();
+                let (sender, reader) = channel::unbounded();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
                     peer_id: 0,
@@ -2138,14 +2127,8 @@ mod test {
                     login_type: "PLAIN".to_string()
                 }).await.expect("Sending commands must work");
 
-                match reader.recv().await.expect("Receiving resposnses must work") {
-                    BrokerToPeerMessage::AuthResult(resp) => {
-                        assert_eq!(resp, expected_result);
-                    },
-                    msg => {
-                        panic!("Got unexpected BrokerToPeerMessage: {msg:?}");
-                    },
-                }
+                let resp = reader.recv().await.expect("Receiving responses must work");
+                assert_eq!(resp.is_some(), expected_result);
             }
         }
     }
