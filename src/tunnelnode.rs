@@ -1,3 +1,4 @@
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use log::trace;
 use crate::brokerimpl::{
     BrokerCommand, BrokerImpl, NodeRequestContext, TunnelId
@@ -7,7 +8,7 @@ use crate::shvnode::{
     is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR,
     METH_LS,
 };
-use futures::FutureExt;
+use futures::{FutureExt, SinkExt};
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use log::{error, log, Level};
 use shvproto::{MetaMap, RpcValue};
@@ -15,8 +16,6 @@ use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
 use shvrpc::{Error, RpcMessageMetaTags};
-use smol::channel;
-use smol::channel::{Receiver, Sender};
 use smol::io::{BufReader, BufWriter};
 use smol::net::TcpStream;
 use std::sync::Arc;
@@ -111,7 +110,7 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let command_sender = ctx.state.command_sender.clone();
+                    let mut command_sender = ctx.state.command_sender.clone();
                     let is_active = ctx.state.is_tunnel_active(tunid).await;
                     smol::spawn(async move {
                         let _ = command_sender
@@ -136,7 +135,7 @@ impl ShvNode for TunnelNode {
                     let (tunid, receiver) = ctx.state.create_tunnel(&rq).await?;
                     let rq_meta = rq.meta().clone();
                     let state = ctx.state.clone();
-                    let command_sender = state.command_sender.clone();
+                    let mut command_sender = state.command_sender.clone();
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
@@ -159,7 +158,7 @@ pub(crate) enum ToRemoteMsg {
 }
 pub(crate) struct ActiveTunnel {
     pub(crate) caller_ids: Vec<PeerId>,
-    pub(crate) sender: Sender<ToRemoteMsg>,
+    pub(crate) sender: UnboundedSender<ToRemoteMsg>,
     pub(crate) last_activity: Option<Instant>,
 }
 
@@ -167,12 +166,12 @@ pub(crate) async fn tunnel_task(
     tunnel_id: TunnelId,
     mut request_meta: MetaMap,
     addr: String,
-    from_broker_receiver: Receiver<ToRemoteMsg>,
+    mut from_broker_receiver: UnboundedReceiver<ToRemoteMsg>,
     state: Arc<BrokerImpl>,
 ) -> shvrpc::Result<()> {
     let peer_id = request_meta.pop_caller_id().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
-    let to_broker_sender = state.command_sender.clone();
+    let mut to_broker_sender = state.command_sender.clone();
     log!(target: "Tunnel", Level::Debug, "Tunnel: {tunnel_id}, connecting to: {addr} ...");
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
@@ -207,7 +206,7 @@ pub(crate) async fn tunnel_task(
     let mut write_request_id = None;
     let mut read_seqno = 0;
     let mut socket_reader = BufReader::new(socket_reader);
-    let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
+    let (mut write_task_sender, mut write_task_receiver) = unbounded::<Vec<u8>>();
     smol::spawn(async move {
         log!(target: "Tunnel", Level::Debug, "ENTER write task");
         let mut socket_writer = BufWriter::new(socket_writer);

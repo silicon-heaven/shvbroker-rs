@@ -3,6 +3,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use const_format::formatcp;
+use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
 use shvbroker::brokerimpl::{run_broker, BrokerImpl};
@@ -10,7 +11,6 @@ use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Li
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
 use shvrpc::client::ClientConfig;
-use smol::channel::unbounded;
 use smol_timeout::TimeoutExt;
 use tempfile::TempDir;
 use url::Url;

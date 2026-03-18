@@ -3,6 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use duration_str::HumanFormat;
+use futures::SinkExt;
+use futures::channel::mpsc::UnboundedSender;
+use futures::channel::mpsc::unbounded;
 use futures::select;
 use futures::AsyncRead;
 use futures::AsyncReadExt;
@@ -40,8 +43,6 @@ use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::streamrw::{StreamFrameReader, StreamFrameWriter};
 use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
 use futures_rustls::rustls::ClientConfig as TlsClientConfig;
-use smol::channel;
-use smol::channel::Sender;
 use smol::io::BufReader;
 use smol::net::TcpStream;
 use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
@@ -57,7 +58,7 @@ pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
     server_mode: ServerMode,
-    broker_writer: Sender<BrokerCommand>,
+    mut broker_writer: UnboundedSender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
@@ -85,7 +86,7 @@ pub(crate) async fn try_server_peer_loop(
 async fn server_tcp_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
-    broker_writer: Sender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
@@ -104,7 +105,7 @@ async fn server_tcp_peer_loop(
 async fn server_ws_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
-    broker_writer: Sender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
@@ -132,7 +133,7 @@ async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
-    broker_writer: Sender<BrokerCommand>,
+    mut broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
     broker_config: SharedBrokerConfig
@@ -159,7 +160,7 @@ pub(crate) async fn server_peer_loop(
     peer_log!(debug, "entering peer loop");
 
     'session_loop: loop {
-        let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+        let (peer_writer, mut peer_reader) = unbounded::<BrokerToPeerMessage>();
         let mut nonce = None;
         let (user, options, session_token, resp_meta) = 'login_loop: loop {
             let login_phase_timeout = if nonce.is_none() {
@@ -338,7 +339,7 @@ pub(crate) async fn server_peer_loop(
 
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
-                                    let (sender, receiver) = channel::unbounded();
+                                    let (sender, mut receiver) = unbounded();
                                     broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
                                     let session_token = receiver.recv().await?;
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
@@ -352,7 +353,7 @@ pub(crate) async fn server_peer_loop(
                     }
 
                     if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(SESSION_TOKEN_PREFIX) {
-                        let (sender, receiver) = channel::unbounded();
+                        let (sender, mut receiver) = unbounded();
                         broker_writer.send(BrokerCommand::CheckToken {
                             peer_id,
                             ip_addr,
@@ -453,7 +454,7 @@ pub(crate) async fn server_peer_loop(
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            let (sender, receiver) = channel::unbounded();
+                            let (sender, mut receiver) = unbounded();
                             broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
                             let session_token = receiver.recv().await?;
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
@@ -462,7 +463,7 @@ pub(crate) async fn server_peer_loop(
 
                     let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
-                    let (sender, receiver) = channel::unbounded();
+                    let (sender, mut receiver) = unbounded();
                     broker_writer.send(BrokerCommand::CheckAuth {
                         peer_id,
                         ip_addr,
@@ -663,7 +664,7 @@ fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConn
 pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
     peer_id: PeerId,
     config: BrokerConnectionConfig,
-    broker_writer: Sender<BrokerCommand>,
+    mut broker_writer: UnboundedSender<BrokerCommand>,
 ) -> shvrpc::Result<()> {
     info!("Spawning broker peer connection loop: {}", config.name);
 
@@ -714,7 +715,7 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, broker_writer: Sender<BrokerCommand>) -> shvrpc::Result<()> {
+async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, mut broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     match &connection_kind {
         ConnectionKind::ToParentBroker{ .. } => {
             // Only RPC requests can be received from parent broker,
@@ -745,7 +746,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
 async fn broker_as_client_peer_loop_from_url(
     peer_id: PeerId,
     config: BrokerConnectionConfig,
-    broker_writer: Sender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     tls: Option<(Arc<futures_rustls::TlsConnector>, futures_rustls::pki_types::ServerName<'static>)>,
 ) -> shvrpc::Result<()> {
     let url = &config.client.url;
@@ -754,7 +755,7 @@ async fn broker_as_client_peer_loop_from_url(
     async fn setup_stream_and_run<S>(
         peer_id: PeerId,
         config: BrokerConnectionConfig,
-        broker_writer: Sender<BrokerCommand>,
+        broker_writer: UnboundedSender<BrokerCommand>,
         stream: S,
     ) -> shvrpc::Result<()>
     where
@@ -831,7 +832,7 @@ pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> L
 
 
 #[cfg(feature = "can")]
-pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::CanInterfaceConfig, broker_sender: Sender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
+pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::CanInterfaceConfig, mut broker_sender: UnboundedSender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let can_iface = &can_interface_config.interface;
 
     use std::collections::HashMap;
@@ -872,7 +873,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         connection_config: &CanConnectionConfig,
         tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
-        broker_sender: Sender<BrokerCommand>,
+        broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
         reader_ack_tx: UnboundedSender<ShvCanAckFrame>,
     ) {
@@ -909,7 +910,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         broker_config: SharedBrokerConfig,
         tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
-        broker_sender: Sender<BrokerCommand>,
+        broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
         reader_ack_tx: UnboundedSender<ShvCanAckFrame>,
     ) {
@@ -1193,7 +1194,7 @@ async fn broker_as_client_peer_loop(
     login_params: LoginParams,
     connection_kind: ConnectionKind,
     reset_session: bool,
-    broker_writer: Sender<BrokerCommand>,
+    mut broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
 ) -> shvrpc::Result<()>
@@ -1218,7 +1219,7 @@ async fn broker_as_client_peer_loop(
         }
     }
 
-    let (broker_to_peer_sender, broker_to_peer_receiver) = channel::unbounded::<BrokerToPeerMessage>();
+    let (broker_to_peer_sender, mut broker_to_peer_receiver) = unbounded::<BrokerToPeerMessage>();
     broker_writer.send(BrokerCommand::NewPeer {
         peer_id,
         peer_kind: PeerKind::Broker(connection_kind.clone()),
