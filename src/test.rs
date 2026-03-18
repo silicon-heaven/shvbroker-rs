@@ -1,4 +1,3 @@
-use futures::SinkExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -27,7 +26,7 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut 
     let rqid = if let Some(resp_rq_id) = resp_rq_id { Some(resp_rq_id) } else { rq.request_id() };
     let frame = RpcFrame::from_rpcmessage(&rq).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
-    ctx.writer.send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).await.unwrap();
+    ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).unwrap();
     let retval = loop {
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {
@@ -74,7 +73,7 @@ async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
     let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
-    let (mut broker_sender, broker_receiver) = unbounded();
+    let (broker_sender, broker_receiver) = unbounded();
     let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
@@ -90,14 +89,15 @@ async fn test_broker_loop_as_user_async() {
     // login
     let user = "user";
     //let password = "admin";
-    broker_sender.send(BrokerCommand::NewPeer {
+    broker_sender.unbounded_send(BrokerCommand::NewPeer {
         peer_id: client_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
             mount_point: None,
         },
-        sender: peer_writer.clone() }).await.unwrap();
+        sender: peer_writer.clone() })
+        .unwrap();
 
     let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
@@ -159,7 +159,7 @@ async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
     let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
-    let (mut broker_sender, broker_receiver) = unbounded();
+    let (broker_sender, broker_receiver) = unbounded();
     let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
@@ -175,14 +175,14 @@ async fn test_broker_loop_as_admin_async() {
     // login
     let user = "admin";
     //let password = "admin";
-    broker_sender.send(BrokerCommand::NewPeer {
+    broker_sender.unbounded_send(BrokerCommand::NewPeer {
         peer_id: client_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
             mount_point: Some("test/device".to_string()),
         },
-        sender: peer_writer.clone() }).await.unwrap();
+        sender: peer_writer.clone() }).unwrap();
     /*
     lsmod cannot be received because it is not subscribed
     loop {
@@ -303,7 +303,7 @@ smol_macros::test! {
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
-        let (mut broker_sender, broker_receiver) = unbounded();
+        let (broker_sender, broker_receiver) = unbounded();
         let broker = Arc::new(BrokerImpl::new(config, access, broker_sender.clone(), None));
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
@@ -319,10 +319,10 @@ smol_macros::test! {
         // login
         let user = "test";
         //let password = "test";
-        broker_sender.send(BrokerCommand::NewPeer {
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
             peer_id: client_id,
             peer_kind: PeerKind::Client{ user: user.to_string() },
-            sender: peer_writer.clone() }).await.unwrap();
+            sender: peer_writer.clone() }).unwrap();
 
         let tunid = call(".app/tunnel", "create", None, &mut call_ctx).await;
         // host param is missing

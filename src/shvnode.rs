@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::format;
 use std::sync::Arc;
-use futures::SinkExt;
 use log::{Level, log};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
@@ -444,9 +443,9 @@ impl ShvNode for BrokerNode {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
                 if let Some(peer) = ctx.state.peers.read().await.get(&peer_id) {
-                    let mut peer_sender = peer.sender.clone();
+                    let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
-                        let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).await;
+                        let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))
                 } else {

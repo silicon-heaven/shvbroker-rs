@@ -7,7 +7,7 @@ use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::stream::FuturesUnordered;
-use futures::{AsyncRead, AsyncWrite, FutureExt, SinkExt};
+use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
 use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -729,7 +729,7 @@ async fn forward_subscriptions_task(
         peer_id: PeerId,
         subscribe_api: SubscribeApi,
         subscription: SubscriptionParam,
-        mut broker_command_sender: &UnboundedSender<BrokerCommand>,
+        broker_command_sender: &UnboundedSender<BrokerCommand>,
     ) -> shvrpc::Result<()> {
         let path = subscribe_api.path();
         let method = action.method_name();
@@ -756,8 +756,7 @@ async fn forward_subscriptions_task(
             response_sender,
         };
         broker_command_sender
-            .send(cmd)
-            .await?;
+            .unbounded_send(cmd)?;
         response_receiver
             .recv()
             .await?
@@ -969,27 +968,23 @@ impl BrokerImpl {
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
-                    let mut command_sender = self.command_sender.clone();
-                    command_sender
-                        .send(BrokerCommand::SendResponse {
+                    self.command_sender
+                        .unbounded_send(BrokerCommand::SendResponse {
                             peer_id,
                             meta: response_meta,
                             result: Err(err),
-                        })
-                        .await?;
+                        })?;
                     return Ok(());
                 }
             };
             let local_result = process_local_dir_ls(&*self.mounts.read().await, &frame);
             if let Some(result) = local_result {
-                let mut command_sender = self.command_sender.clone();
-                command_sender
-                    .send(BrokerCommand::SendResponse {
+                self.command_sender
+                    .unbounded_send(BrokerCommand::SendResponse {
                         peer_id,
                         meta: response_meta,
                         result,
-                    })
-                    .await?;
+                    })?;
                 return Ok(());
             }
             //let self.= self.read().map_err(|e| e.to_string())?;
@@ -1036,8 +1031,8 @@ impl BrokerImpl {
                     }
                 };
                 match action {
-                    Action::ToPeer(mut sender, msg) => {
-                        sender.send(msg).await?;
+                    Action::ToPeer(sender, msg) => {
+                        sender.unbounded_send(msg)?;
                         return Ok(());
                     }
                     Action::NodeRequest { node_id, frame, ctx, } => {
@@ -1060,14 +1055,12 @@ impl BrokerImpl {
                                 Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
                                 Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
                             };
-                            let mut command_sender = self.command_sender.clone();
-                            command_sender
-                                .send(BrokerCommand::SendResponse {
+                            self.command_sender
+                                .unbounded_send(BrokerCommand::SendResponse {
                                     peer_id,
                                     meta: response_meta,
                                     result,
-                                })
-                                .await?;
+                                })?;
                         } else {
                             let err = RpcError::new(
                                 RpcErrorCode::PermissionDenied,
@@ -1077,14 +1070,12 @@ impl BrokerImpl {
                                     frame.method().unwrap_or_default()
                                 ),
                             );
-                            let mut command_sender = self.command_sender.clone();
-                            command_sender
-                                .send(BrokerCommand::SendResponse {
+                            self.command_sender
+                                .unbounded_send(BrokerCommand::SendResponse {
                                     peer_id,
                                     meta: response_meta,
                                     result: Err(err),
-                                })
-                                .await?;
+                                })?;
                         }
                     }
                 }
@@ -1093,14 +1084,12 @@ impl BrokerImpl {
                     RpcErrorCode::MethodNotFound,
                     format!("Invalid shv path {shv_path}:{method}()"),
                 );
-                let mut command_sender = self.command_sender.clone();
-                command_sender
-                    .send(BrokerCommand::SendResponse {
+                self.command_sender
+                    .unbounded_send(BrokerCommand::SendResponse {
                         peer_id,
                         meta: response_meta,
                         result: Err(err),
-                    })
-                    .await?;
+                    })?;
             }
             return Ok(());
         } else if frame.is_response() {
@@ -1115,8 +1104,8 @@ impl BrokerImpl {
                     .await
                     .get(&fwd_peer_id)
                     .map(|p| p.sender.clone());
-                if let Some(mut sender) = sender {
-                    sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
+                if let Some(sender) = sender {
+                    sender.unbounded_send(BrokerToPeerMessage::SendFrame(frame))?;
                 } else {
                     warn!("Cannot find peer for response peer-id: {fwd_peer_id}");
                 }
@@ -1169,8 +1158,8 @@ impl BrokerImpl {
                 })
                 .collect()
         };
-        for (frame, mut sender) in frames {
-            sender.send(BrokerToPeerMessage::SendFrame(frame)).await?;
+        for (frame, sender) in frames {
+            sender.unbounded_send(BrokerToPeerMessage::SendFrame(frame))?;
         }
         Ok(())
     }
@@ -1180,7 +1169,7 @@ impl BrokerImpl {
         request: RpcMessage,
         pending_call: PendingRpcCall,
     ) -> shvrpc::Result<()> {
-        let mut sender = self
+        let sender = self
             .peers
             .read()
             .await
@@ -1190,9 +1179,7 @@ impl BrokerImpl {
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
         self.pending_rpc_calls.write().await.push(pending_call);
-        sender
-            .send(BrokerToPeerMessage::SendFrame(request.to_frame()?))
-            .await?;
+        sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
         Ok(())
     }
     async fn process_pending_broker_rpc_call(
@@ -1210,8 +1197,8 @@ impl BrokerImpl {
             request_id == rqid && pc.peer_id == client_id
         });
         if let Some(ix) = pending_call_ix {
-            let mut pending_call = self.pending_rpc_calls.write().await.remove(ix);
-            pending_call.response_sender.send(response_frame).await?;
+            let pending_call = self.pending_rpc_calls.write().await.remove(ix);
+            pending_call.response_sender.unbounded_send(response_frame)?;
         }
         Self::gc_pending_rpc_calls(&mut *self.pending_rpc_calls.write().await).await?;
         Ok(())
@@ -1221,13 +1208,13 @@ impl BrokerImpl {
         const TIMEOUT: Duration = Duration::from_secs(60);
         let timed_out = pending_rpc_calls
             .extract_if(.., |pending_call| now.duration_since(pending_call.started) > TIMEOUT);
-        for mut timed_out_pending_call in timed_out {
+        for timed_out_pending_call in timed_out {
             let mut msg = RpcMessage::from_meta(timed_out_pending_call.request_meta.clone());
             msg.set_error(RpcError::new(
                     RpcErrorCode::MethodCallTimeout,
                     "Method call timeout",
             ));
-            timed_out_pending_call.response_sender.send(msg.to_frame()?).await?;
+            timed_out_pending_call.response_sender.unbounded_send(msg.to_frame()?)?;
         }
         Ok(())
     }
@@ -1271,12 +1258,12 @@ impl BrokerImpl {
             BrokerCommand::NewPeer {
                 peer_id,
                 peer_kind,
-                mut sender,
+                sender,
             } => {
                 debug!("New peer, id: {peer_id}.");
                 let peer_add_result = self.add_peer(peer_id, peer_kind, sender.clone()).await;
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
-                    sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer}).await?;
+                    sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
                     return Err(msg.into());
                 };
 
@@ -1321,7 +1308,7 @@ impl BrokerImpl {
                 }
                 self.pending_rpc_calls.write().await.retain(|c| c.peer_id != peer_id);
             }
-            BrokerCommand::CheckToken { mut sender, peer_id, ip_addr, token } => {
+            BrokerCommand::CheckToken { sender, peer_id, ip_addr, token } => {
                 let result = 'result: {
                     let mut session_tokens = self.session_tokens.write().await;
                     let Some(Session { last_activity, user, ..}) = session_tokens.iter_mut().find(|session| session.token == token) else {
@@ -1337,12 +1324,10 @@ impl BrokerImpl {
                     Some((user.clone(), SessionToken(token)))
                 };
 
-                sender
-                    .send(result)
-                    .await?;
+                sender.unbounded_send(result)?;
             },
             BrokerCommand::CheckAuth {
-                mut sender,
+                sender,
                 ip_addr,
                 peer_id,
                 nonce,
@@ -1386,13 +1371,10 @@ impl BrokerImpl {
                 } else {
                     None
                 };
-                sender
-                    .send(result)
-                    .await?;
-
+                sender.unbounded_send(result)?;
             }
             #[cfg(any(feature = "entra-id", feature = "google-auth"))]
-            BrokerCommand::SetOAuth2Groups { peer_id, mut sender, user, groups } => {
+            BrokerCommand::SetOAuth2Groups { peer_id, sender, user, groups } => {
                 self
                     .oauth2_user_groups
                     .write()
@@ -1400,16 +1382,14 @@ impl BrokerImpl {
                     .insert(peer_id, groups);
 
                 let session_token = self.get_or_create_token(&user).await;
-                sender
-                    .send(session_token)
-                    .await?;
+                sender.unbounded_send(session_token)?;
             }
             BrokerCommand::SendResponse {
                 peer_id,
                 meta,
                 result,
             } => {
-                let mut peer_sender = self
+                let peer_sender = self
                     .peers
                     .read()
                     .await
@@ -1419,7 +1399,7 @@ impl BrokerImpl {
                     .clone();
                 let mut msg = RpcMessage::from_meta(meta);
                 msg.set_result_or_error(result);
-                peer_sender.send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?)).await?;
+                peer_sender.unbounded_send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?))?;
             }
             BrokerCommand::RpcCall {
                 peer_id: client_id,
@@ -1445,7 +1425,7 @@ impl BrokerImpl {
                 let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
                     .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
                 self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
-                let mut command_sender = self.command_sender.clone();
+                let command_sender = self.command_sender.clone();
                 let state = self.clone();
                 smol::spawn(async move {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -1455,7 +1435,7 @@ impl BrokerImpl {
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
                                 debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
-                                let _ = command_sender.send(BrokerCommand::TunnelClosed(tunnel_id)).await;
+                                let _ = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id));
                                 break;
                             }
                         } else {
@@ -1509,7 +1489,7 @@ impl BrokerImpl {
 
     async fn check_subscribe_api(&self, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        let mut broker_command_sender = self.command_sender.clone();
+        let broker_command_sender = self.command_sender.clone();
         let subscribe_api = {
             let (response_sender, mut response_receiver) = unbounded();
             let request = RpcMessage::new_request(".broker", METH_LS);
@@ -1518,7 +1498,7 @@ impl BrokerImpl {
                 request,
                 response_sender,
             };
-            broker_command_sender.send(cmd).await?;
+            broker_command_sender.unbounded_send(cmd)?;
             let resp = response_receiver.recv().await?.to_rpcmesage()?;
             match resp.response() {
                 // Ok => this is a broker, and only V2 brokers have "clients", otherwise we'll assume V3.
@@ -1974,9 +1954,9 @@ impl BrokerImpl {
     pub(crate) async fn close_tunnel(&self, tunid: TunnelId) -> shvrpc::Result<Option<bool>> {
         debug!(target: "Tunnel", "close_tunnel: {tunid}");
         if let Some(tun) = self.active_tunnels.write().await.remove(&tunid) {
-            let mut sender = tun.sender;
+            let sender = tun.sender;
             smol::spawn(async move {
-                let _ = sender.send(ToRemoteMsg::DestroyConnection).await;
+                let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
             })
             .detach();
             Ok(Some(tun.last_activity.is_some()))
@@ -2017,9 +1997,7 @@ impl BrokerImpl {
         data: Vec<u8>,
     ) -> shvrpc::Result<()> {
         if let Some(tun) = self.active_tunnels.write().await.get(&tunid) {
-            let mut sender = tun.sender.clone();
-            smol::spawn(async move { sender.send(ToRemoteMsg::WriteData(rqid, data)).await })
-                .detach();
+            let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
             Ok(())
         } else {
             Err(format!("Invalid tunnel ID: {tunid}").into())

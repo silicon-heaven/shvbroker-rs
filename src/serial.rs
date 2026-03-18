@@ -1,5 +1,4 @@
 use std::time::Duration;
-use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
 use futures::io::BufWriter;
 use log::{error, info};
@@ -32,7 +31,7 @@ fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn 
 
 pub(crate) async fn try_serial_peer_loop(
     peer_id: PeerId,
-    mut broker_writer: UnboundedSender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     port_name: String,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
@@ -45,7 +44,7 @@ pub(crate) async fn try_serial_peer_loop(
             error!("Serial peer loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
-    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+    broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
     Ok(())
 }
 async fn serial_peer_loop(

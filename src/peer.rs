@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use duration_str::HumanFormat;
-use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::mpsc::unbounded;
 use futures::select;
@@ -58,7 +57,7 @@ pub(crate) async fn try_server_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
     server_mode: ServerMode,
-    mut broker_writer: UnboundedSender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     stream: AsyncReadWriteBox,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
@@ -80,7 +79,7 @@ pub(crate) async fn try_server_peer_loop(
             warn!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
         }
     }
-    broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+    broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
     Ok(())
 }
 async fn server_tcp_peer_loop(
@@ -133,7 +132,7 @@ async fn frame_write_timeout<T>() -> shvrpc::Result<T> {
 pub(crate) async fn server_peer_loop(
     peer_id: PeerId,
     ip_addr: Option<core::net::IpAddr>,
-    mut broker_writer: UnboundedSender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
     broker_config: SharedBrokerConfig
@@ -340,7 +339,7 @@ pub(crate) async fn server_peer_loop(
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
                                     let (sender, mut receiver) = unbounded();
-                                    broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
+                                    broker_writer.unbounded_send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups})?;
                                     let session_token = receiver.recv().await?;
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
@@ -354,12 +353,12 @@ pub(crate) async fn server_peer_loop(
 
                     if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(SESSION_TOKEN_PREFIX) {
                         let (sender, mut receiver) = unbounded();
-                        broker_writer.send(BrokerCommand::CheckToken {
+                        broker_writer.unbounded_send(BrokerCommand::CheckToken {
                             peer_id,
                             ip_addr,
                             sender,
                             token: access_token.to_string(),
-                        }).await?;
+                        })?;
                         if let Some((user, session_token)) = receiver.recv().await? {
                             peer_log!(debug, "token OK");
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
@@ -455,7 +454,7 @@ pub(crate) async fn server_peer_loop(
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
                             let (sender, mut receiver) = unbounded();
-                            broker_writer.send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups}).await?;
+                            broker_writer.unbounded_send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups})?;
                             let session_token = receiver.recv().await?;
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         }
@@ -464,7 +463,7 @@ pub(crate) async fn server_peer_loop(
                     let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
                     let (sender, mut receiver) = unbounded();
-                    broker_writer.send(BrokerCommand::CheckAuth {
+                    broker_writer.unbounded_send(BrokerCommand::CheckAuth {
                         peer_id,
                         ip_addr,
                         sender,
@@ -472,7 +471,7 @@ pub(crate) async fn server_peer_loop(
                         password: password.to_string(),
                         nonce: nonce.clone(),
                         login_type: login_type.to_string(),
-                    }).await?;
+                    })?;
 
                     if let Some(session_token) = receiver.recv().await? {
                         peer_log!(debug, "password OK");
@@ -518,12 +517,12 @@ pub(crate) async fn server_peer_loop(
         } else {
             PeerKind::Client { user: user.clone() }
         };
-        broker_writer.send(
+        broker_writer.unbounded_send(
             BrokerCommand::NewPeer {
                 peer_id,
                 peer_kind,
                 sender: peer_writer
-            }).await?;
+            })?;
 
         let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
         let frame_writer_task = smol::spawn(async move {
@@ -545,7 +544,7 @@ pub(crate) async fn server_peer_loop(
                         Ok(frame) => {
                             if frame.protocol == Protocol::ResetSession {
                                 // delete peer state
-                                broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+                                broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
                                 drop(frames_tx);
                                 match frame_writer_task.await {
                                     Ok(writer) => {
@@ -563,7 +562,7 @@ pub(crate) async fn server_peer_loop(
                                 let user_id_chain = format!("{req_user_id};{user}{broker_id}");
                                 frame.set_user_id(&user_id_chain);
                             }
-                            broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+                            broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
                         }
                         Err(err) => {
                             let meta_rpc_error = match &err {
@@ -593,7 +592,7 @@ pub(crate) async fn server_peer_loop(
                                     // Forward the error response to the request caller
                                     let mut rpc_msg = RpcMessage::from_meta(meta.clone());
                                     rpc_msg.set_error(rpc_error);
-                                    broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? }).await?;
+                                    broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? })?;
                                 }
                             } else {
                                 peer_log!(debug, "Peer receive frame error: {err}");
@@ -664,7 +663,7 @@ fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConn
 pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
     peer_id: PeerId,
     config: BrokerConnectionConfig,
-    mut broker_writer: UnboundedSender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
 ) -> shvrpc::Result<()> {
     info!("Spawning broker peer connection loop: {}", config.name);
 
@@ -693,7 +692,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
             Err(err) => error!("Peer broker loop finished with error: {err}"),
         }
 
-        broker_writer.send(BrokerCommand::PeerGone { peer_id }).await?;
+        broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
         info!("Reconnecting to peer broker after: {reconnect_interval:?}");
         smol::Timer::after(reconnect_interval).await;
     }
@@ -715,7 +714,7 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, mut broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     match &connection_kind {
         ConnectionKind::ToParentBroker{ .. } => {
             // Only RPC requests can be received from parent broker,
@@ -723,9 +722,9 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
             if frame.is_request() {
                 let mut frame = frame;
                 frame = fix_request_frame_shv_root(frame, connection_kind)?;
-                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
             } else if frame.is_response() {
-                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
             } else {
                 warn!("RPC signal should not be received from client connection to parent broker: {}", &frame);
             }
@@ -734,7 +733,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, conn
             // Only RPC signals and responses can be received from child broker,
             // no requests
             if frame.is_signal() || frame.is_response() {
-                broker_writer.send(BrokerCommand::FrameReceived { peer_id, frame }).await?;
+                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
             } else {
                 warn!("RPC request should not be received from client connection to child broker: {}", &frame);
             }
@@ -832,7 +831,7 @@ pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> L
 
 
 #[cfg(feature = "can")]
-pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::CanInterfaceConfig, mut broker_sender: UnboundedSender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
+pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::CanInterfaceConfig, broker_sender: UnboundedSender<BrokerCommand>, broker_config: SharedBrokerConfig) -> shvrpc::Result<()> {
     let can_iface = &can_interface_config.interface;
 
     use std::collections::HashMap;
@@ -1147,7 +1146,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                             error!("Cannot send Terminate frame: {err}");
                             continue
                     }
-                    broker_sender.send(BrokerCommand::PeerGone { peer_id }).await?;
+                    broker_sender.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
                 }
                 (peer_id, peer_local_addr, result) = client_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
@@ -1162,7 +1161,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                             error!("Cannot send Terminate frame: {err}");
                             continue
                     }
-                    broker_sender.send(BrokerCommand::PeerGone { peer_id }).await?;
+                    broker_sender.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
                     if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.peer_address == peer_addr && cfg.local_address == local_addr) {
                         let reconnect_interval = connection_cfg.reconnect_interval;
                         info!("Reconnecting to CAN broker, peer id: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x} after {reconnect_interval:?}");
@@ -1194,7 +1193,7 @@ async fn broker_as_client_peer_loop(
     login_params: LoginParams,
     connection_kind: ConnectionKind,
     reset_session: bool,
-    mut broker_writer: UnboundedSender<BrokerCommand>,
+    broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
     mut frame_writer: impl FrameWriter + Send + 'static,
 ) -> shvrpc::Result<()>
@@ -1220,11 +1219,11 @@ async fn broker_as_client_peer_loop(
     }
 
     let (broker_to_peer_sender, mut broker_to_peer_receiver) = unbounded::<BrokerToPeerMessage>();
-    broker_writer.send(BrokerCommand::NewPeer {
+    broker_writer.unbounded_send(BrokerCommand::NewPeer {
         peer_id,
         peer_kind: PeerKind::Broker(connection_kind.clone()),
         sender: broker_to_peer_sender,
-    }).await?;
+    })?;
 
     let mut frames_stream = pin!(futures::stream::unfold(frame_reader, async |mut reader| {
         let idle_read_timeout = login_params.heartbeat_interval * 3;
