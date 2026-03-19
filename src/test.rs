@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::brokerimpl::BrokerImpl;
 use crate::sql;
 
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
@@ -11,23 +12,21 @@ use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
-use smol::channel::{self, unbounded};
-use smol::channel::{Receiver, Sender};
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
 use crate::shvnode::{METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
-struct CallCtx<'a> {
-    writer: &'a Sender<BrokerCommand>,
-    reader: &'a Receiver<BrokerToPeerMessage>,
+struct CallCtx {
+    writer: UnboundedSender<BrokerCommand>,
+    reader: UnboundedReceiver<BrokerToPeerMessage>,
     client_id: PeerId,
 }
-async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>, resp_rq_id: Option<RqId>) -> Result<(RqId, RpcValue), RpcError> {
+async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut CallCtx, resp_rq_id: Option<RqId>) -> Result<(RqId, RpcValue), RpcError> {
     let rq = RpcMessage::new_request(shv_path, method).with_param(param);
     let rqid = if let Some(resp_rq_id) = resp_rq_id { Some(resp_rq_id) } else { rq.request_id() };
     let frame = RpcFrame::from_rpcmessage(&rq).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
-    ctx.writer.send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).await.unwrap();
+    ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).unwrap();
     let retval = loop {
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {
@@ -61,7 +60,7 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &Call
     retval.map(|v| (rqid.unwrap_or_default(), v))
 }
 
-async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &CallCtx<'_>) -> Result<RpcValue, RpcError> {
+async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut CallCtx) -> Result<RpcValue, RpcError> {
     let ret = call2(shv_path, method, param, ctx, None).await;
     ret.map(|(_rqid, val)| val )
 }
@@ -78,35 +77,36 @@ async fn test_broker_loop_as_user_async() {
     let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
-    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
     let client_id = 2;
 
-    let call_ctx = CallCtx {
-        writer: &broker_sender,
-        reader: &peer_reader,
+    let mut call_ctx = CallCtx {
+        writer: broker_sender.clone(),
+        reader: peer_reader,
         client_id,
     };
 
     // login
     let user = "user";
     //let password = "admin";
-    broker_sender.send(BrokerCommand::NewPeer {
+    broker_sender.unbounded_send(BrokerCommand::NewPeer {
         peer_id: client_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
             mount_point: None,
         },
-        sender: peer_writer.clone() }).await.unwrap();
+        sender: peer_writer.clone() })
+        .unwrap();
 
-    let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
+    let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
-    let resp = call(".broker/access/users", "ls", None, &call_ctx).await;
+    let resp = call(".broker/access/users", "ls", None, &mut call_ctx).await;
     // viewer cannot list users
     assert!(resp.is_err());
 
     // test current client info
-    let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
+    let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
     let m = resp.as_map();
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from(""));
@@ -118,20 +118,20 @@ async fn test_broker_loop_as_user_async() {
     let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
     {
         // subscribe
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
         assert!(result.as_bool());
         // cannot subscribe the same twice
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
+        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
         assert!(!result.as_bool());
-        let resp = call(".broker/currentClient", "subscriptions", None, &call_ctx).await.unwrap();
+        let resp = call(".broker/currentClient", "subscriptions", None, &mut call_ctx).await.unwrap();
         let subs_map = resp.as_map();
         // let s = format!("{:?}", subs_map);
         assert_eq!(subs_map.len(), 1);
         assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
     }
     {
-        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &call_ctx).await.unwrap();
-        let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
+        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
+        let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
         let subs = resp.as_map().get("subscriptions").unwrap();
         let subs_map = subs.as_map();
         assert_eq!(subs_map.len(), 0);
@@ -139,12 +139,12 @@ async fn test_broker_loop_as_user_async() {
     {
         // change password success
         let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
-        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await.unwrap();
+        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await.unwrap();
         assert_eq!(resp.as_int(), 1);
 
         // change password wrong password
         let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
-        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &call_ctx).await;
+        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await;
         assert!(resp.is_err());
     }
 
@@ -163,26 +163,26 @@ async fn test_broker_loop_as_admin_async() {
     let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
-    let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
     let client_id = 2;
 
-    let call_ctx = CallCtx {
-        writer: &broker_sender,
-        reader: &peer_reader,
+    let mut call_ctx = CallCtx {
+        writer: broker_sender.clone(),
+        reader: peer_reader,
         client_id,
     };
 
     // login
     let user = "admin";
     //let password = "admin";
-    broker_sender.send(BrokerCommand::NewPeer {
+    broker_sender.unbounded_send(BrokerCommand::NewPeer {
         peer_id: client_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
             mount_point: Some("test/device".to_string()),
         },
-        sender: peer_writer.clone() }).await.unwrap();
+        sender: peer_writer.clone() }).unwrap();
     /*
     lsmod cannot be received because it is not subscribed
     loop {
@@ -197,20 +197,20 @@ async fn test_broker_loop_as_admin_async() {
         }
     }
     */
-    let resp = call(".broker", "ls", Some("access".into()), &call_ctx).await.unwrap();
+    let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
-    let resp = call(".broker/access", "ls", None, &call_ctx).await.unwrap();
+    let resp = call(".broker/access", "ls", None, &mut call_ctx).await.unwrap();
     assert!(resp.is_list());
     assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
-    let resp = call(".broker/acce", "ls", None, &call_ctx).await;
+    let resp = call(".broker/acce", "ls", None, &mut call_ctx).await;
     assert!(resp.is_err());
 
     // device should be mounted as 'shv/dev/test'
-    let resp = call("test", "ls", Some("device".into()), &call_ctx).await.unwrap();
+    let resp = call("test", "ls", Some("device".into()), &mut call_ctx).await.unwrap();
     assert_eq!(resp, RpcValue::from(true));
 
     // test current client info
-    let resp = call(".broker/currentClient", "info", None, &call_ctx).await.unwrap();
+    let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
     let m = resp.as_map();
     assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
     assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
@@ -224,21 +224,21 @@ async fn test_broker_loop_as_admin_async() {
     {
         let path = ".broker/access/mounts";
         {
-            let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+            let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &call_ctx).await.unwrap();
+            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
             let mount1 = Mount::try_from(&resp).unwrap();
             let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
             assert_eq!(mount1, mount2);
         }
         {
             let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-            let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+            let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
+            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
             assert_eq!(mount, Mount::try_from(&resp).unwrap());
         }
 
@@ -246,24 +246,24 @@ async fn test_broker_loop_as_admin_async() {
         {
             let path = ".broker/access/users";
             {
-                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(users.clone()).as_list());
-                let resp = call(&join_path(path, "test"), METH_VALUE, None, &call_ctx).await.unwrap();
+                let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
                 let user1 = User::try_from(&resp).unwrap();
                 let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false };
                 assert_eq!(user1, user2);
             }
             {
                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 let mut users = users;
                 users.push("baz".to_string());
                 users.sort();
                 assert_eq!(list, RpcValue::from(users).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
                 assert_eq!(user, User::try_from(&resp).unwrap());
             }
         }
@@ -272,24 +272,24 @@ async fn test_broker_loop_as_admin_async() {
         {
             let path = ".broker/access/roles";
             {
-                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
-                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &call_ctx).await.unwrap();
+                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
                 let role1 = Role::try_from(&resp).unwrap();
                 let role2 = config.access.access_role("tester").unwrap();
                 assert_eq!(&role1, role2);
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }], profile: None };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &call_ctx).await.unwrap();
-                let resp = call(path, METH_LS, None, &call_ctx).await.unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 let mut roles = roles;
                 roles.push("baz".to_string());
                 roles.sort();
                 assert_eq!(list, RpcValue::from(roles).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &call_ctx).await.unwrap();
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
                 assert_eq!(role, Role::try_from(&resp).unwrap());
             }
         }
@@ -307,29 +307,29 @@ smol_macros::test! {
         let broker = Arc::new(BrokerImpl::new(config, access, broker_sender.clone(), None));
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
-        let (peer_writer, peer_reader) = channel::unbounded::<BrokerToPeerMessage>();
+        let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
         let client_id = 3;
 
-        let call_ctx = CallCtx {
-            writer: &broker_sender,
-            reader: &peer_reader,
+        let mut call_ctx = CallCtx {
+            writer: broker_sender.clone(),
+            reader: peer_reader,
             client_id,
         };
 
         // login
         let user = "test";
         //let password = "test";
-        broker_sender.send(BrokerCommand::NewPeer {
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
             peer_id: client_id,
             peer_kind: PeerKind::Client{ user: user.to_string() },
-            sender: peer_writer.clone() }).await.unwrap();
+            sender: peer_writer.clone() }).unwrap();
 
-        let tunid = call(".app/tunnel", "create", None, &call_ctx).await;
+        let tunid = call(".app/tunnel", "create", None, &mut call_ctx).await;
         // host param is missing
         assert!(tunid.is_err());
 
         let param = Map::from([("host".to_string(), "localhost:54321".into())]);
-        let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await;
+        let tunid = call(".app/tunnel", "create", Some(param.into()), &mut call_ctx).await;
         // service not running
         assert_eq!(tunid.err().unwrap().code, RpcErrorCode::MethodCallException.into());
 
@@ -387,28 +387,28 @@ smol_macros::test! {
         wait_for_server(ECHO_LOOP_ADDRESS, std::time::Duration::from_secs(3)).await;
 
         let param = Map::from([("host".to_string(), ECHO_LOOP_ADDRESS.into())]);
-        let tunid = call(".app/tunnel", "create", Some(param.into()), &call_ctx).await.unwrap();
+        let tunid = call(".app/tunnel", "create", Some(param.into()), &mut call_ctx).await.unwrap();
         assert!(tunid.is_string());
 
         let tunid = tunid.as_str();
 
-        let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+        let res = call(".app/tunnel", "ls", None, &mut call_ctx).await.unwrap();
         assert_eq!(res.as_list(), &[tunid.into()].to_vec());
-        let res = call(".app/tunnel", "ls", Some(tunid.into()), &call_ctx).await.unwrap();
+        let res = call(".app/tunnel", "ls", Some(tunid.into()), &mut call_ctx).await.unwrap();
         assert!(res.as_bool());
 
         let data = "hello".as_bytes();
-        let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, None).await.unwrap();
+        let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, None).await.unwrap();
         assert_eq!(res.as_blob(), data);
 
         let data = "tunnel".as_bytes();
-        let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &call_ctx, Some(tun_rq_id)).await.unwrap();
+        let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, Some(tun_rq_id)).await.unwrap();
         assert_eq!(res.as_blob(), data);
 
-        let res = call(&format!(".app/tunnel/{tunid}"), "close", None, &call_ctx).await.unwrap();
+        let res = call(&format!(".app/tunnel/{tunid}"), "close", None, &mut call_ctx).await.unwrap();
         assert!(res.as_bool());
 
-        let res = call(".app/tunnel", "ls", None, &call_ctx).await.unwrap();
+        let res = call(".app/tunnel", "ls", None, &mut call_ctx).await.unwrap();
         assert!(res.as_list().is_empty());
 
         broker_task.cancel().await;

@@ -1,3 +1,4 @@
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use log::trace;
 use crate::brokerimpl::{
     BrokerCommand, BrokerImpl, NodeRequestContext, TunnelId
@@ -15,8 +16,6 @@ use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
 use shvrpc::{Error, RpcMessageMetaTags};
-use smol::channel;
-use smol::channel::{Receiver, Sender};
 use smol::io::{BufReader, BufWriter};
 use smol::net::TcpStream;
 use std::sync::Arc;
@@ -111,14 +110,8 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let command_sender = ctx.state.command_sender.clone();
                     let is_active = ctx.state.is_tunnel_active(tunid).await;
-                    smol::spawn(async move {
-                        let _ = command_sender
-                            .send(BrokerCommand::TunnelClosed(tunid))
-                            .await;
-                    })
-                    .detach();
+                    let _ = ctx.state.command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid));
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => Ok(ProcessRequestRetval::MethodNotFound),
@@ -141,9 +134,7 @@ impl ShvNode for TunnelNode {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
                         }
-                        command_sender
-                            .send(BrokerCommand::TunnelClosed(tunid))
-                            .await
+                        command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid))
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
@@ -159,7 +150,7 @@ pub(crate) enum ToRemoteMsg {
 }
 pub(crate) struct ActiveTunnel {
     pub(crate) caller_ids: Vec<PeerId>,
-    pub(crate) sender: Sender<ToRemoteMsg>,
+    pub(crate) sender: UnboundedSender<ToRemoteMsg>,
     pub(crate) last_activity: Option<Instant>,
 }
 
@@ -167,7 +158,7 @@ pub(crate) async fn tunnel_task(
     tunnel_id: TunnelId,
     mut request_meta: MetaMap,
     addr: String,
-    from_broker_receiver: Receiver<ToRemoteMsg>,
+    mut from_broker_receiver: UnboundedReceiver<ToRemoteMsg>,
     state: Arc<BrokerImpl>,
 ) -> shvrpc::Result<()> {
     let peer_id = request_meta.pop_caller_id().ok_or("Invalid peer id")?;
@@ -177,37 +168,31 @@ pub(crate) async fn tunnel_task(
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
             log!(target: "Tunnel", Level::Debug, "connected OK");
-            to_broker_sender
-                .send(BrokerCommand::SendResponse {
-                    peer_id,
-                    meta: response_meta.clone(),
-                    result: Ok(format!("{tunnel_id}").into()),
-                })
-                .await?;
+            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
+                peer_id,
+                meta: response_meta.clone(),
+                result: Ok(format!("{tunnel_id}").into()),
+            })?;
             stream
         }
         Err(e) => {
-            to_broker_sender
-                .send(BrokerCommand::SendResponse {
-                    peer_id,
-                    meta: response_meta.clone(),
-                    result: Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string())),
-                })
-                .await?;
+            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
+                peer_id,
+                meta: response_meta.clone(),
+                result: Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string())),
+            })?;
             return Err(e.to_string().into());
         }
     };
     state.touch_tunnel(tunnel_id).await;
-    to_broker_sender
-        .send(BrokerCommand::TunnelActive(tunnel_id))
-        .await?;
+    to_broker_sender.unbounded_send(BrokerCommand::TunnelActive(tunnel_id))?;
     let (socket_reader, socket_writer) = stream.split();
     let mut read_buff: [u8; 256] = [0; 256];
     let mut response_buff: Vec<u8> = vec![];
     let mut write_request_id = None;
     let mut read_seqno = 0;
     let mut socket_reader = BufReader::new(socket_reader);
-    let (write_task_sender, write_task_receiver) = channel::unbounded::<Vec<u8>>();
+    let (write_task_sender, mut write_task_receiver) = unbounded::<Vec<u8>>();
     smol::spawn(async move {
         log!(target: "Tunnel", Level::Debug, "ENTER write task");
         let mut socket_writer = BufWriter::new(socket_writer);
@@ -264,7 +249,7 @@ pub(crate) async fn tunnel_task(
                         let mut response_meta = response_meta.clone();
                         response_meta.set_seqno(read_seqno);
                         read_seqno += 1;
-                        to_broker_sender.send(make_response(peer_id, response_meta, &mut response_buff)).await?;
+                        to_broker_sender.unbounded_send(make_response(peer_id, response_meta, &mut response_buff))?;
                     }
                 },
                 Err(e) => {
@@ -283,18 +268,18 @@ pub(crate) async fn tunnel_task(
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
                                     trace!(target: "Tunnel", "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
-                                    to_broker_sender.send(make_response(peer_id, response_meta.clone(), &mut response_buff)).await?;
+                                    to_broker_sender.unbounded_send(make_response(peer_id, response_meta.clone(), &mut response_buff))?;
                                 }
                             }
                             if !data.is_empty() {
                                 trace!(target: "Tunnel", "write_task_sender send: {} bytes", data.len());
-                                write_task_sender.send(data).await?;
+                                write_task_sender.unbounded_send(data)?;
                             }
                         }
                         ToRemoteMsg::DestroyConnection => {
                             trace!(target: "Tunnel", "CMD DestroyConnection");
                             if write_request_id.is_some() {
-                                to_broker_sender.send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")))).await?;
+                                to_broker_sender.unbounded_send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed."))))?;
                             }
                             break
                         }
@@ -308,9 +293,7 @@ pub(crate) async fn tunnel_task(
         }
     }
     // cancel write task
-    write_task_sender.send(vec![]).await?;
-    to_broker_sender
-        .send(BrokerCommand::TunnelClosed(tunnel_id))
-        .await?;
+    write_task_sender.unbounded_send(vec![])?;
+    to_broker_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id))?;
     Ok(())
 }

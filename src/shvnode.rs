@@ -445,7 +445,7 @@ impl ShvNode for BrokerNode {
                 if let Some(peer) = ctx.state.peers.read().await.get(&peer_id) {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
-                        let _ = peer_sender.send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).await;
+                        let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))
                 } else {
