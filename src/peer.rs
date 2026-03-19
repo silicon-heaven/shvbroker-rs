@@ -5,7 +5,9 @@ use std::time::Duration;
 use duration_str::HumanFormat;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::mpsc::unbounded;
+use futures::channel::oneshot;
 use futures::select;
+
 use futures::AsyncRead;
 use futures::AsyncReadExt;
 use futures::AsyncWrite;
@@ -338,9 +340,9 @@ pub(crate) async fn server_peer_loop(
 
                                     let mut mapped_groups = vec![user.clone()];
                                     mapped_groups.extend(broker_mapped_groups.iter().cloned());
-                                    let (sender, mut receiver) = unbounded();
+                                    let (sender, receiver) = oneshot::channel();
                                     broker_writer.unbounded_send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups})?;
-                                    let session_token = receiver.recv().await?;
+                                    let session_token = receiver.await?;
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
                                 Err(e) => {
@@ -352,14 +354,14 @@ pub(crate) async fn server_peer_loop(
                     }
 
                     if login_type == "TOKEN" && let Some(access_token) = password.strip_prefix(SESSION_TOKEN_PREFIX) {
-                        let (sender, mut receiver) = unbounded();
+                        let (sender, receiver) = oneshot::channel();
                         broker_writer.unbounded_send(BrokerCommand::CheckToken {
                             peer_id,
                             ip_addr,
                             sender,
                             token: access_token.to_string(),
                         })?;
-                        if let Some((user, session_token)) = receiver.recv().await? {
+                        if let Some((user, session_token)) = receiver.await? {
                             peer_log!(debug, "token OK");
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         } else {
@@ -453,16 +455,16 @@ pub(crate) async fn server_peer_loop(
                             peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
-                            let (sender, mut receiver) = unbounded();
+                            let (sender, receiver) = oneshot::channel();
                             broker_writer.unbounded_send(BrokerCommand::SetOAuth2Groups { peer_id, sender, user: user.clone(), groups: mapped_groups})?;
-                            let session_token = receiver.recv().await?;
+                            let session_token = receiver.await?;
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         }
                     }
 
                     let user = login.get("user").ok_or("User login param is missing")?.as_str().to_string();
 
-                    let (sender, mut receiver) = unbounded();
+                    let (sender, receiver) = oneshot::channel();
                     broker_writer.unbounded_send(BrokerCommand::CheckAuth {
                         peer_id,
                         ip_addr,
@@ -473,7 +475,7 @@ pub(crate) async fn server_peer_loop(
                         login_type: login_type.to_string(),
                     })?;
 
-                    if let Some(session_token) = receiver.recv().await? {
+                    if let Some(session_token) = receiver.await? {
                         peer_log!(debug, "password OK");
                         break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                     } else {
