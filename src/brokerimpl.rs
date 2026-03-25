@@ -147,6 +147,15 @@ pub enum PeerKind {
     },
 }
 
+impl PeerKind {
+    pub fn user(&self) -> Option<&String> {
+        match self {
+            PeerKind::Client { user } | PeerKind::Device { user, .. } => Some(user),
+            PeerKind::Broker(_) => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Peer {
     pub(crate) peer_id: PeerId,
