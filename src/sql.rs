@@ -2,8 +2,9 @@ use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
 
 use log::{debug, info};
 use async_sqlite::{ClientBuilder, Client};
+use shvproto::RpcValue;
 
-use crate::config::AccessConfig;
+use crate::config::{AccessConfig, UpdateSqlOperation};
 
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";
@@ -79,6 +80,29 @@ async fn create_access_sqlite(sql_conn: &Client, access: &AccessConfig) -> shvrp
     save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips().clone()).await?;
 
     Ok(())
+}
+
+pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+    let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
+        match oper {
+            UpdateSqlOperation::Insert { table, id, json } => {
+                acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
+            }
+            UpdateSqlOperation::Update { table, id, json } => {
+                acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
+            }
+            UpdateSqlOperation::Delete { table, id } => {
+                acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
+            }
+        };
+        acc
+    });
+
+    sql_connection.conn(move |sql_connection| {
+        sql_connection.execute(&query, ())
+    }).await
+    .map(|v| RpcValue::from(v as i64))
+        .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
 }
 
 async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<AccessConfig> {
