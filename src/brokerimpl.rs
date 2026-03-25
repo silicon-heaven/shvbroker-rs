@@ -960,6 +960,14 @@ impl BrokerImpl {
     }
     pub(crate) async fn process_rpc_frame(self: &Arc<Self>, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
+            let mut frame = frame;
+            if let Some(req_user_id) = frame.user_id() {
+                let broker_id = self.config.name.as_ref()
+                    .map(|name| format!(":{name}"))
+                    .unwrap_or_default();
+                let user_id_chain = format!("{req_user_id};{user}{broker_id}", user = self.peers.read().await.get(&peer_id).and_then(|peer| peer.user()).unwrap_or("broker"));
+                frame.set_user_id(&user_id_chain);
+            }
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
             let method = frame.method().unwrap_or_default().to_string();
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;

@@ -554,14 +554,6 @@ pub(crate) async fn server_peer_loop(
                                     Err(_) => break 'session_loop,
                                 }
                             }
-                            let mut frame = frame;
-                            if frame.is_request() && let Some(req_user_id) = frame.user_id() {
-                                let broker_id = broker_config.name.as_ref()
-                                    .map(|name| format!(":{name}"))
-                                    .unwrap_or_default();
-                                let user_id_chain = format!("{req_user_id};{user}{broker_id}");
-                                frame.set_user_id(&user_id_chain);
-                            }
                             broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
                         }
                         Err(err) => {
