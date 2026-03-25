@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::brokerimpl::BrokerImpl;
+use crate::brokerimpl::{BrokerImpl, LastLogin};
 use crate::sql;
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -71,10 +71,10 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
+    let (sql_connection, access_config, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
+    let broker = Arc::new(BrokerImpl::new(config, access_config, last_login, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -157,10 +157,10 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
+    let (sql_connection, access_config, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = Arc::new(BrokerImpl::new(config, access_config, broker_sender.clone(), Some(sql_connection)));
+    let broker = Arc::new(BrokerImpl::new(config, access_config, last_login, broker_sender.clone(), Some(sql_connection)));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -304,7 +304,7 @@ smol_macros::test! {
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = Arc::new(BrokerImpl::new(config, access, broker_sender.clone(), None));
+        let broker = Arc::new(BrokerImpl::new(config, access, LastLogin::default(), broker_sender.clone(), None));
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();

@@ -6,7 +6,7 @@ use const_format::formatcp;
 use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
-use shvbroker::brokerimpl::{run_broker, BrokerImpl};
+use shvbroker::brokerimpl::{BrokerImpl, LastLogin, run_broker};
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
@@ -33,7 +33,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(Arc::new(BrokerImpl::new(broker_config, access_config, broker_sender, None)), broker_receiver)
+        run_broker(Arc::new(BrokerImpl::new(broker_config, access_config, LastLogin::default(), broker_sender, None)), broker_receiver)
             .await
             .expect("broker accept_loop failed")
     }).detach();

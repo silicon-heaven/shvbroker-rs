@@ -338,6 +338,7 @@ pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 pub const DIR_BROKER_ACCESS_ALLOWED_IPS: &str = ".broker/access/allowedIps";
+pub const DIR_BROKER_ACCESS_LAST_LOGIN: &str = ".broker/access/lastLogin";
 
 pub const DIR_SHV2_BROKER_APP: &str = ".broker/app";
 pub const DIR_SHV2_BROKER_ETC_ACL_USERS: &str = ".broker/etc/acl/users";
@@ -1010,6 +1011,47 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 };
                 let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
+            }
+            _ => {
+                Ok(ProcessRequestRetval::MethodNotFound)
+            }
+        }
+    }
+}
+
+pub(crate) struct BrokerAccessLastLoginNode {}
+impl BrokerAccessLastLoginNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ShvNode for BrokerAccessLastLoginNode {
+    fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
+        ACCESS_VALUE_NODE_METHODS
+    }
+
+    async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(broker_state.last_login().await.0.keys().map(|m| m.to_string()).collect())
+        } else {
+            Some(vec![])
+        }
+    }
+
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+        match frame.method().unwrap_or_default() {
+            METH_VALUE => {
+                match ctx.state.last_login().await.0.get(&ctx.node_path) {
+                    None => {
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    }
+                    Some(dt) => {
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&dt)?))
+                    }
+                }
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
