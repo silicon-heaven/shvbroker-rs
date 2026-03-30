@@ -963,7 +963,7 @@ impl BrokerImpl {
             let mut frame = frame;
             if let Some(req_user_id) = frame.user_id() {
                 let broker_id = self.config.name.as_ref()
-                    .map(|name| format!(":{name}"))
+                    .map(|broker_id| format!(":{broker_id}"))
                     .unwrap_or_default();
                 let user_id_chain = format!("{req_user_id};{user}{broker_id}", user = self.peers.read().await.get(&peer_id).and_then(|peer| peer.user()).unwrap_or("broker"));
                 frame.set_user_id(&user_id_chain);
