@@ -730,8 +730,8 @@ const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flags::em
 const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flags::empty(), AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
 const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
 const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
-const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
-const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
+const SET_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
+const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
@@ -747,9 +747,9 @@ fn make_access_ro_error() -> String {
 impl ShvNode for BrokerAccessMountsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -809,7 +809,7 @@ impl BrokerAccessUsersNode {
 impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
             USER_ACCESS_VALUE_NODE_METHODS
         }
@@ -900,9 +900,9 @@ impl crate::shvnode::BrokerAccessRolesNode {
 impl ShvNode for BrokerAccessRolesNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -962,9 +962,9 @@ impl BrokerAccessAllowedIpsNode {
 impl ShvNode for BrokerAccessAllowedIpsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -1030,7 +1030,7 @@ impl BrokerAccessLastLoginNode {
 #[async_trait::async_trait]
 impl ShvNode for BrokerAccessLastLoginNode {
     fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
-        ACCESS_VALUE_NODE_METHODS
+        VALUE_NODE_METHODS
     }
 
     async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
