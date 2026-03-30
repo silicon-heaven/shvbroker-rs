@@ -1044,6 +1044,10 @@ impl ShvNode for BrokerAccessLastLoginNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
+                if ctx.node_path.is_empty() {
+                    return Ok(ProcessRequestRetval::Retval(ctx.state.last_login().await.0.clone().into()));
+                }
+
                 match ctx.state.last_login().await.0.get(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
