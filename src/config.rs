@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::sync::Arc;
 use crate::{brokerimpl::ParsedAccessRule, sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS}};
+use crate::sql::update_sql;
 use log::error;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
@@ -262,7 +263,7 @@ impl TryFrom<&RpcValue> for Mount {
     }
 }
 
-enum UpdateSqlOperation<'a> {
+pub(crate) enum UpdateSqlOperation<'a> {
     Insert { table: &'a str, id: &'a str, json: String },
     Update { table: &'a str, id: &'a str, json: String },
     Delete { table: &'a str, id: &'a str },
@@ -298,29 +299,6 @@ impl AccessConfig {
         self.users.get(id)
     }
 
-    async fn update_sql(&self, oper: Vec<UpdateSqlOperation<'_>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
-            match oper {
-                UpdateSqlOperation::Insert { table, id, json } => {
-                    acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
-                }
-                UpdateSqlOperation::Update { table, id, json } => {
-                    acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
-                }
-                UpdateSqlOperation::Delete { table, id } => {
-                    acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
-                }
-            };
-            acc
-        });
-
-        sql_connection.conn(move |sql_connection| {
-            sql_connection.execute(&query, ())
-        }).await
-            .map(|v| RpcValue::from(v as i64))
-            .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
-    }
-
     pub(crate) async fn set_access_user(&mut self, id: &str, user: Option<crate::config::User>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(user) = &user {
             let json = serde_json::to_string(&user).unwrap_or_else(|e| {
@@ -340,7 +318,7 @@ impl AccessConfig {
             res
         };
 
-        let res = self.update_sql(sqlop, sql_connection).await?;
+        let res = update_sql(sqlop, sql_connection).await?;
 
         if let Some(user) = user {
             self.users.insert(id.to_string(), user);
@@ -374,7 +352,7 @@ impl AccessConfig {
             UpdateSqlOperation::Delete {table: TBL_MOUNTS, id }
         };
 
-        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+        let res = update_sql(vec![sqlop], sql_connection).await?;
 
         if let Some(mount) = mount {
             self.mounts.insert(id.to_string(), mount);
@@ -408,7 +386,7 @@ impl AccessConfig {
             UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
         };
 
-        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+        let res = update_sql(vec![sqlop], sql_connection).await?;
 
         if let Some(allowed_ips) = allowed_ips {
             self.allowed_ips.insert(id.to_string(), allowed_ips);
@@ -439,7 +417,7 @@ impl AccessConfig {
             UpdateSqlOperation::Delete { table: TBL_ROLES, id: role_name }
         };
 
-        let res = self.update_sql(vec![sqlop], sql_connection).await?;
+        let res = update_sql(vec![sqlop], sql_connection).await?;
 
         if let Some(role) = role {
             let parsed_access_rules = parse_role_access_rules(&role)?;

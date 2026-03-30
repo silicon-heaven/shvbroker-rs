@@ -1,8 +1,9 @@
-use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig, parse_role_access_rules};
+use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 use crate::shvnode::{
-    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
+use crate::sql::{TBL_LAST_LOGIN, update_sql};
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -26,7 +27,7 @@ use url::Url;
 use std::collections::{BTreeMap, HashMap,VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use smol::lock::RwLock;
+use smol::lock::{RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 use peer::SESSION_TOKEN_PREFIX;
 
@@ -145,6 +146,15 @@ pub enum PeerKind {
         device_id: Option<String>,
         mount_point: Option<String>,
     },
+}
+
+impl PeerKind {
+    pub fn user(&self) -> Option<&String> {
+        match self {
+            PeerKind::Client { user } | PeerKind::Device { user, .. } => Some(user),
+            PeerKind::Broker(_) => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -662,6 +672,9 @@ pub(crate) struct Session {
     token: String,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct LastLogin(pub(crate) BTreeMap<String, shvproto::DateTime>);
+
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
     nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
@@ -675,6 +688,8 @@ pub struct BrokerImpl {
 
     // session_token -> username
     pub(crate) session_tokens: RwLock<Vec<Session>>,
+
+    last_login: RwLock<LastLogin>,
 
     pub(crate) command_sender: UnboundedSender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
@@ -885,6 +900,7 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
+        last_login: LastLogin,
         command_sender: UnboundedSender<BrokerCommand>,
         sql_connection: Option<async_sqlite::Client>,
     ) -> Self {
@@ -925,6 +941,10 @@ impl BrokerImpl {
             DIR_BROKER_ACCESS_ALLOWED_IPS,
             Box::new(BrokerAccessAllowedIpsNode::new()),
         );
+        add_node(
+            DIR_BROKER_ACCESS_LAST_LOGIN,
+            Box::new(BrokerAccessLastLoginNode::new()),
+        );
         if config.shv2_compatibility {
             add_node(
                 DIR_SHV2_BROKER_APP,
@@ -956,6 +976,7 @@ impl BrokerImpl {
             next_tunnel_number: RwLock::new(1),
             sql_connection,
             session_tokens: RwLock::default(),
+            last_login: RwLock::new(last_login),
         }
     }
     pub(crate) async fn process_rpc_frame(self: &Arc<Self>, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
@@ -1240,6 +1261,29 @@ impl BrokerImpl {
         true
     }
 
+    pub(crate) async fn last_login(&self) -> RwLockReadGuard<'_, LastLogin> {
+        self.last_login.read().await
+    }
+
+    pub(crate) async fn set_last_login(self: &Arc<Self>, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
+        let json = serde_json::to_string(&timestamp).unwrap_or_else(|e| {
+            error!("Generate SQL entry error: {e}");
+            "".to_string()
+        });
+        let last_login = &mut self.last_login.write().await.0;
+        if let Some(sql_connection) = sql_connection {
+            let sqlop = if last_login.contains_key(id) {
+                UpdateSqlOperation::Update { table: TBL_LAST_LOGIN, id, json }
+            } else {
+                UpdateSqlOperation::Insert { table: TBL_LAST_LOGIN, id, json }
+            };
+
+            update_sql(vec![sqlop], sql_connection).await?;
+        }
+
+        Ok(last_login.insert(id.to_string(), timestamp))
+    }
+
     async fn get_or_create_token(self: &Arc<Self>, user: &str) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
@@ -1268,7 +1312,15 @@ impl BrokerImpl {
                 peer_kind,
                 sender,
             } => {
-                debug!("New peer, id: {peer_id}.");
+                let user = peer_kind.user();
+                let previous_login = if let Some(user) = user {
+                    self.set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref()).await.inspect_err(|err| {
+                        log::error!("Unable to set last_login for {user}: {err}");
+                    }).ok()
+                } else {
+                    None
+                };
+                debug!("New peer, id: {peer_id}, user: {user:?}, last_login: {previous_login:?}");
                 let peer_add_result = self.add_peer(peer_id, peer_kind, sender.clone()).await;
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
@@ -2045,6 +2097,7 @@ mod test {
     use futures::channel::mpsc::unbounded;
 
     use crate::brokerimpl::BrokerCommand;
+    use crate::brokerimpl::LastLogin;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
@@ -2056,7 +2109,7 @@ mod test {
             let config = BrokerConfig::default();
             let access = config.access.clone();
             let (command_sender, _) = unbounded();
-            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), command_sender, None);
+            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), LastLogin::default(), command_sender, None);
             let roles = broker.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice()).await;
             assert_eq!(
                 roles,
@@ -2104,7 +2157,7 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), command_sender, None));
+                let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None));
                 let (sender, mut reader) = unbounded();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,

@@ -338,6 +338,7 @@ pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
 pub const DIR_BROKER_ACCESS_ALLOWED_IPS: &str = ".broker/access/allowedIps";
+pub const DIR_BROKER_ACCESS_LAST_LOGIN: &str = ".broker/access/lastLogin";
 
 pub const DIR_SHV2_BROKER_APP: &str = ".broker/app";
 pub const DIR_SHV2_BROKER_ETC_ACL_USERS: &str = ".broker/etc/acl/users";
@@ -729,8 +730,8 @@ const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flags::em
 const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flags::empty(), AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
 const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
 const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
-const ACCESS_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
-const ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
+const SET_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
+const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
 pub(crate) struct BrokerAccessMountsNode {}
 impl BrokerAccessMountsNode {
@@ -746,9 +747,9 @@ fn make_access_ro_error() -> String {
 impl ShvNode for BrokerAccessMountsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -808,7 +809,7 @@ impl BrokerAccessUsersNode {
 impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
             USER_ACCESS_VALUE_NODE_METHODS
         }
@@ -899,9 +900,9 @@ impl crate::shvnode::BrokerAccessRolesNode {
 impl ShvNode for BrokerAccessRolesNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -961,9 +962,9 @@ impl BrokerAccessAllowedIpsNode {
 impl ShvNode for BrokerAccessAllowedIpsNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
-            ACCESS_NODE_METHODS
+            SET_VALUE_NODE_METHODS
         } else {
-            ACCESS_VALUE_NODE_METHODS
+            VALUE_NODE_METHODS
         }
     }
 
@@ -1010,6 +1011,51 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 };
                 let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
+            }
+            _ => {
+                Ok(ProcessRequestRetval::MethodNotFound)
+            }
+        }
+    }
+}
+
+pub(crate) struct BrokerAccessLastLoginNode {}
+impl BrokerAccessLastLoginNode {
+    pub(crate) fn new() -> Self {
+        Self {
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ShvNode for BrokerAccessLastLoginNode {
+    fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
+        VALUE_NODE_METHODS
+    }
+
+    async fn children(&self, shv_path: &str, broker_state: Arc<BrokerImpl>) -> Option<Vec<String>> {
+        if shv_path.is_empty() {
+            Some(broker_state.last_login().await.0.keys().map(|m| m.to_string()).collect())
+        } else {
+            Some(vec![])
+        }
+    }
+
+    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+        match frame.method().unwrap_or_default() {
+            METH_VALUE => {
+                if ctx.node_path.is_empty() {
+                    return Ok(ProcessRequestRetval::Retval(ctx.state.last_login().await.0.clone().into()));
+                }
+
+                match ctx.state.last_login().await.0.get(&ctx.node_path) {
+                    None => {
+                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    }
+                    Some(dt) => {
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&dt)?))
+                    }
+                }
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
