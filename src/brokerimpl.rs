@@ -7,6 +7,7 @@ use crate::sql::{TBL_LAST_LOGIN, update_sql};
 use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use futures::channel::oneshot;
 use futures::stream::FuturesUnordered;
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
@@ -62,7 +63,7 @@ pub struct SessionToken(pub String);
 #[derive(Debug)]
 pub enum BrokerCommand {
     CheckAuth {
-        sender: UnboundedSender<Option<SessionToken>>,
+        sender: oneshot::Sender<Option<SessionToken>>,
         peer_id: PeerId,
         ip_addr: Option<core::net::IpAddr>,
         nonce: Option<String>,
@@ -71,14 +72,14 @@ pub enum BrokerCommand {
         login_type: String,
     },
     CheckToken {
-        sender: UnboundedSender<Option<(String, SessionToken)>>,
+        sender: oneshot::Sender<Option<(String, SessionToken)>>,
         peer_id: PeerId,
         ip_addr: Option<core::net::IpAddr>,
         token: String,
     },
     #[cfg(any(feature = "entra-id", feature = "google-auth"))]
     SetOAuth2Groups {
-        sender: UnboundedSender<SessionToken>,
+        sender: oneshot::Sender<SessionToken>,
         peer_id: PeerId,
         user: String,
         groups: Vec<String>,
@@ -1384,7 +1385,9 @@ impl BrokerImpl {
                     Some((user.clone(), SessionToken(token)))
                 };
 
-                sender.unbounded_send(result)?;
+                if sender.send(result).is_err() {
+                    debug!("CheckToken receiver dropped before sending the response");
+                }
             },
             BrokerCommand::CheckAuth {
                 sender,
@@ -1431,7 +1434,9 @@ impl BrokerImpl {
                 } else {
                     None
                 };
-                sender.unbounded_send(result)?;
+                if sender.send(result).is_err() {
+                    debug!("CheckAuth receiver dropped before sending the response");
+                }
             }
             #[cfg(any(feature = "entra-id", feature = "google-auth"))]
             BrokerCommand::SetOAuth2Groups { peer_id, sender, user, groups } => {
@@ -1442,7 +1447,9 @@ impl BrokerImpl {
                     .insert(peer_id, groups);
 
                 let session_token = self.get_or_create_token(&user).await;
-                sender.unbounded_send(session_token)?;
+                if sender.send(session_token).is_err() {
+                    debug!("SetOAuth2Groups receiver dropped before sending the response");
+                }
             }
             BrokerCommand::SendResponse {
                 peer_id,
@@ -2095,6 +2102,7 @@ mod test {
     use std::sync::Arc;
 
     use futures::channel::mpsc::unbounded;
+    use futures::channel::oneshot;
 
     use crate::brokerimpl::BrokerCommand;
     use crate::brokerimpl::LastLogin;
@@ -2158,7 +2166,7 @@ mod test {
             ] {
                 let (command_sender, _) = unbounded();
                 let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None));
-                let (sender, mut reader) = unbounded();
+                let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
                     peer_id: 0,
@@ -2169,7 +2177,7 @@ mod test {
                     login_type: "PLAIN".to_string()
                 }).await.expect("Sending commands must work");
 
-                let resp = reader.recv().await.expect("Receiving responses must work");
+                let resp = reader.try_recv().expect("Receiving responses must work").expect("We need to have a value");
                 assert_eq!(resp.is_some(), expected_result);
             }
         }
