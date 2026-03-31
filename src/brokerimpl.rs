@@ -1767,16 +1767,13 @@ impl BrokerImpl {
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
         let effective_mount_point = match &peer_kind {
             PeerKind::Client { .. } => None,
-            PeerKind::Broker(connection_kind) => match connection_kind {
-                ConnectionKind::ToParentBroker { .. } => None,
-                ConnectionKind::ToChildBroker { mount_point, .. } => {
-                    if mount_point.is_empty() {
-                        None
-                    } else {
-                        Some(mount_point.to_string())
-                    }
+            PeerKind::Broker(ConnectionKind::ToParentBroker { mount_point, .. } | ConnectionKind::ToChildBroker { mount_point, .. }) => {
+                if mount_point.is_empty() {
+                    None
+                } else {
+                    Some(mount_point.to_string())
                 }
-            },
+            }
             PeerKind::Device {
                 device_id,
                 mount_point,
