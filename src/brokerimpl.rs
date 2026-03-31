@@ -1156,10 +1156,10 @@ impl BrokerImpl {
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
             if let Some(peer) = self.peers.read().await.get(&peer_id) {
-                if let PeerKind::Broker(ConnectionKind::ToChildBroker { shv_root, .. }) =
+                if let PeerKind::Broker(ConnectionKind::ToParentBroker { shv_root, .. } | ConnectionKind::ToChildBroker { shv_root, .. }) =
                     &peer.peer_kind
                 {
-                    // remove shv_root in notifications coming from child broker
+                    // remove shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, shv_root) {
                         shv_path = new_path;
                     }
