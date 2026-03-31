@@ -713,35 +713,20 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
-    match &connection_kind {
-        ConnectionKind::ToParentBroker{ shv_root } => {
-            // Only RPC requests can be received from parent broker,
-            // no signals, no responses
-            if frame.is_request() {
-                let mut frame = frame;
-                let shv_path = frame.shv_path().unwrap_or_default();
-                if shv_path.is_empty() && is_dot_local_granted(&frame) {
-                    frame.meta.insert(DOT_LOCAL_HACK, true.into());
-                }
-                frame = fix_request_frame_shv_root(frame, shv_root)?;
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else if frame.is_response() {
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else {
-                warn!("RPC signal should not be received from client connection to parent broker: {}", &frame);
-            }
+async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+    if frame.is_request() {
+        let mut frame = frame;
+        let shv_path = frame.shv_path().unwrap_or_default();
+        if shv_path.is_empty() && is_dot_local_granted(&frame) {
+            frame.meta.insert(DOT_LOCAL_HACK, true.into());
         }
-        ConnectionKind::ToChildBroker{ .. } => {
-            // Only RPC signals and responses can be received from child broker,
-            // no requests
-            if frame.is_signal() || frame.is_response() {
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else {
-                warn!("RPC request should not be received from client connection to child broker: {}", &frame);
-            }
-        }
-    };
+        frame = fix_request_frame_shv_root(frame, shv_root)?;
+        broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
+    } else if frame.is_signal() || frame.is_response() {
+        broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
+    } else {
+        warn!("Invalid frame type received: {}", &frame);
+    }
     Ok(())
 }
 
@@ -1254,6 +1239,7 @@ async fn broker_as_client_peer_loop(
     }).detach();
 
     let mut fut_timeout = make_timeout();
+    let (ConnectionKind::ToParentBroker { shv_root } | ConnectionKind::ToChildBroker { shv_root, .. }) = &connection_kind;
     loop {
         select! {
             _ = fut_timeout => {
@@ -1274,7 +1260,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, shv_root, broker_writer.clone()).await?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1297,7 +1283,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_kind, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, shv_root, broker_writer.clone()).await?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
