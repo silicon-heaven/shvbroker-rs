@@ -543,7 +543,7 @@ pub(crate) async fn server_peer_loop(
             select! {
                 frame = fut_receive_frame => {
                     match frame {
-                        Ok(frame) => {
+                        Ok(mut frame) => {
                             if frame.protocol == Protocol::ResetSession {
                                 // delete peer state
                                 broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
@@ -556,6 +556,11 @@ pub(crate) async fn server_peer_loop(
                                     Err(_) => break 'session_loop,
                                 }
                             }
+
+                            if let Some(val) = frame.meta.remove(DOT_LOCAL_HACK) {
+                                peer_log!(warn, "Peer has sent our internal 'DOT_LOCAL_HACK: {val}', removing it from the frame");
+                            }
+
                             broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
                         }
                         Err(err) => {
