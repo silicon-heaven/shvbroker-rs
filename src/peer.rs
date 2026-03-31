@@ -1197,15 +1197,6 @@ async fn broker_as_client_peer_loop(
     };
     client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).or(login_timeout).await?;
 
-    match &connection_kind {
-        ConnectionKind::ToParentBroker { .. } => {
-            info!("Login to parent broker OK");
-        }
-        ConnectionKind::ToChildBroker { .. } => {
-            info!("Login to child broker OK");
-        }
-    }
-
     let (broker_to_peer_sender, mut broker_to_peer_receiver) = unbounded::<BrokerToPeerMessage>();
     broker_writer.unbounded_send(BrokerCommand::NewPeer {
         peer_id,
