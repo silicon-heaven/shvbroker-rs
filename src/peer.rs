@@ -710,12 +710,16 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
 }
 async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     match &connection_kind {
-        ConnectionKind::ToParentBroker{ .. } => {
+        ConnectionKind::ToParentBroker{ shv_root } => {
             // Only RPC requests can be received from parent broker,
             // no signals, no responses
             if frame.is_request() {
                 let mut frame = frame;
-                frame = fix_request_frame_shv_root(frame, connection_kind)?;
+                let shv_path = frame.shv_path().unwrap_or_default();
+                if shv_path.is_empty() && is_dot_local_granted(&frame) {
+                    frame.meta.insert(DOT_LOCAL_HACK, true.into());
+                }
+                frame = fix_request_frame_shv_root(frame, shv_root)?;
                 broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
             } else if frame.is_response() {
                 broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
@@ -1315,9 +1319,9 @@ async fn broker_as_client_peer_loop(
                                             frame.set_shvpath(&new_path);
                                         }
                                 }
-                                ConnectionKind::ToChildBroker{ .. } => {
+                                ConnectionKind::ToChildBroker{ shv_root, .. } => {
                                     if frame.is_request() {
-                                        frame = fix_request_frame_shv_root(frame, &connection_kind)?;
+                                        frame = fix_request_frame_shv_root(frame, shv_root)?;
                                     }
                                 }
                             }
@@ -1333,16 +1337,8 @@ async fn broker_as_client_peer_loop(
     };
     Ok(())
 }
-fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionKind) -> shvrpc::Result<RpcFrame> {
+fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Result<RpcFrame> {
     let shv_path = frame.shv_path().unwrap_or_default().to_owned();
-    let (add_dot_local_hack, shv_root) = match connection_kind {
-        ConnectionKind::ToParentBroker { shv_root } => {
-            (shv_path.is_empty(), shv_root)
-        }
-        ConnectionKind::ToChildBroker { shv_root, .. } => {
-            (&shv_path == shv_root, shv_root)
-        }
-    };
     // println!("current path: {shv_path}");
     let shv_path = if starts_with_path(&shv_path, ".broker") {
         if let Some(method) = frame.method() && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE) {
@@ -1355,9 +1351,6 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionK
         // hack to enable parent broker to call paths under exported_root
         strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
     } else {
-        if add_dot_local_hack && is_dot_local_granted(&frame) {
-            frame.meta.insert(DOT_LOCAL_HACK, true.into());
-        }
         join_path(shv_root, &shv_path)
     };
     frame.set_shvpath(&shv_path);
