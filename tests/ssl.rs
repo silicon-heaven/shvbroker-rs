@@ -7,7 +7,7 @@ use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
 use shvbroker::brokerimpl::{BrokerImpl, LastLogin, run_broker};
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen};
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
 use shvrpc::client::ClientConfig;
@@ -140,7 +140,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
             BrokerConnectionConfig {
                 name: "to-parent-broker".into(),
                 enabled: true,
-                connection_kind: ConnectionKind::ToParentBroker { shv_root: "".into(), mount_point: "".into() },
+                connection_settings: ConnectionMountSettings { shv_root: "".into(), mount_point: "".into() },
                 client: ClientConfig {
                     device_id: Some("test-child-broker".into()),
                     mount: None,

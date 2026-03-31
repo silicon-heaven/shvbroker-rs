@@ -46,7 +46,7 @@ use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
 use futures_rustls::rustls::ClientConfig as TlsClientConfig;
 use smol::io::BufReader;
 use smol::net::TcpStream;
-use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
+use crate::config::{BrokerConnectionConfig, ConnectionMountSettings, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
@@ -759,7 +759,7 @@ async fn broker_as_client_peer_loop_from_url(
         broker_as_client_peer_loop(
             peer_id,
             login_params_from_client_config(&config.client),
-            config.connection_kind,
+            config.connection_settings,
             false,
             broker_writer,
             frame_reader,
@@ -794,7 +794,7 @@ async fn broker_as_client_peer_loop_from_url(
             broker_as_client_peer_loop(
                 peer_id,
                 login_params_from_client_config(&config.client),
-                config.connection_kind,
+                config.connection_settings,
                 true,
                 broker_writer,
                 frame_reader,
@@ -873,14 +873,14 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         let peer_local_addr = PeerLocalAddr { peer_addr, local_addr };
         channels.insert(peer_local_addr, PeerChannels { writer_ack_tx, reader_frames_tx });
         let login_params = connection_config.login_params.clone();
-        let connection_kind = connection_config.connection_kind.clone();
+        let connection_settings = connection_config.connection_settings.clone();
         tasks.push(smol::spawn(async move {
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_addr);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_addr, local_addr);
             let res = broker_as_client_peer_loop(
                 peer_id,
                 login_params,
-                connection_kind,
+                connection_settings,
                 true,
                 broker_sender,
                 frame_reader,
@@ -1179,7 +1179,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 async fn broker_as_client_peer_loop(
     peer_id: PeerId,
     login_params: LoginParams,
-    connection_kind: ConnectionKind,
+    connection_settings: ConnectionMountSettings,
     reset_session: bool,
     broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
@@ -1200,7 +1200,7 @@ async fn broker_as_client_peer_loop(
     let (broker_to_peer_sender, mut broker_to_peer_receiver) = unbounded::<BrokerToPeerMessage>();
     broker_writer.unbounded_send(BrokerCommand::NewPeer {
         peer_id,
-        peer_kind: PeerKind::Broker(connection_kind.clone()),
+        peer_kind: PeerKind::Broker(connection_settings.clone()),
         sender: broker_to_peer_sender,
     })?;
 
@@ -1230,7 +1230,6 @@ async fn broker_as_client_peer_loop(
     }).detach();
 
     let mut fut_timeout = make_timeout();
-    let (ConnectionKind::ToParentBroker { shv_root, .. } | ConnectionKind::ToChildBroker { shv_root, .. }) = &connection_kind;
     loop {
         select! {
             _ = fut_timeout => {
@@ -1251,7 +1250,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, shv_root, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.shv_root, broker_writer.clone()).await?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1274,7 +1273,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, shv_root, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.shv_root, broker_writer.clone()).await?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
@@ -1295,11 +1294,11 @@ async fn broker_as_client_peer_loop(
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
                             if frame.is_signal()
-                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
+                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), &connection_settings.shv_root) {
                                     frame.set_shvpath(&new_path);
                                 }
                             if frame.is_request() {
-                                frame = fix_request_frame_shv_root(frame, shv_root)?;
+                                frame = fix_request_frame_shv_root(frame, &connection_settings.shv_root)?;
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;

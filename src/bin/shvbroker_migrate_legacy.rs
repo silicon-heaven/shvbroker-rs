@@ -5,7 +5,7 @@ use serde::Serialize;
 use shvbroker::config::{AccessRule, Mount, Password, ProfileValue, Role, User};
 use std::collections::BTreeMap;
 use serde::Deserialize;
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen, AzureConfig as BrokerAzureConfig};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen, AzureConfig as BrokerAzureConfig};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
 use url::Url;
@@ -425,7 +425,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
 
         if let Some(masters_cfg) = cfg.masters && masters_cfg.enabled {
             for (name, mconn) in masters_cfg.connections {
-                let connection_kind = ConnectionKind::ToParentBroker {
+                let connection_settings = ConnectionMountSettings {
                     shv_root: "".into(),
                     mount_point: "".into(),
                 };
@@ -482,7 +482,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 connections.push(BrokerConnectionConfig {
                     name,
                     enabled: mconn.enabled,
-                    connection_kind,
+                    connection_settings,
                     client,
                 });
             }
