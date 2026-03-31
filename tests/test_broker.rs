@@ -44,6 +44,7 @@ fn test_broker() -> shvrpc::Result<()> {
                     },
                     connection_settings: ConnectionMountSettings {
                         exported_shv_root: "test".to_string(),
+                        imported_shv_root: "".to_string(),
                         mount_point: "".to_string(),
                     },
                 }
@@ -307,7 +308,8 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
                     reconnect_interval: None,
                 },
                 connection_settings: ConnectionMountSettings {
-                    exported_shv_root: "test/child-broker/device".to_string(),
+                    exported_shv_root: "".to_string(),
+                    imported_shv_root: "test/child-broker/device".to_string(),
                     mount_point: "test/child-device".to_string(),
                 },
             }
