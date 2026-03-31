@@ -1682,26 +1682,17 @@ impl BrokerImpl {
             // connection has no user logged in, since it is outgoing, initiated by broker
             // it can be client connection to parent broker or client connection to child broker
             match &peer.peer_kind {
-                PeerKind::Broker(connection_kind) => {
-                    match connection_kind {
-                        ConnectionKind::ToParentBroker { .. } => {
-                            log!(target: "Access", Level::Debug, "ParentBroker: {peer_id}");
-                            if access_level.is_some() || access.is_some() {
-                                log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
-                                Ok((
-                                    access_level,
-                                    access.map(str::to_string)
-                                ))
-                            } else {
-                                log!(target: "Access", Level::Debug, "\tPermissionDenied");
-                                Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                            }
-                        }
-                        ConnectionKind::ToChildBroker { .. } => {
-                            // requests from child broker should not be allowed
-                            log!(target: "Access", Level::Debug, "Child broker cannot request parent one, PermissionDenied");
-                            Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                        }
+                PeerKind::Broker(_) => {
+                    log!(target: "Access", Level::Debug, "PeerKind::Broker: {peer_id}");
+                    if access_level.is_some() || access.is_some() {
+                        log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
+                        Ok((
+                            access_level,
+                            access.map(str::to_string)
+                        ))
+                    } else {
+                        log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                        Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
                     }
                 }
                 _ => {
