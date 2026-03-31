@@ -1250,7 +1250,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.shv_root, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1273,7 +1273,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.shv_root, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
@@ -1294,11 +1294,11 @@ async fn broker_as_client_peer_loop(
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
                             if frame.is_signal()
-                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), &connection_settings.shv_root) {
+                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), &connection_settings.exported_shv_root) {
                                     frame.set_shvpath(&new_path);
                                 }
                             if frame.is_request() {
-                                frame = fix_request_frame_shv_root(frame, &connection_settings.shv_root)?;
+                                frame = fix_request_frame_shv_root(frame, &connection_settings.exported_shv_root)?;
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;

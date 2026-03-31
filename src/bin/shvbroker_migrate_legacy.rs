@@ -426,7 +426,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
         if let Some(masters_cfg) = cfg.masters && masters_cfg.enabled {
             for (name, mconn) in masters_cfg.connections {
                 let connection_settings = ConnectionMountSettings {
-                    shv_root: "".into(),
+                    exported_shv_root: "".into(),
                     mount_point: "".into(),
                 };
 

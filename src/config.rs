@@ -64,7 +64,7 @@ pub struct TunnellingConfig {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ConnectionMountSettings {
-    pub shv_root: String,
+    pub exported_shv_root: String,
     pub mount_point: String,
 }
 
@@ -437,13 +437,13 @@ impl Default for BrokerConfig {
     fn default() -> Self {
         let child_tcp_broker_config = BrokerConnectionConfig {
             name: "TCP-to-child-broker".to_string(),
-            connection_settings: ConnectionMountSettings { shv_root: "".to_string(), mount_point: "".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), mount_point: "".to_string() },
             ..BrokerConnectionConfig::default()
         };
         let child_serial_broker_config = BrokerConnectionConfig {
             name: "serial-to-child-broker".to_string(),
             enabled: false,
-            connection_settings: ConnectionMountSettings { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
             client: ClientConfig {
                 url: Url::parse("serial:/dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
                 ..ClientConfig::default()
@@ -452,7 +452,7 @@ impl Default for BrokerConfig {
         let child_can_broker_config = BrokerConnectionConfig {
             name: "CAN-to-child-broker".to_string(),
             enabled: false,
-            connection_settings: ConnectionMountSettings { shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
             client: ClientConfig {
                 url: Url::parse("can:vcan0?local_address=1&peer_address=2&user=test").expect("CAN default URL must be valid"),
                 ..ClientConfig::default()

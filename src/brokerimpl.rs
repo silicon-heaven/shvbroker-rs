@@ -1150,8 +1150,8 @@ impl BrokerImpl {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
             if let Some(peer) = self.peers.read().await.get(&peer_id) {
                 if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
-                    // remove shv_root in notifications coming from broker
-                    if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.shv_root) {
+                    // remove exported_shv_root in notifications coming from broker
+                    if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.exported_shv_root) {
                         shv_path = new_path;
                     }
                 }
