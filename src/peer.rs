@@ -1230,7 +1230,7 @@ async fn broker_as_client_peer_loop(
     }).detach();
 
     let mut fut_timeout = make_timeout();
-    let (ConnectionKind::ToParentBroker { shv_root } | ConnectionKind::ToChildBroker { shv_root, .. }) = &connection_kind;
+    let (ConnectionKind::ToParentBroker { shv_root, .. } | ConnectionKind::ToChildBroker { shv_root, .. }) = &connection_kind;
     loop {
         select! {
             _ = fut_timeout => {

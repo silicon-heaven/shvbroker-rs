@@ -44,6 +44,7 @@ fn test_broker() -> shvrpc::Result<()> {
                     },
                     connection_kind: ConnectionKind::ToParentBroker {
                         shv_root: "test".to_string(),
+                        mount_point: "".to_string(),
                     },
                 }
             ],

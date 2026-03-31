@@ -64,13 +64,13 @@ pub struct TunnellingConfig {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ConnectionKind {
-    ToParentBroker {shv_root: String},
-    ToChildBroker {shv_root: String, mount_point: String},
+    ToParentBroker { shv_root: String, mount_point: String },
+    ToChildBroker { shv_root: String, mount_point: String },
 }
 
 impl Default for ConnectionKind {
     fn default() -> Self {
-        ConnectionKind::ToParentBroker { shv_root: "".to_string() }
+        ConnectionKind::ToParentBroker { shv_root: "".to_string(), mount_point: "".to_string() }
     }
 }
 

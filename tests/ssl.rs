@@ -140,7 +140,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
             BrokerConnectionConfig {
                 name: "to-parent-broker".into(),
                 enabled: true,
-                connection_kind: ConnectionKind::ToParentBroker { shv_root: "".into(), },
+                connection_kind: ConnectionKind::ToParentBroker { shv_root: "".into(), mount_point: "".into() },
                 client: ClientConfig {
                     device_id: Some("test-child-broker".into()),
                     mount: None,
