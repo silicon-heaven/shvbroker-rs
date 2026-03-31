@@ -1298,7 +1298,7 @@ async fn broker_as_client_peer_loop(
                                     frame.set_shvpath(&new_path);
                                 }
                             if frame.is_request() {
-                                frame = fix_request_frame_shv_root(frame, &connection_settings.exported_shv_root)?;
+                                frame = fix_request_frame_shv_root(frame, &connection_settings.imported_shv_root)?;
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;
