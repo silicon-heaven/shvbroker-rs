@@ -1303,18 +1303,12 @@ async fn broker_as_client_peer_loop(
                         BrokerToPeerMessage::SendFrame(frame) => {
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
-                            match &connection_kind {
-                                ConnectionKind::ToParentBroker{shv_root} => {
-                                    if frame.is_signal()
-                                        && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
-                                            frame.set_shvpath(&new_path);
-                                        }
+                            if frame.is_signal()
+                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
+                                    frame.set_shvpath(&new_path);
                                 }
-                                ConnectionKind::ToChildBroker{ shv_root, .. } => {
-                                    if frame.is_request() {
-                                        frame = fix_request_frame_shv_root(frame, shv_root)?;
-                                    }
-                                }
+                            if frame.is_request() {
+                                frame = fix_request_frame_shv_root(frame, shv_root)?;
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;
