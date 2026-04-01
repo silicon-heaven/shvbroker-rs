@@ -1,4 +1,4 @@
-use crate::config::{AccessConfig, AccessRule, ConnectionKind, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
+use crate::config::{AccessConfig, AccessRule, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 use crate::shvnode::{
     AppNode, BrokerAccessAllowedIpsNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
@@ -141,7 +141,7 @@ pub enum PeerKind {
     Client {
         user: String,
     },
-    Broker(ConnectionKind),
+    Broker(ConnectionMountSettings),
     Device {
         user: String,
         device_id: Option<String>,
@@ -242,9 +242,6 @@ impl Peer {
     }
 
     fn forwarded_subscription_params(&self, ri: &ShvRI) -> shvrpc::Result<Option<(SubscribeApi, ShvRI)>> {
-        if self.is_connected_to_parent_broker() {
-            return Ok(None);
-        }
         let (Some(mount_point), Some(subscribe_api)) = (&self.mount_point, self.subscribe_api) else {
             return Ok(None)
         };
@@ -253,10 +250,6 @@ impl Peer {
         };
         let forwarded_ri = ShvRI::from_path_method_signal(forwarded_path, ri.method(), ri.signal())?;
         Ok(Some((subscribe_api, forwarded_ri)))
-    }
-
-    fn is_connected_to_parent_broker(&self) -> bool {
-        matches!(self.peer_kind, PeerKind::Broker(ConnectionKind::ToParentBroker { .. }))
     }
 }
 
@@ -543,7 +536,7 @@ pub(crate) struct CanConnectionConfig {
     pub local_address: u8,
     pub peer_address: u8,
     pub login_params: shvrpc::client::LoginParams,
-    pub connection_kind: ConnectionKind,
+    pub connection_settings: ConnectionMountSettings,
     pub reconnect_interval: Duration,
 }
 
@@ -615,7 +608,7 @@ fn can_interfaces_config(broker_config: &crate::config::BrokerConfig) -> Vec<Can
         };
 
         let login_params = crate::peer::login_params_from_client_config(client_config);
-        let connection_kind = connection_config.connection_kind.clone();
+        let connection_settings = connection_config.connection_settings.clone();
 
         let reconnect_interval = connection_config.client.reconnect_interval.unwrap_or_else(|| {
             const DEFAULT_RECONNECT_INTERVAL_SEC: u64 = 10;
@@ -627,7 +620,7 @@ fn can_interfaces_config(broker_config: &crate::config::BrokerConfig) -> Vec<Can
             .entry(iface.to_string())
             .or_insert_with(|| CanInterfaceConfig { interface: iface.into(), ..Default::default() });
 
-        iface_cfg.connections.push(CanConnectionConfig { local_address, peer_address, login_params, reconnect_interval, connection_kind });
+        iface_cfg.connections.push(CanConnectionConfig { local_address, peer_address, login_params, reconnect_interval, connection_settings });
     }
 
     interfaces.into_values().collect()
@@ -1156,11 +1149,9 @@ impl BrokerImpl {
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
             if let Some(peer) = self.peers.read().await.get(&peer_id) {
-                if let PeerKind::Broker(ConnectionKind::ToChildBroker { shv_root, .. }) =
-                    &peer.peer_kind
-                {
-                    // remove shv_root in notifications coming from child broker
-                    if let Some(new_path) = cut_prefix(&shv_path, shv_root) {
+                if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
+                    // remove imported_shv_root in notifications coming from broker
+                    if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
                         shv_path = new_path;
                     }
                 }
@@ -1531,9 +1522,6 @@ impl BrokerImpl {
         if self.check_subscribe_api(new_peer_id).await?.is_none() {
             return Ok(());
         }
-        if self.peers.read().await.get(&new_peer_id).is_none_or(Peer::is_connected_to_parent_broker) {
-            return Ok(());
-        }
         let forwarded_ris = self.peers.read()
             .await
             .iter()
@@ -1682,26 +1670,17 @@ impl BrokerImpl {
             // connection has no user logged in, since it is outgoing, initiated by broker
             // it can be client connection to parent broker or client connection to child broker
             match &peer.peer_kind {
-                PeerKind::Broker(connection_kind) => {
-                    match connection_kind {
-                        ConnectionKind::ToParentBroker { .. } => {
-                            log!(target: "Access", Level::Debug, "ParentBroker: {peer_id}");
-                            if access_level.is_some() || access.is_some() {
-                                log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
-                                Ok((
-                                    access_level,
-                                    access.map(str::to_string)
-                                ))
-                            } else {
-                                log!(target: "Access", Level::Debug, "\tPermissionDenied");
-                                Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                            }
-                        }
-                        ConnectionKind::ToChildBroker { .. } => {
-                            // requests from child broker should not be allowed
-                            log!(target: "Access", Level::Debug, "Child broker cannot request parent one, PermissionDenied");
-                            Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                        }
+                PeerKind::Broker(_) => {
+                    log!(target: "Access", Level::Debug, "PeerKind::Broker: {peer_id}");
+                    if access_level.is_some() || access.is_some() {
+                        log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
+                        Ok((
+                            access_level,
+                            access.map(str::to_string)
+                        ))
+                    } else {
+                        log!(target: "Access", Level::Debug, "\tPermissionDenied");
+                        Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
                     }
                 }
                 _ => {
@@ -1776,16 +1755,13 @@ impl BrokerImpl {
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
         let effective_mount_point = match &peer_kind {
             PeerKind::Client { .. } => None,
-            PeerKind::Broker(connection_kind) => match connection_kind {
-                ConnectionKind::ToParentBroker { .. } => None,
-                ConnectionKind::ToChildBroker { mount_point, .. } => {
-                    if mount_point.is_empty() {
-                        None
-                    } else {
-                        Some(mount_point.to_string())
-                    }
+            PeerKind::Broker(connection_settings) => {
+                if connection_settings.mount_point.is_empty() {
+                    None
+                } else {
+                    Some(connection_settings.mount_point.clone())
                 }
-            },
+            }
             PeerKind::Device {
                 device_id,
                 mount_point,

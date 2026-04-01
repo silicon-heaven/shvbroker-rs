@@ -46,7 +46,7 @@ use shvrpc::websocketrw::{WebSocketFrameReader,WebSocketFrameWriter};
 use futures_rustls::rustls::ClientConfig as TlsClientConfig;
 use smol::io::BufReader;
 use smol::net::TcpStream;
-use crate::config::{BrokerConnectionConfig, ConnectionKind, SharedBrokerConfig};
+use crate::config::{BrokerConnectionConfig, ConnectionMountSettings, SharedBrokerConfig};
 use crate::cut_prefix;
 use crate::serial::create_serial_frame_reader_writer;
 
@@ -543,7 +543,7 @@ pub(crate) async fn server_peer_loop(
             select! {
                 frame = fut_receive_frame => {
                     match frame {
-                        Ok(frame) => {
+                        Ok(mut frame) => {
                             if frame.protocol == Protocol::ResetSession {
                                 // delete peer state
                                 broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
@@ -556,6 +556,11 @@ pub(crate) async fn server_peer_loop(
                                     Err(_) => break 'session_loop,
                                 }
                             }
+
+                            if let Some(val) = frame.meta.remove(DOT_LOCAL_HACK) {
+                                peer_log!(warn, "Peer has sent our internal 'DOT_LOCAL_HACK: {val}', removing it from the frame");
+                            }
+
                             broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
                         }
                         Err(err) => {
@@ -708,31 +713,20 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, connection_kind: &ConnectionKind, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
-    match &connection_kind {
-        ConnectionKind::ToParentBroker{ .. } => {
-            // Only RPC requests can be received from parent broker,
-            // no signals, no responses
-            if frame.is_request() {
-                let mut frame = frame;
-                frame = fix_request_frame_shv_root(frame, connection_kind)?;
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else if frame.is_response() {
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else {
-                warn!("RPC signal should not be received from client connection to parent broker: {}", &frame);
-            }
+async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+    if frame.is_request() {
+        let mut frame = frame;
+        let shv_path = frame.shv_path().unwrap_or_default();
+        if shv_path.is_empty() && is_dot_local_granted(&frame) {
+            frame.meta.insert(DOT_LOCAL_HACK, true.into());
         }
-        ConnectionKind::ToChildBroker{ .. } => {
-            // Only RPC signals and responses can be received from child broker,
-            // no requests
-            if frame.is_signal() || frame.is_response() {
-                broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
-            } else {
-                warn!("RPC request should not be received from client connection to child broker: {}", &frame);
-            }
-        }
-    };
+        frame = fix_request_frame_shv_root(frame, shv_root)?;
+        broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
+    } else if frame.is_signal() || frame.is_response() {
+        broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
+    } else {
+        warn!("Invalid frame type received: {}", &frame);
+    }
     Ok(())
 }
 
@@ -765,7 +759,7 @@ async fn broker_as_client_peer_loop_from_url(
         broker_as_client_peer_loop(
             peer_id,
             login_params_from_client_config(&config.client),
-            config.connection_kind,
+            config.connection_settings,
             false,
             broker_writer,
             frame_reader,
@@ -800,7 +794,7 @@ async fn broker_as_client_peer_loop_from_url(
             broker_as_client_peer_loop(
                 peer_id,
                 login_params_from_client_config(&config.client),
-                config.connection_kind,
+                config.connection_settings,
                 true,
                 broker_writer,
                 frame_reader,
@@ -879,14 +873,14 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         let peer_local_addr = PeerLocalAddr { peer_addr, local_addr };
         channels.insert(peer_local_addr, PeerChannels { writer_ack_tx, reader_frames_tx });
         let login_params = connection_config.login_params.clone();
-        let connection_kind = connection_config.connection_kind.clone();
+        let connection_settings = connection_config.connection_settings.clone();
         tasks.push(smol::spawn(async move {
             let frame_reader = CanFrameReader::new(reader_frames_rx, reader_ack_tx, peer_id, peer_addr);
             let frame_writer = CanFrameWriter::new(writer_frames_tx, writer_ack_rx, peer_id, peer_addr, local_addr);
             let res = broker_as_client_peer_loop(
                 peer_id,
                 login_params,
-                connection_kind,
+                connection_settings,
                 true,
                 broker_sender,
                 frame_reader,
@@ -1185,7 +1179,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 async fn broker_as_client_peer_loop(
     peer_id: PeerId,
     login_params: LoginParams,
-    connection_kind: ConnectionKind,
+    connection_settings: ConnectionMountSettings,
     reset_session: bool,
     broker_writer: UnboundedSender<BrokerCommand>,
     mut frame_reader: impl FrameReader + Send,
@@ -1203,19 +1197,10 @@ async fn broker_as_client_peer_loop(
     };
     client::login(&mut frame_reader, &mut frame_writer, &login_params, reset_session).or(login_timeout).await?;
 
-    match &connection_kind {
-        ConnectionKind::ToParentBroker { .. } => {
-            info!("Login to parent broker OK");
-        }
-        ConnectionKind::ToChildBroker { .. } => {
-            info!("Login to child broker OK");
-        }
-    }
-
     let (broker_to_peer_sender, mut broker_to_peer_receiver) = unbounded::<BrokerToPeerMessage>();
     broker_writer.unbounded_send(BrokerCommand::NewPeer {
         peer_id,
-        peer_kind: PeerKind::Broker(connection_kind.clone()),
+        peer_kind: PeerKind::Broker(connection_settings.clone()),
         sender: broker_to_peer_sender,
     })?;
 
@@ -1265,7 +1250,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_kind, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1288,7 +1273,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_kind, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
@@ -1308,18 +1293,12 @@ async fn broker_as_client_peer_loop(
                         BrokerToPeerMessage::SendFrame(frame) => {
                             // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
                             let mut frame = frame;
-                            match &connection_kind {
-                                ConnectionKind::ToParentBroker{shv_root} => {
-                                    if frame.is_signal()
-                                        && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), shv_root) {
-                                            frame.set_shvpath(&new_path);
-                                        }
+                            if frame.is_signal()
+                                && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), &connection_settings.exported_shv_root) {
+                                    frame.set_shvpath(&new_path);
                                 }
-                                ConnectionKind::ToChildBroker{ .. } => {
-                                    if frame.is_request() {
-                                        frame = fix_request_frame_shv_root(frame, &connection_kind)?;
-                                    }
-                                }
+                            if frame.is_request() {
+                                frame = fix_request_frame_shv_root(frame, &connection_settings.imported_shv_root)?;
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;
@@ -1333,16 +1312,8 @@ async fn broker_as_client_peer_loop(
     };
     Ok(())
 }
-fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionKind) -> shvrpc::Result<RpcFrame> {
+fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Result<RpcFrame> {
     let shv_path = frame.shv_path().unwrap_or_default().to_owned();
-    let (add_dot_local_hack, shv_root) = match connection_kind {
-        ConnectionKind::ToParentBroker { shv_root } => {
-            (shv_path.is_empty(), shv_root)
-        }
-        ConnectionKind::ToChildBroker { shv_root, .. } => {
-            (&shv_path == shv_root, shv_root)
-        }
-    };
     // println!("current path: {shv_path}");
     let shv_path = if starts_with_path(&shv_path, ".broker") {
         if let Some(method) = frame.method() && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE) {
@@ -1355,9 +1326,6 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, connection_kind: &ConnectionK
         // hack to enable parent broker to call paths under exported_root
         strip_prefix_path(&shv_path, DOT_LOCAL_DIR).expect("DOT_LOCAL_DIR").to_string()
     } else {
-        if add_dot_local_hack && is_dot_local_granted(&frame) {
-            frame.meta.insert(DOT_LOCAL_HACK, true.into());
-        }
         join_path(shv_root, &shv_path)
     };
     frame.set_shvpath(&shv_path);

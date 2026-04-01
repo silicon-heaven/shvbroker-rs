@@ -12,7 +12,7 @@ use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use smol::lock::RwLock;
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionKind, Listen};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen};
 use url::Url;
 use crate::common::{KillProcessGuard, ShvCallCommand, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
@@ -42,8 +42,10 @@ fn test_broker() -> shvrpc::Result<()> {
                         heartbeat_interval: duration_str::parse("1m")?,
                         reconnect_interval: None,
                     },
-                    connection_kind: ConnectionKind::ToParentBroker {
-                        shv_root: "test".to_string(),
+                    connection_settings: ConnectionMountSettings {
+                        exported_shv_root: "test".to_string(),
+                        imported_shv_root: "".to_string(),
+                        mount_point: "".to_string(),
                     },
                 }
             ],
@@ -305,8 +307,9 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
                     heartbeat_interval: duration_str::parse("1m")?,
                     reconnect_interval: None,
                 },
-                connection_kind: ConnectionKind::ToChildBroker {
-                    shv_root: "test/child-broker/device".to_string(),
+                connection_settings: ConnectionMountSettings {
+                    exported_shv_root: "".to_string(),
+                    imported_shv_root: "test/child-broker/device".to_string(),
                     mount_point: "test/child-device".to_string(),
                 },
             }

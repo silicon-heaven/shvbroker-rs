@@ -351,6 +351,7 @@ pub const METH_MOUNTED_CLIENT_INFO: &str = "mountedClientInfo";
 pub const METH_CLIENTS: &str = "clients";
 pub const METH_MOUNTS: &str = "mounts";
 pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
+pub const METH_BROKER_ID: &str = "brokerId";
 
 const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "Int", "ClientInfo", &[], "");
 const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "String", "ClientInfo", &[], "");
@@ -367,6 +368,7 @@ const META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_
 );
 const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flags::empty(), AccessLevel::SuperService, "void", "List[String]", &[], "");
 const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flags::empty(), AccessLevel::SuperService, "Int", "void", &[], "");
+const META_METH_BROKER_ID: MetaMethod = MetaMethod::new_static(METH_BROKER_ID, Flags::IsGetter, AccessLevel::Service, "", "String", &[], "");
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
@@ -393,6 +395,7 @@ const BROKER_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL,
     &META_METH_MOUNTS,
     &META_METH_DISCONNECT_CLIENT,
+    &META_METH_BROKER_ID,
 ];
 
 #[async_trait::async_trait]
@@ -452,6 +455,9 @@ impl ShvNode for BrokerNode {
                 } else {
                     Err(format!("Disconnect client error - peer {peer_id} not found.").into())
                 }
+            }
+            METH_BROKER_ID => {
+                Ok(ProcessRequestRetval::Retval(ctx.state.config.name.clone().into()))
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;
