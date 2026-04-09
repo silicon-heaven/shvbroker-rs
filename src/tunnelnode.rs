@@ -210,14 +210,13 @@ pub(crate) async fn tunnel_task(
         log!(target: "Tunnel", Level::Debug, "EXIT write task");
         Ok::<(), Error>(())
     }).detach();
+
     fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> (PeerId, MetaMap, Result<RpcValue, RpcError>)  {
         let blob = RpcValue::from(&data[..]);
         data.clear();
         (peer_id, response_meta, Ok(blob))
     }
-    fn make_err_response(peer_id: PeerId, response_meta: MetaMap, err: RpcError) -> (PeerId, MetaMap, Result<RpcValue, RpcError>) {
-        (peer_id, response_meta, Err(err))
-    }
+
     loop {
         select! {
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
@@ -265,8 +264,7 @@ pub(crate) async fn tunnel_task(
                         ToRemoteMsg::DestroyConnection => {
                             trace!(target: "Tunnel", "CMD DestroyConnection");
                             if write_request_id.is_some() {
-                                let (peer_id, response_meta, result) = make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")));
-                                state.send_response(peer_id, response_meta, result).await?;
+                                state.send_response(peer_id, response_meta.clone(), Err(RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")))).await?;
                             }
                             break
                         }
