@@ -11,7 +11,7 @@ use crate::shvnode::{
 use futures::FutureExt;
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use log::{error, log, Level};
-use shvproto::{MetaMap, RpcValue};
+use shvproto::MetaMap;
 use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
@@ -211,12 +211,6 @@ pub(crate) async fn tunnel_task(
         Ok::<(), Error>(())
     }).detach();
 
-    fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> (PeerId, MetaMap, Result<RpcValue, RpcError>)  {
-        let blob = RpcValue::from(&data[..]);
-        data.clear();
-        (peer_id, response_meta, Ok(blob))
-    }
-
     loop {
         select! {
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
@@ -232,8 +226,7 @@ pub(crate) async fn tunnel_task(
                         let mut response_meta = response_meta.clone();
                         response_meta.set_seqno(read_seqno);
                         read_seqno += 1;
-                        let (peer_id, response_meta, result) = make_response(peer_id, response_meta, &mut response_buff);
-                        state.send_response(peer_id, response_meta, result).await?;
+                        state.send_response(peer_id, response_meta, Ok(std::mem::take(&mut response_buff).into())).await?;
                     }
                 },
                 Err(e) => {
@@ -252,8 +245,7 @@ pub(crate) async fn tunnel_task(
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
                                     trace!(target: "Tunnel", "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
-                                    let (peer_id, response_meta, result) = make_response(peer_id, response_meta.clone(), &mut response_buff);
-                                    state.send_response(peer_id, response_meta, result).await?;
+                                    state.send_response(peer_id, response_meta.clone(), Ok(std::mem::take(&mut response_buff).into())).await?;
                                 }
                             }
                             if !data.is_empty() {
