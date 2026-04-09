@@ -78,7 +78,6 @@ impl ShvNode for TunnelNode {
     async fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
-            let shv_path = rq.shv_path().unwrap_or_default();
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
