@@ -168,19 +168,11 @@ pub(crate) async fn tunnel_task(
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
             log!(target: "Tunnel", Level::Debug, "connected OK");
-            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
-                peer_id,
-                meta: response_meta.clone(),
-                result: Ok(format!("{tunnel_id}").into()),
-            })?;
+            state.send_response( peer_id, response_meta.clone(), Ok(format!("{tunnel_id}").into())).await?;
             stream
         }
         Err(e) => {
-            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
-                peer_id,
-                meta: response_meta.clone(),
-                result: Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string())),
-            })?;
+            state.send_response( peer_id, response_meta.clone(), Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string()))).await?;
             return Err(e.to_string().into());
         }
     };
@@ -218,22 +210,13 @@ pub(crate) async fn tunnel_task(
         log!(target: "Tunnel", Level::Debug, "EXIT write task");
         Ok::<(), Error>(())
     }).detach();
-    fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> BrokerCommand {
+
+    fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> (PeerId, MetaMap, Result<RpcValue, RpcError>)  {
         let blob = RpcValue::from(&data[..]);
         data.clear();
-        BrokerCommand::SendResponse {
-            peer_id,
-            meta: response_meta,
-            result: Ok(blob),
-        }
+        (peer_id, response_meta, Ok(blob))
     }
-    fn make_err_response(peer_id: PeerId, response_meta: MetaMap, err: RpcError) -> BrokerCommand {
-        BrokerCommand::SendResponse {
-            peer_id,
-            meta: response_meta,
-            result: Err(err),
-        }
-    }
+
     loop {
         select! {
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
@@ -249,7 +232,8 @@ pub(crate) async fn tunnel_task(
                         let mut response_meta = response_meta.clone();
                         response_meta.set_seqno(read_seqno);
                         read_seqno += 1;
-                        to_broker_sender.unbounded_send(make_response(peer_id, response_meta, &mut response_buff))?;
+                        let (peer_id, response_meta, result) = make_response(peer_id, response_meta, &mut response_buff);
+                        state.send_response(peer_id, response_meta, result).await?;
                     }
                 },
                 Err(e) => {
@@ -268,7 +252,8 @@ pub(crate) async fn tunnel_task(
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
                                     trace!(target: "Tunnel", "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
-                                    to_broker_sender.unbounded_send(make_response(peer_id, response_meta.clone(), &mut response_buff))?;
+                                    let (peer_id, response_meta, result) = make_response(peer_id, response_meta.clone(), &mut response_buff);
+                                    state.send_response(peer_id, response_meta, result).await?;
                                 }
                             }
                             if !data.is_empty() {
@@ -279,7 +264,7 @@ pub(crate) async fn tunnel_task(
                         ToRemoteMsg::DestroyConnection => {
                             trace!(target: "Tunnel", "CMD DestroyConnection");
                             if write_request_id.is_some() {
-                                to_broker_sender.unbounded_send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed."))))?;
+                                state.send_response(peer_id, response_meta.clone(), Err(RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")))).await?;
                             }
                             break
                         }
