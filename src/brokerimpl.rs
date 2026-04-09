@@ -177,7 +177,7 @@ impl Peer {
     fn user(&self) -> Option<&str> {
         match &self.peer_kind {
             PeerKind::Client { user, .. } => Some(user),
-            PeerKind::Broker(_) => None,
+            PeerKind::Broker(connection_settings) => Some(&connection_settings.exported_root_user),
             PeerKind::Device { user, .. } => Some(user),
         }
     }

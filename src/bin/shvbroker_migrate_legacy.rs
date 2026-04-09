@@ -429,6 +429,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                     exported_shv_root: "".into(),
                     imported_shv_root: "".into(),
                     mount_point: "".into(),
+                    exported_root_user: "broker".to_string(),
                 };
 
                 let base_host = mconn
