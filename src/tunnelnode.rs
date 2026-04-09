@@ -227,8 +227,7 @@ pub(crate) async fn tunnel_task(
                         response_meta.set_seqno(read_seqno);
                         read_seqno += 1;
                         state.send_response(peer_id, response_meta, Ok(std::mem::take(&mut response_buff).into())).await?;
-                    }
-                },
+                        response_buff.extend_from_slice(&read_buff[..bytes_read]);
                 Err(e) => {
                     error!("tunnel socket error: {e}");
                     break;
