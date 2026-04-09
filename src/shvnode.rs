@@ -487,7 +487,6 @@ impl ShvNode for BrokerNode {
                         shv_path,
                         method,
                         None,
-                        frame.tag(shvrpc::rpcmessage::Tag::Access as i32).map(RpcValue::as_str),
                     )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
@@ -672,7 +671,6 @@ impl ShvNode for BrokerCurrentClientNode {
                         shv_path,
                         method,
                         None,
-                        frame.tag(shvrpc::rpcmessage::Tag::Access as i32).map(RpcValue::as_str),
                     )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
@@ -686,9 +684,11 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_PROFILE => {
                 let state = ctx.state.clone();
-                let Some(user_roles) = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
-                    return Err("This connection does not have any roles associated with it".into());
+                let peers = state.peers.read().await;
+                let Some(peer) = peers.get(&ctx.peer_id) else {
+                    return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
+                let user_roles = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.access.read().await, peer);
                 let access = state.access.read().await;
                 let merged_profile = ctx.state
                     .flatten_roles(user_roles.as_slice())
@@ -707,9 +707,11 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_USER_ROLES => {
                 let state = ctx.state.clone();
-                let Some(user_roles) = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.peers.read().await, &*state.access.read().await, ctx.peer_id) else {
-                    return Err("This connection does not have any roles associated with it".into());
+                let peers = state.peers.read().await;
+                let Some(peer) = peers.get(&ctx.peer_id) else {
+                    return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
+                let user_roles = user_base_roles(&*state.oauth2_user_groups.read().await, &*state.access.read().await, peer);
 
                 if user_roles.is_empty() {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
