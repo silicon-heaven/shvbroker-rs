@@ -134,7 +134,9 @@ impl ShvNode for TunnelNode {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
                         }
-                        command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid))
+                        if let Err(e) = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid)) {
+                            error!("Failed to send TunnelClosed for {tunid}: {e}");
+                        }
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
