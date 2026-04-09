@@ -484,6 +484,7 @@ impl Default for BrokerConfig {
             access: AccessConfig {
                 users: BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false }),
+                    ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false }),
                     ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false }),
