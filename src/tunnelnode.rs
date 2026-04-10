@@ -78,7 +78,6 @@ impl ShvNode for TunnelNode {
     async fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
-            let shv_path = rq.shv_path().unwrap_or_default();
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
@@ -134,7 +133,9 @@ impl ShvNode for TunnelNode {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
                         }
-                        command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid))
+                        if let Err(e) = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid)) {
+                            error!("Failed to send TunnelClosed for {tunid}: {e}");
+                        }
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
