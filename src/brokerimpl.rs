@@ -96,11 +96,6 @@ pub enum BrokerCommand {
     PeerGone {
         peer_id: PeerId,
     },
-    SendResponse {
-        peer_id: PeerId,
-        meta: MetaMap,
-        result: Result<RpcValue, RpcError>,
-    },
     RpcCall {
         peer_id: PeerId,
         request: RpcMessage,
@@ -988,23 +983,13 @@ impl BrokerImpl {
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
-                    self.command_sender
-                        .unbounded_send(BrokerCommand::SendResponse {
-                            peer_id,
-                            meta: response_meta,
-                            result: Err(err),
-                        })?;
+                    self.send_response(peer_id, response_meta, Err(err)).await?;
                     return Ok(());
                 }
             };
             let local_result = process_local_dir_ls(&*self.mounts.read().await, &frame);
             if let Some(result) = local_result {
-                self.command_sender
-                    .unbounded_send(BrokerCommand::SendResponse {
-                        peer_id,
-                        meta: response_meta,
-                        result,
-                    })?;
+                self.send_response(peer_id, response_meta, result).await?;
                 return Ok(());
             }
             //let self.= self.read().map_err(|e| e.to_string())?;
@@ -1075,12 +1060,7 @@ impl BrokerImpl {
                                 Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
                                 Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
                             };
-                            self.command_sender
-                                .unbounded_send(BrokerCommand::SendResponse {
-                                    peer_id,
-                                    meta: response_meta,
-                                    result,
-                                })?;
+                            self.send_response(peer_id, response_meta, result).await?;
                         } else {
                             let err = RpcError::new(
                                 RpcErrorCode::PermissionDenied,
@@ -1090,12 +1070,7 @@ impl BrokerImpl {
                                     frame.method().unwrap_or_default()
                                 ),
                             );
-                            self.command_sender
-                                .unbounded_send(BrokerCommand::SendResponse {
-                                    peer_id,
-                                    meta: response_meta,
-                                    result: Err(err),
-                                })?;
+                            self.send_response(peer_id, response_meta, Err(err)).await?;
                         }
                     }
                 }
@@ -1104,12 +1079,7 @@ impl BrokerImpl {
                     RpcErrorCode::MethodNotFound,
                     format!("Invalid shv path {shv_path}:{method}()"),
                 );
-                self.command_sender
-                    .unbounded_send(BrokerCommand::SendResponse {
-                        peer_id,
-                        meta: response_meta,
-                        result: Err(err),
-                    })?;
+                self.send_response(peer_id, response_meta, Err(err)).await?;
             }
             return Ok(());
         } else if frame.is_response() {
@@ -1438,23 +1408,6 @@ impl BrokerImpl {
                 if sender.send(session_token).is_err() {
                     debug!("SetOAuth2Groups receiver dropped before sending the response");
                 }
-            }
-            BrokerCommand::SendResponse {
-                peer_id,
-                meta,
-                result,
-            } => {
-                let peer_sender = self
-                    .peers
-                    .read()
-                    .await
-                    .get(&peer_id)
-                    .ok_or("Invalid peer ID")?
-                    .sender
-                    .clone();
-                let mut msg = RpcMessage::from_meta(meta);
-                msg.set_result_or_error(result);
-                peer_sender.unbounded_send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?))?;
             }
             BrokerCommand::RpcCall {
                 peer_id: client_id,
@@ -2036,6 +1989,21 @@ impl BrokerImpl {
         } else {
             false
         }
+    }
+
+    pub(crate) async fn send_response(&self, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
+        let peer_sender = self
+            .peers
+            .read()
+            .await
+            .get(&peer_id)
+            .ok_or("Invalid peer ID")?
+            .sender
+            .clone();
+        let mut msg = RpcMessage::from_meta(meta);
+        msg.set_result_or_error(result);
+        peer_sender.unbounded_send(BrokerToPeerMessage::SendFrame(RpcFrame::from_rpcmessage(&msg)?))?;
+        Ok(())
     }
 }
 

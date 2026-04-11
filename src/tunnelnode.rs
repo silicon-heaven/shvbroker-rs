@@ -11,7 +11,7 @@ use crate::shvnode::{
 use futures::FutureExt;
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use log::{error, log, Level};
-use shvproto::{MetaMap, RpcValue};
+use shvproto::MetaMap;
 use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
@@ -78,7 +78,6 @@ impl ShvNode for TunnelNode {
     async fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
-            let shv_path = rq.shv_path().unwrap_or_default();
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
@@ -134,7 +133,9 @@ impl ShvNode for TunnelNode {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, state).await {
                             error!("{e}")
                         }
-                        command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid))
+                        if let Err(e) = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid)) {
+                            error!("Failed to send TunnelClosed for {tunid}: {e}");
+                        }
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
@@ -168,19 +169,11 @@ pub(crate) async fn tunnel_task(
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
             log!(target: "Tunnel", Level::Debug, "connected OK");
-            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
-                peer_id,
-                meta: response_meta.clone(),
-                result: Ok(format!("{tunnel_id}").into()),
-            })?;
+            state.send_response( peer_id, response_meta.clone(), Ok(format!("{tunnel_id}").into())).await?;
             stream
         }
         Err(e) => {
-            to_broker_sender.unbounded_send(BrokerCommand::SendResponse {
-                peer_id,
-                meta: response_meta.clone(),
-                result: Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string())),
-            })?;
+            state.send_response( peer_id, response_meta.clone(), Err(RpcError::new(RpcErrorCode::MethodCallException, e.to_string()))).await?;
             return Err(e.to_string().into());
         }
     };
@@ -218,22 +211,7 @@ pub(crate) async fn tunnel_task(
         log!(target: "Tunnel", Level::Debug, "EXIT write task");
         Ok::<(), Error>(())
     }).detach();
-    fn make_response(peer_id: PeerId, response_meta: MetaMap, data: &mut Vec<u8>) -> BrokerCommand {
-        let blob = RpcValue::from(&data[..]);
-        data.clear();
-        BrokerCommand::SendResponse {
-            peer_id,
-            meta: response_meta,
-            result: Ok(blob),
-        }
-    }
-    fn make_err_response(peer_id: PeerId, response_meta: MetaMap, err: RpcError) -> BrokerCommand {
-        BrokerCommand::SendResponse {
-            peer_id,
-            meta: response_meta,
-            result: Err(err),
-        }
-    }
+
     loop {
         select! {
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
@@ -249,7 +227,7 @@ pub(crate) async fn tunnel_task(
                         let mut response_meta = response_meta.clone();
                         response_meta.set_seqno(read_seqno);
                         read_seqno += 1;
-                        to_broker_sender.unbounded_send(make_response(peer_id, response_meta, &mut response_buff))?;
+                        state.send_response(peer_id, response_meta, Ok(std::mem::take(&mut response_buff).into())).await?;
                     }
                 },
                 Err(e) => {
@@ -268,7 +246,7 @@ pub(crate) async fn tunnel_task(
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
                                     trace!(target: "Tunnel", "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
-                                    to_broker_sender.unbounded_send(make_response(peer_id, response_meta.clone(), &mut response_buff))?;
+                                    state.send_response(peer_id, response_meta.clone(), Ok(std::mem::take(&mut response_buff).into())).await?;
                                 }
                             }
                             if !data.is_empty() {
@@ -279,7 +257,7 @@ pub(crate) async fn tunnel_task(
                         ToRemoteMsg::DestroyConnection => {
                             trace!(target: "Tunnel", "CMD DestroyConnection");
                             if write_request_id.is_some() {
-                                to_broker_sender.unbounded_send(make_err_response(peer_id, response_meta.clone(), RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed."))))?;
+                                state.send_response(peer_id, response_meta.clone(), Err(RpcError::new(RpcErrorCode::MethodCallCancelled, format!("Tunnel: {tunnel_id} closed.")))).await?;
                             }
                             break
                         }
