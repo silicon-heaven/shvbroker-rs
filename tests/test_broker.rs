@@ -46,6 +46,7 @@ fn test_broker() -> shvrpc::Result<()> {
                         exported_shv_root: "test".to_string(),
                         imported_shv_root: "".to_string(),
                         mount_point: "".to_string(),
+                        exported_root_user: "broker".to_string(),
                     },
                 }
             ],
@@ -311,6 +312,7 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
                     exported_shv_root: "".to_string(),
                     imported_shv_root: "test/child-broker/device".to_string(),
                     mount_point: "test/child-device".to_string(),
+                    exported_root_user: "broker".to_string(),
                 },
             }
         ],

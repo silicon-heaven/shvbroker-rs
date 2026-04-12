@@ -62,11 +62,17 @@ pub struct TunnellingConfig {
     pub tsub_dir: Option<String>,
 }
 
+fn default_exported_root_user() -> String {
+    "broker".to_string()
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ConnectionMountSettings {
     pub exported_shv_root: String,
     pub imported_shv_root: String,
     pub mount_point: String,
+    #[serde(default = "default_exported_root_user")]
+    pub exported_root_user: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -438,13 +444,13 @@ impl Default for BrokerConfig {
     fn default() -> Self {
         let child_tcp_broker_config = BrokerConnectionConfig {
             name: "TCP-to-child-broker".to_string(),
-            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "".to_string(), exported_root_user: "broker".to_string() },
             ..BrokerConnectionConfig::default()
         };
         let child_serial_broker_config = BrokerConnectionConfig {
             name: "serial-to-child-broker".to_string(),
             enabled: false,
-            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string(), exported_root_user: "broker".to_string() },
             client: ClientConfig {
                 url: Url::parse("serial:/dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
                 ..ClientConfig::default()
@@ -453,7 +459,7 @@ impl Default for BrokerConfig {
         let child_can_broker_config = BrokerConnectionConfig {
             name: "CAN-to-child-broker".to_string(),
             enabled: false,
-            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string() },
+            connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string(), exported_root_user: "broker".to_string() },
             client: ClientConfig {
                 url: Url::parse("can:vcan0?local_address=1&peer_address=2&user=test").expect("CAN default URL must be valid"),
                 ..ClientConfig::default()
@@ -478,6 +484,7 @@ impl Default for BrokerConfig {
             access: AccessConfig {
                 users: BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false }),
+                    ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false }),
                     ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false }),
