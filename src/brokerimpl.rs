@@ -169,11 +169,11 @@ impl Peer {
         self.subscriptions.iter().any(|subscr| subscr.match_shv_ri(signal))
     }
 
-    fn user(&self) -> Option<&str> {
+    fn user(&self) -> &str {
         match &self.peer_kind {
-            PeerKind::Client { user, .. } => Some(user),
-            PeerKind::Broker(_) => None,
-            PeerKind::Device { user, .. } => Some(user),
+            PeerKind::Client { user, .. } => user,
+            PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
+            PeerKind::Device { user, .. } => user,
         }
     }
 
@@ -630,18 +630,15 @@ struct DisconnectPeerReason {
 }
 
 // Fetches base defined roles for a user.
-pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>, peers: &BTreeMap<PeerId, Peer>, access_config: &AccessConfig, peer_id: PeerId) -> Option<Vec<String>> {
-    if let Some(roles) = oauth2_user_groups.get(&peer_id) {
-        return Some(roles.clone())
-    }
-    if let Some(user) = peers.get(&peer_id).and_then(Peer::user) {
-        return Some(access_config
-            .access_user(user)
-            .map(|user| user.roles.clone())
-            .unwrap_or_default())
+pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>, access_config: &AccessConfig, peer: &Peer) -> Vec<String> {
+    if let Some(roles) = oauth2_user_groups.get(&peer.peer_id) {
+        return roles.clone()
     }
 
-    None
+    access_config
+        .access_user(peer.user())
+        .map(|user| user.roles.clone())
+        .unwrap_or_default()
 }
 
 fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
@@ -975,7 +972,7 @@ impl BrokerImpl {
                 let broker_id = self.config.name.as_ref()
                     .map(|broker_id| format!(":{broker_id}"))
                     .unwrap_or_default();
-                let user_id_chain = format!("{req_user_id};{user}{broker_id}", user = self.peers.read().await.get(&peer_id).and_then(|peer| peer.user()).unwrap_or("broker"));
+                let user_id_chain = format!("{req_user_id};{user}{broker_id}", user = self.peers.read().await.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?.user());
                 frame.set_user_id(&user_id_chain);
             }
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
@@ -1544,7 +1541,6 @@ impl BrokerImpl {
             frame.shv_path().unwrap_or_default(),
             frame.method().unwrap_or_default(),
             frame.tag(Tag::AccessLevel as i32).map(RpcValue::as_i32),
-            frame.tag(Tag::Access as i32).map(RpcValue::as_str)
         ).await
     }
 
@@ -1554,7 +1550,6 @@ impl BrokerImpl {
         shv_path: &str,
         method: &str,
         access_level: Option<i32>,
-        access: Option<&str>,
     ) -> Result<(Option<i32>, Option<String>), RpcError>
     {
         if method.is_empty() {
@@ -1597,51 +1592,28 @@ impl BrokerImpl {
                 None => Err(
                     RpcError::new(
                         RpcErrorCode::PermissionDenied,
-                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.user().unwrap_or_default()),
+                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.user()),
                     )
                 ),
             }
         };
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access_config = self.access.read().await;
-        if let Some(user_roles) = user_base_roles(&oauth2_user_groups, &peers, &access_config, peer_id) {
-            // request from logged-in user,
-            // it can be client, device, child broker or parent broker as client
-            let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
-            log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user().unwrap_or_default());
-            // client (especially parent broker) can set access level for its request
-            // cap it to the maximum level allowed by its access rights configured in the broker
-            let mut max_level = access_level_from_flatten_roles(flatten_roles).await;
-            if let Ok((Some(max_level), _access)) = &mut max_level
-                && let Some(access_level) = access_level
-                    && *max_level > access_level {
-                        log!(target: "Access", Level::Debug, "\tAccess level requested by client: {access_level} capped to: {max_level}");
-                        *max_level = access_level;
-                    }
-            max_level
-        } else {
-            // connection has no user logged in, since it is outgoing, initiated by broker
-            // it can be client connection to parent broker or client connection to child broker
-            match &peer.peer_kind {
-                PeerKind::Broker(_) => {
-                    log!(target: "Access", Level::Debug, "PeerKind::Broker: {peer_id}");
-                    if access_level.is_some() || access.is_some() {
-                        log!(target: "Access", Level::Debug, "\tAccess granted by parent broker, access: {access:?}, access_level: {access_level:?}");
-                        Ok((
-                            access_level,
-                            access.map(str::to_string)
-                        ))
-                    } else {
-                        log!(target: "Access", Level::Debug, "\tPermissionDenied");
-                        Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                    }
+        let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
+        // request from logged-in user,
+        // it can be client, device, child broker or parent broker as client
+        let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
+        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user());
+        // client (especially parent broker) can set access level for its request
+        // cap it to the maximum level allowed by its access rights configured in the broker
+        let mut max_level = access_level_from_flatten_roles(flatten_roles).await;
+        if let Ok((Some(max_level), _access)) = &mut max_level
+            && let Some(access_level) = access_level
+                && *max_level > access_level {
+                    log!(target: "Access", Level::Debug, "\tAccess level requested by client: {access_level} capped to: {max_level}");
+                    *max_level = access_level;
                 }
-                _ => {
-                    log!(target: "Access", Level::Debug, "\tWeird peer kind");
-                    Err(RpcError::new(RpcErrorCode::PermissionDenied, ""))
-                }
-            }
-        }
+        max_level
     }
 
     pub(crate) async fn flatten_roles(&self, roles: &[String]) -> Vec<String> {
@@ -1810,7 +1782,7 @@ impl BrokerImpl {
             ("clientId".to_string(), client_id.into()),
             (
                 "userName".to_string(),
-                RpcValue::from(peer.user().unwrap_or_default()),
+                RpcValue::from(peer.user()),
             ),
             ("deviceId".to_string(), RpcValue::from(device_id)),
             (
@@ -1926,7 +1898,7 @@ impl BrokerImpl {
     }
 
     pub(crate) async fn peer_user(&self, peer_id: PeerId) -> Option<String> {
-        self.peers.read().await.get(&peer_id).and_then(Peer::user).map(ToOwned::to_owned)
+        self.peers.read().await.get(&peer_id).map(Peer::user).map(ToOwned::to_owned)
     }
 
     pub(crate) async fn create_tunnel(
