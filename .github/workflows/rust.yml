@@ -94,7 +94,7 @@ jobs:
           mv "${{github.workspace}}/install/bin/shvbroker_migrate_legacy" "${{github.workspace}}/install/bin/shvbroker_migrate_legacy-${{ steps.get-version.outputs.version }}"
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: shvbroker ${{ steps.get-version.outputs.version }}
           tag_name: ${{ steps.get-version.outputs.version }}
