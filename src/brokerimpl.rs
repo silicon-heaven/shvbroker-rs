@@ -1109,13 +1109,13 @@ impl BrokerImpl {
     }
     pub(crate) async fn emit_rpc_signal_frame(
         &self,
-        peer_id: PeerId,
+        originating_peer_id: PeerId,
         signal_frame: &RpcFrame,
     ) -> shvrpc::Result<()> {
         assert!(signal_frame.is_signal());
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
-            if let Some(peer) = self.peers.read().await.get(&peer_id) {
+            if let Some(peer) = self.peers.read().await.get(&originating_peer_id) {
                 if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
                     // remove imported_shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
@@ -1137,7 +1137,7 @@ impl BrokerImpl {
                 .await
                 .iter()
                 .filter(|(tested_peer_id, peer)| {
-                    peer_id != **tested_peer_id && peer.is_signal_subscribed(&ri)
+                    originating_peer_id != **tested_peer_id && peer.is_signal_subscribed(&ri)
                 })
                 .map(|(_, peer)| {
                     let mut frame = signal_frame.clone();
