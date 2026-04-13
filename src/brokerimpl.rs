@@ -1135,11 +1135,9 @@ impl BrokerImpl {
                 .peers
                 .read()
                 .await
-                .iter()
-                .filter(|(tested_peer_id, peer)| {
-                    originating_peer_id != **tested_peer_id && peer.is_signal_subscribed(&ri)
-                })
-                .map(|(_, peer)| {
+                .values()
+                .filter(|peer| peer.is_signal_subscribed(&ri))
+                .map(|peer| {
                     let mut frame = signal_frame.clone();
                     frame.set_shvpath(&shv_path);
                     (frame, peer.sender.clone())
