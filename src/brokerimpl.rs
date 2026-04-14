@@ -1520,7 +1520,7 @@ impl BrokerImpl {
         };
 
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
-        self.set_subscribe_api(peer_id, subscribe_api).await?;
+        Self::set_subscribe_api(&self.peers, peer_id, subscribe_api).await?;
         Ok(subscribe_api)
     }
 
@@ -1662,8 +1662,8 @@ impl BrokerImpl {
         });
         Ok(mount_point)
     }
-    async fn set_subscribe_api(&self, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
-        let mut peers = self.peers.write().await;
+    async fn set_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
+        let mut peers = peers.write().await;
         let peer = peers.get_mut(&peer_id).ok_or("Peer not found")?;
         peer.subscribe_api = subscribe_api;
         Ok(())
