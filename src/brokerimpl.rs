@@ -1467,7 +1467,7 @@ impl BrokerImpl {
         if Self::mount_point(&self.peers, new_peer_id).await.is_none() {
             return Ok(());
         }
-        if self.check_subscribe_api(new_peer_id).await?.is_none() {
+        if Self::check_subscribe_api(&self.peers, self.command_sender.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
         let forwarded_ris = self.peers.read()
@@ -1490,9 +1490,9 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn check_subscribe_api(&self, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
+    async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sender: UnboundedSender<BrokerCommand>, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        let broker_command_sender = self.command_sender.clone();
+        let broker_command_sender = command_sender.clone();
         let subscribe_api = {
             let (response_sender, mut response_receiver) = unbounded();
             let request = RpcMessage::new_request(".broker", METH_LS);
@@ -1520,7 +1520,7 @@ impl BrokerImpl {
         };
 
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
-        Self::set_subscribe_api(&self.peers, peer_id, subscribe_api).await?;
+        Self::set_subscribe_api(peers, peer_id, subscribe_api).await?;
         Ok(subscribe_api)
     }
 
