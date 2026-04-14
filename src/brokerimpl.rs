@@ -665,7 +665,7 @@ pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
     nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
 
-    pub(crate) peers: RwLock<BTreeMap<PeerId, Peer>>,
+    pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: RwLock<BTreeMap<String, Mount>>,
     pub(crate) access: RwLock<AccessConfig>,
     pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
@@ -1297,7 +1297,7 @@ impl BrokerImpl {
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
-                spawn_and_log_error(Self::on_device_mounted(self.clone(), peer_id));
+                spawn_and_log_error(Self::on_device_mounted(self.peers.clone(), self.command_sender.clone(), self.subscr_cmd_sender.clone(), peer_id));
             }
             BrokerCommand::PeerGone { peer_id } => {
                 debug!("Peer gone, id: {peer_id}.");
@@ -1463,23 +1463,23 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn on_device_mounted(self: Arc<BrokerImpl>, new_peer_id: PeerId) -> shvrpc::Result<()> {
-        if Self::mount_point(&self.peers, new_peer_id).await.is_none() {
+    async fn on_device_mounted(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, command_sender: UnboundedSender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>, new_peer_id: PeerId) -> shvrpc::Result<()> {
+        if Self::mount_point(peers.as_ref(), new_peer_id).await.is_none() {
             return Ok(());
         }
-        if Self::check_subscribe_api(&self.peers, self.command_sender.clone(), new_peer_id).await?.is_none() {
+        if Self::check_subscribe_api(peers.as_ref(), command_sender.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
-        let forwarded_ris = self.peers.read()
+        let forwarded_ris = peers.read()
             .await
             .iter()
             .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
             .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
             .collect::<Vec<_>>();
 
-        let subscr_cmd_sender = self.subscr_cmd_sender.clone();
+        let subscr_cmd_sender = subscr_cmd_sender.clone();
 
-        if let Some(new_peer) = self.peers.write().await.get_mut(&new_peer_id) {
+        if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
             for ri in forwarded_ris {
                 new_peer
                     .add_forwarded_subscription(&ri, &subscr_cmd_sender)
