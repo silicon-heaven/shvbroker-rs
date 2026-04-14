@@ -1284,7 +1284,7 @@ impl BrokerImpl {
                     return Err(msg.into());
                 };
 
-                let mount_point = self.mount_point(peer_id).await;
+                let mount_point = Self::mount_point(&self.peers, peer_id).await;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS)
@@ -1464,7 +1464,7 @@ impl BrokerImpl {
     }
 
     async fn on_device_mounted(self: Arc<BrokerImpl>, new_peer_id: PeerId) -> shvrpc::Result<()> {
-        if self.mount_point(new_peer_id).await.is_none() {
+        if Self::mount_point(&self.peers, new_peer_id).await.is_none() {
             return Ok(());
         }
         if self.check_subscribe_api(new_peer_id).await?.is_none() {
@@ -1524,8 +1524,8 @@ impl BrokerImpl {
         Ok(subscribe_api)
     }
 
-    async fn mount_point(&self, peer_id: PeerId) -> Option<String> {
-        self.peers
+    async fn mount_point(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<String> {
+        peers
             .read()
             .await
             .get(&peer_id)
@@ -1638,7 +1638,7 @@ impl BrokerImpl {
         flatten_roles
     }
     async fn remove_peer(&self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
-        let mount_point = self.mount_point(peer_id).await;
+        let mount_point = Self::mount_point(&self.peers, peer_id).await;
         if let Some(mount_point) = mount_point.as_ref() {
             info!("Unmounting peer: {peer_id} at: {mount_point}");
         }
