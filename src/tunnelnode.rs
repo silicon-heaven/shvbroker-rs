@@ -3,8 +3,10 @@ use log::{debug, trace};
 use smol::lock::RwLock;
 use std::collections::BTreeMap;
 
+pub type TunnelId = u64;
+
 use crate::brokerimpl::{
-    BrokerImpl, NodeRequestContext, Peer, TunnelId
+    BrokerImpl, NodeRequestContext, Peer
 };
 use crate::shvnode::{self, SIG_LSMOD};
 use crate::shvnode::{
@@ -46,10 +48,16 @@ const OPEN_TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_CLOSE,
 ];
 
-pub(crate) struct TunnelNode {}
+pub(crate) struct TunnelNode {
+    active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    next_tunnel_number: Arc<RwLock<TunnelId>>,
+}
 impl TunnelNode {
     pub fn new() -> Self {
-        TunnelNode {}
+        TunnelNode {
+            active_tunnels: Arc::new(RwLock::default()),
+            next_tunnel_number: Arc::new(RwLock::new(1)),
+        }
     }
 }
 
@@ -62,8 +70,8 @@ impl ShvNode for TunnelNode {
             OPEN_TUNNEL_NODE_METHODS
         }
     }
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
-        let tunnels = active_tunnel_ids(&broker_state.active_tunnels)
+    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+        let tunnels = active_tunnel_ids(&self.active_tunnels)
             .await
             .iter()
             .map(|id| format!("{}", *id))
@@ -77,13 +85,13 @@ impl ShvNode for TunnelNode {
         }
     }
 
-    async fn is_request_granted(&self, rq: &RpcFrame, ctx: &NodeRequestContext) -> bool {
+    async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
-            is_request_granted_tunnel(&ctx.state.active_tunnels, shv_path, rq).await
+            is_request_granted_tunnel(&self.active_tunnels, shv_path, rq).await
         }
     }
 
@@ -104,7 +112,7 @@ impl ShvNode for TunnelNode {
                     let rq = frame.to_rpcmesage()?;
                     let data = rq.param().unwrap_or_default().as_blob().to_vec();
                     write_tunnel(
-                        &ctx.state.active_tunnels,
+                        &self.active_tunnels,
                         tunid,
                         rq.request_id().unwrap_or_default(),
                         data,
@@ -112,8 +120,8 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let is_active = is_tunnel_active(&ctx.state.active_tunnels, tunid).await;
-                    tunnel_close_handler(ctx.state.active_tunnels.clone(), ctx.state.peers.clone(), tunid);
+                    let is_active = is_tunnel_active(&self.active_tunnels, tunid).await;
+                    tunnel_close_handler(self.active_tunnels.clone(), ctx.state.peers.clone(), tunid);
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => Ok(ProcessRequestRetval::MethodNotFound),
@@ -128,10 +136,10 @@ impl ShvNode for TunnelNode {
                         .ok_or("'host' parameter must be provided")?
                         .as_str()
                         .to_string();
-                    let (tunid, receiver) = create_tunnel(&ctx.state.next_tunnel_number, &ctx.state.active_tunnels, &rq).await?;
+                    let (tunid, receiver) = create_tunnel(&self.next_tunnel_number, &self.active_tunnels, &rq).await?;
                     let rq_meta = rq.meta().clone();
                     let peers = ctx.state.peers.clone();
-                    let active_tunnels = ctx.state.active_tunnels.clone();
+                    let active_tunnels = self.active_tunnels.clone();
                     smol::spawn(async move {
                         let peers_for_close = peers.clone();
                         let active_tunnels_for_close = active_tunnels.clone();

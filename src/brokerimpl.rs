@@ -4,7 +4,7 @@ use crate::shvnode::{
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
-use crate::tunnelnode::{ActiveTunnel, TunnelNode};
+use crate::tunnelnode::TunnelNode;
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::channel::oneshot;
@@ -620,8 +620,6 @@ fn can_interfaces_config(broker_config: &crate::config::BrokerConfig) -> Vec<Can
 }
 
 
-pub type TunnelId = u64;
-
 struct DisconnectPeerReason {
     msg: String,
     msg_for_peer: Option<String>,
@@ -677,9 +675,6 @@ pub struct BrokerImpl {
 
     pub(crate) command_sender: UnboundedSender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
-
-    pub(crate) active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
-    pub(crate) next_tunnel_number: Arc<RwLock<TunnelId>>,
 
     pub(crate) sql_connection: Option<async_sqlite::Client>,
 
@@ -956,8 +951,6 @@ impl BrokerImpl {
             role_access_rules: RwLock::new(role_access),
             oauth2_user_groups: Default::default(),
             subscr_cmd_sender,
-            active_tunnels: Default::default(),
-            next_tunnel_number: Arc::new(RwLock::new(1)),
             sql_connection,
             session_tokens: Arc::new(RwLock::default()),
             last_login: RwLock::new(last_login),
