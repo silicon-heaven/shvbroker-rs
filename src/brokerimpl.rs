@@ -324,7 +324,7 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(broker: Arc<BrokerImpl>, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
+pub(crate) async fn broker_loop(broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
     let session_token_expiration_task = {
         let session_tokens = broker.session_tokens.clone();
 
@@ -454,7 +454,7 @@ async fn server_accept_loop(
     Ok(())
 }
 
-pub async fn run_broker(broker_impl: Arc<BrokerImpl>, command_receiver: UnboundedReceiver<BrokerCommand>) -> shvrpc::Result<()> {
+pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedReceiver<BrokerCommand>) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
     let broker_config = broker_impl.config.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl, command_receiver));
@@ -680,7 +680,7 @@ pub struct BrokerImpl {
     pub(crate) command_sender: UnboundedSender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
 
-    active_tunnels: RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
+    pub(crate) active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
     next_tunnel_number: RwLock<TunnelId>,
 
     pub(crate) sql_connection: Option<async_sqlite::Client>,
@@ -965,7 +965,7 @@ impl BrokerImpl {
             last_login: RwLock::new(last_login),
         }
     }
-    pub(crate) async fn process_rpc_frame(self: &Arc<Self>, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
+    pub(crate) async fn process_rpc_frame(&self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;
             if let Some(req_user_id) = frame.user_id() {
@@ -983,13 +983,13 @@ impl BrokerImpl {
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
-                    self.send_response(peer_id, response_meta, Err(err)).await?;
+                    Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
                     return Ok(());
                 }
             };
             let local_result = process_local_dir_ls(&*self.mounts.read().await, &frame);
             if let Some(result) = local_result {
-                self.send_response(peer_id, response_meta, result).await?;
+                Self::send_response(&self.peers, peer_id, response_meta, result).await?;
                 return Ok(());
             }
             //let self.= self.read().map_err(|e| e.to_string())?;
@@ -998,12 +998,12 @@ impl BrokerImpl {
                 &shv_path,
             );
             if let Some((mount_point, node_path)) = paths {
-                enum Action {
+                enum Action<'a> {
                     ToPeer(UnboundedSender<BrokerToPeerMessage>, BrokerToPeerMessage),
                     NodeRequest {
                         node_id: String,
                         frame: RpcFrame,
-                        ctx: NodeRequestContext,
+                        ctx: NodeRequestContext<'a>,
                     },
                 }
                 let action = {
@@ -1030,7 +1030,7 @@ impl BrokerImpl {
                             ctx: NodeRequestContext {
                                 peer_id,
                                 node_path: node_path.to_string(),
-                                state: self.clone(),
+                                state: self,
                             },
                         },
                     }
@@ -1060,7 +1060,7 @@ impl BrokerImpl {
                                 Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
                                 Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
                             };
-                            self.send_response(peer_id, response_meta, result).await?;
+                            Self::send_response(&self.peers, peer_id, response_meta, result).await?;
                         } else {
                             let err = RpcError::new(
                                 RpcErrorCode::PermissionDenied,
@@ -1070,7 +1070,7 @@ impl BrokerImpl {
                                     frame.method().unwrap_or_default()
                                 ),
                             );
-                            self.send_response(peer_id, response_meta, Err(err)).await?;
+                            Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
                         }
                     }
                 }
@@ -1079,7 +1079,7 @@ impl BrokerImpl {
                     RpcErrorCode::MethodNotFound,
                     format!("Invalid shv path {shv_path}:{method}()"),
                 );
-                self.send_response(peer_id, response_meta, Err(err)).await?;
+                Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
             }
             return Ok(());
         } else if frame.is_response() {
@@ -1205,7 +1205,7 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn user_is_allowed_to_login(self: &Arc<Self>, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
+    async fn user_is_allowed_to_login(&self, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
         if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(user, ip_addr).await {
             info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
             return false;
@@ -1222,7 +1222,7 @@ impl BrokerImpl {
         self.last_login.read().await
     }
 
-    pub(crate) async fn set_last_login(self: &Arc<Self>, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
+    pub(crate) async fn set_last_login(&self, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
         let json = serde_json::to_string(&timestamp).unwrap_or_else(|e| {
             error!("Generate SQL entry error: {e}");
             "".to_string()
@@ -1241,7 +1241,7 @@ impl BrokerImpl {
         Ok(last_login.insert(id.to_string(), timestamp))
     }
 
-    async fn get_or_create_token(self: &Arc<Self>, user: &str) -> SessionToken {
+    async fn get_or_create_token(&self, user: &str) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
             token.clone()
@@ -1254,7 +1254,7 @@ impl BrokerImpl {
         SessionToken(format!("{SESSION_TOKEN_PREFIX}{token}"))
     }
 
-    async fn process_broker_command(self: &Arc<Self>, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(&self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id: client_id,
@@ -1432,12 +1432,12 @@ impl BrokerImpl {
                     .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
                 self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
                 let command_sender = self.command_sender.clone();
-                let state = self.clone();
+                let active_tunnels = self.active_tunnels.clone();
                 smol::spawn(async move {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {
                         smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = state.last_tunnel_activity(tunnel_id).await;
+                        let last_activity = Self::last_tunnel_activity(&active_tunnels, tunnel_id).await;
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
                                 debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
@@ -1969,13 +1969,13 @@ impl BrokerImpl {
             Err(format!("Invalid tunnel ID: {tunid}").into())
         }
     }
-    pub(crate) async fn touch_tunnel(&self, tunid: TunnelId) {
-        if let Some(tun) = self.active_tunnels.write().await.get_mut(&tunid) {
+    pub(crate) async fn touch_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) {
+        if let Some(tun) = active_tunnels.write().await.get_mut(&tunid) {
             tun.last_activity = Some(Instant::now());
         }
     }
-    pub(crate) async fn last_tunnel_activity(&self, tunid: TunnelId) -> Option<Instant> {
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
+    pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<Instant> {
+        if let Some(tun) = active_tunnels.read().await.get(&tunid) {
             tun.last_activity
         } else {
             None
@@ -1989,9 +1989,8 @@ impl BrokerImpl {
         }
     }
 
-    pub(crate) async fn send_response(&self, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
-        let peer_sender = self
-            .peers
+    pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
+        let peer_sender = peers
             .read()
             .await
             .get(&peer_id)
@@ -2005,16 +2004,14 @@ impl BrokerImpl {
     }
 }
 
-pub(crate) struct NodeRequestContext {
+pub(crate) struct NodeRequestContext<'a> {
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
-    pub(crate) state: Arc<BrokerImpl>,
+    pub(crate) state: &'a BrokerImpl,
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use futures::channel::mpsc::unbounded;
     use futures::channel::oneshot;
 
@@ -2079,7 +2076,7 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None));
+                let broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
                 let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,

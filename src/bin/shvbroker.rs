@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 use log::*;
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
@@ -119,7 +119,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Err("Googgle auth is configured but not part of this build!".into());
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
-    let broker_impl = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, command_sender, sql_connection));
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, command_sender, sql_connection);
     smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
 }
 
