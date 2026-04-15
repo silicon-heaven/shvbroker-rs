@@ -1904,21 +1904,6 @@ impl BrokerImpl {
             Ok(None)
         }
     }
-    pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
-        // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
-        let Ok(tunid) = tunid.parse::<TunnelId>() else {
-            return false;
-        };
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            let cids = frame.caller_ids();
-            cids == tun.caller_ids
-                || AccessLevel::try_from(frame.access_level().unwrap_or(0))
-                    .unwrap_or(AccessLevel::Browse)
-                    == AccessLevel::Superuser
-        } else {
-            false
-        }
-    }
     pub(crate) async fn write_tunnel(
         &self,
         tunid: TunnelId,

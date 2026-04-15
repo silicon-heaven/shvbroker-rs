@@ -83,7 +83,7 @@ impl ShvNode for TunnelNode {
             let methods = self.methods(shv_path);
             is_request_granted_methods(methods, rq)
         } else {
-            ctx.state.is_request_granted_tunnel(shv_path, rq).await
+            is_request_granted_tunnel(&ctx.state.active_tunnels, shv_path, rq).await
         }
     }
 
@@ -189,6 +189,21 @@ pub(crate) async fn active_tunnel_ids(active_tunnels: &Arc<RwLock<BTreeMap<Tunne
         .filter(|(_id, tun)| tun.last_activity.is_some())
         .map(|(id, _tun)| *id)
         .collect()
+}
+
+pub(crate) async fn is_request_granted_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: &str, frame: &RpcFrame) -> bool {
+    let Ok(tunid) = tunid.parse::<TunnelId>() else {
+        return false;
+    };
+    if let Some(tun) = active_tunnels.read().await.get(&tunid) {
+        let cids = frame.caller_ids();
+        cids == tun.caller_ids
+            || AccessLevel::try_from(frame.access_level().unwrap_or(0))
+                .unwrap_or(AccessLevel::Browse)
+                == AccessLevel::Superuser
+    } else {
+        false
+    }
 }
 
 pub(crate) async fn tunnel_task(
