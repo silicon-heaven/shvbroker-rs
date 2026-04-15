@@ -1904,16 +1904,6 @@ impl BrokerImpl {
             Ok(None)
         }
     }
-    pub(crate) async fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        self
-            .active_tunnels
-            .read()
-            .await
-            .iter()
-            .filter(|(_id, tun)| tun.last_activity.is_some())
-            .map(|(id, _tun)| *id)
-            .collect()
-    }
     pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
         // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
         let Ok(tunid) = tunid.parse::<TunnelId>() else {

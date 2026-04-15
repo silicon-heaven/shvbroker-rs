@@ -63,8 +63,7 @@ impl ShvNode for TunnelNode {
         }
     }
     async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
-        let tunnels = broker_state
-            .active_tunnel_ids()
+        let tunnels = active_tunnel_ids(&broker_state.active_tunnels)
             .await
             .iter()
             .map(|id| format!("{}", *id))
@@ -180,6 +179,16 @@ pub(crate) async fn is_tunnel_active(active_tunnels: &Arc<RwLock<BTreeMap<Tunnel
     } else {
         false
     }
+}
+
+pub(crate) async fn active_tunnel_ids(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>) -> Vec<TunnelId> {
+    active_tunnels
+        .read()
+        .await
+        .iter()
+        .filter(|(_id, tun)| tun.last_activity.is_some())
+        .map(|(id, _tun)| *id)
+        .collect()
 }
 
 pub(crate) async fn tunnel_task(
