@@ -1904,19 +1904,6 @@ impl BrokerImpl {
             Ok(None)
         }
     }
-    pub(crate) async fn write_tunnel(
-        &self,
-        tunid: TunnelId,
-        rqid: RqId,
-        data: Vec<u8>,
-    ) -> shvrpc::Result<()> {
-        if let Some(tun) = self.active_tunnels.write().await.get(&tunid) {
-            let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
-            Ok(())
-        } else {
-            Err(format!("Invalid tunnel ID: {tunid}").into())
-        }
-    }
 
     pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
         let peer_sender = peers

@@ -103,7 +103,8 @@ impl ShvNode for TunnelNode {
                 METH_WRITE => {
                     let rq = frame.to_rpcmesage()?;
                     let data = rq.param().unwrap_or_default().as_blob().to_vec();
-                    ctx.state.write_tunnel(
+                    write_tunnel(
+                        &ctx.state.active_tunnels,
                         tunid,
                         rq.request_id().unwrap_or_default(),
                         data,
@@ -203,6 +204,20 @@ pub(crate) async fn is_request_granted_tunnel(active_tunnels: &Arc<RwLock<BTreeM
                 == AccessLevel::Superuser
     } else {
         false
+    }
+}
+
+pub(crate) async fn write_tunnel(
+    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    tunid: TunnelId,
+    rqid: RqId,
+    data: Vec<u8>,
+) -> shvrpc::Result<()> {
+    if let Some(tun) = active_tunnels.write().await.get(&tunid) {
+        let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
+        Ok(())
+    } else {
+        Err(format!("Invalid tunnel ID: {tunid}").into())
     }
 }
 
