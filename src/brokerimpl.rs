@@ -101,7 +101,6 @@ pub enum BrokerCommand {
         request: RpcMessage,
         response_sender: UnboundedSender<RpcFrame>,
     },
-    TunnelActive(TunnelId),
     TunnelClosed(TunnelId),
 }
 
@@ -1424,30 +1423,6 @@ impl BrokerImpl {
                     },
                 )
                 .await?
-            }
-            BrokerCommand::TunnelActive(tunnel_id) => {
-                let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
-                    .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
-                Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?).await?;
-                let command_sender = self.command_sender.clone();
-                let active_tunnels = self.active_tunnels.clone();
-                smol::spawn(async move {
-                    const TIMEOUT: Duration = Duration::from_secs(60 * 60);
-                    loop {
-                        smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = crate::tunnelnode::last_tunnel_activity(&active_tunnels, tunnel_id).await;
-                        if let Some(last_activity) = last_activity {
-                            if Instant::now().duration_since(last_activity) > TIMEOUT {
-                                debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
-                                let _ = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id));
-                                break;
-                            }
-                        } else {
-                            // tunnel closed already
-                            break;
-                        }
-                    }
-                }).detach();
             }
             BrokerCommand::TunnelClosed(tunnel_id) => {
                 let closed = self.close_tunnel(tunnel_id).await?;

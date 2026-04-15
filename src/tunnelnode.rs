@@ -1,12 +1,12 @@
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
-use log::trace;
+use log::{debug, trace};
 use smol::lock::RwLock;
 use std::collections::BTreeMap;
 
 use crate::brokerimpl::{
     BrokerCommand, BrokerImpl, NodeRequestContext, Peer, TunnelId
 };
-use crate::shvnode;
+use crate::shvnode::{self, SIG_LSMOD};
 use crate::shvnode::{
     is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR,
     METH_LS,
@@ -14,15 +14,15 @@ use crate::shvnode::{
 use futures::FutureExt;
 use futures::{select, AsyncReadExt, AsyncWriteExt};
 use log::{error, log, Level};
-use shvproto::MetaMap;
+use shvproto::{Map, MetaMap};
 use shvrpc::metamethod::{AccessLevel, Flags, MetaMethod};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode, RqId};
-use shvrpc::{Error, RpcMessageMetaTags};
+use shvrpc::{Error, RpcMessage, RpcMessageMetaTags};
 use smol::io::{BufReader, BufWriter};
 use smol::net::TcpStream;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const META_METHOD_PRIVATE_DIR: MetaMethod = MetaMethod::new_static(METH_DIR, Flags::empty(), AccessLevel::SuperService, "DirParam", "DirResult", &[], "");
 const META_METHOD_PRIVATE_LS: MetaMethod = MetaMethod::new_static(METH_LS, Flags::empty(), AccessLevel::SuperService, "LsParam", "LsResult", &[], "");
@@ -185,7 +185,6 @@ pub(crate) async fn tunnel_task(
 ) -> shvrpc::Result<()> {
     let peer_id = request_meta.pop_caller_id().ok_or("Invalid peer id")?;
     let mut response_meta = RpcFrame::prepare_response_meta(&request_meta)?;
-    let to_broker_sender = command_sender.clone();
     log!(target: "Tunnel", Level::Debug, "Tunnel: {tunnel_id}, connecting to: {addr} ...");
     let stream = match TcpStream::connect(addr).await {
         Ok(stream) => {
@@ -199,7 +198,30 @@ pub(crate) async fn tunnel_task(
         }
     };
     touch_tunnel(&active_tunnels, tunnel_id).await;
-    to_broker_sender.unbounded_send(BrokerCommand::TunnelActive(tunnel_id))?;
+    let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
+        .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
+    BrokerImpl::emit_rpc_signal_frame(&peers, 0, &msg.to_frame()?).await?;
+    {
+        let command_sender = command_sender.clone();
+        let active_tunnels = active_tunnels.clone();
+        smol::spawn(async move {
+            const TIMEOUT: Duration = Duration::from_secs(60 * 60);
+            loop {
+                smol::Timer::after(TIMEOUT / 60).await;
+                let last_activity = crate::tunnelnode::last_tunnel_activity(&active_tunnels, tunnel_id).await;
+                if let Some(last_activity) = last_activity {
+                    if Instant::now().duration_since(last_activity) > TIMEOUT {
+                        debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
+                        let _ = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id));
+                        break;
+                    }
+                } else {
+                    // tunnel closed already
+                    break;
+                }
+            }
+        }).detach();
+    }
     let (socket_reader, socket_writer) = stream.split();
     let mut read_buff: [u8; 256] = [0; 256];
     let mut response_buff: Vec<u8> = vec![];
@@ -293,6 +315,6 @@ pub(crate) async fn tunnel_task(
     }
     // cancel write task
     write_task_sender.unbounded_send(vec![])?;
-    to_broker_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id))?;
+    command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id))?;
     Ok(())
 }
