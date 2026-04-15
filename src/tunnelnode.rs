@@ -113,7 +113,7 @@ impl ShvNode for TunnelNode {
                 }
                 METH_CLOSE => {
                     let is_active = is_tunnel_active(&ctx.state.active_tunnels, tunid).await;
-                    let _ = ctx.state.command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid));
+                    tunnel_close_handler(ctx.state.active_tunnels.clone(), ctx.state.peers.clone(), tunid);
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => Ok(ProcessRequestRetval::MethodNotFound),
@@ -133,14 +133,13 @@ impl ShvNode for TunnelNode {
                     let command_sender = ctx.state.command_sender.clone();
                     let peers = ctx.state.peers.clone();
                     let active_tunnels = ctx.state.active_tunnels.clone();
-                    let cmd_sender_for_closed = command_sender.clone();
                     smol::spawn(async move {
+                        let peers_for_close = peers.clone();
+                        let active_tunnels_for_close = active_tunnels.clone();
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, command_sender, peers, active_tunnels).await {
                             error!("{e}")
                         }
-                        if let Err(e) = cmd_sender_for_closed.unbounded_send(BrokerCommand::TunnelClosed(tunid)) {
-                            error!("Failed to send TunnelClosed for {tunid}: {e}");
-                        }
+                        tunnel_close_handler(active_tunnels_for_close, peers_for_close, tunid);
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
@@ -221,6 +220,45 @@ pub(crate) async fn write_tunnel(
     }
 }
 
+pub(crate) async fn close_tunnel(
+    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    tunid: TunnelId,
+) -> shvrpc::Result<Option<bool>> {
+    debug!(target: "Tunnel", "close_tunnel: {tunid}");
+    if let Some(tun) = active_tunnels.write().await.remove(&tunid) {
+        let sender = tun.sender;
+        smol::spawn(async move {
+            let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
+        })
+        .detach();
+        Ok(Some(tun.last_activity.is_some()))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn tunnel_close_handler(
+    active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    tunid: TunnelId,
+) {
+    smol::spawn(async move {
+        let closed = close_tunnel(&active_tunnels, tunid).await;
+        if let Ok(Some(true)) = closed {
+            let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunid}"), SIG_LSMOD, METH_LS)
+                .with_param(Map::from([(format!("{tunid}"), false.into())]));
+            match msg.to_frame() {
+                Ok(frame) => {
+                    if let Err(e) = crate::brokerimpl::BrokerImpl::emit_rpc_signal_frame(&peers, 0, &frame).await {
+                        log::error!("Failed to emit tunnel closed signal: {}", e);
+                    }
+                }
+                Err(e) => log::error!("Failed to create tunnel closed signal frame: {}", e),
+            }
+        }
+    }).detach();
+}
+
 pub(crate) async fn tunnel_task(
     tunnel_id: TunnelId,
     mut request_meta: MetaMap,
@@ -251,6 +289,7 @@ pub(crate) async fn tunnel_task(
     {
         let command_sender = command_sender.clone();
         let active_tunnels = active_tunnels.clone();
+        let peers = peers.clone();
         smol::spawn(async move {
             const TIMEOUT: Duration = Duration::from_secs(60 * 60);
             loop {
@@ -259,7 +298,7 @@ pub(crate) async fn tunnel_task(
                 if let Some(last_activity) = last_activity {
                     if Instant::now().duration_since(last_activity) > TIMEOUT {
                         debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
-                        let _ = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id));
+                        tunnel_close_handler(active_tunnels.clone(), peers.clone(), tunnel_id);
                         break;
                     }
                 } else {
@@ -362,6 +401,6 @@ pub(crate) async fn tunnel_task(
     }
     // cancel write task
     write_task_sender.unbounded_send(vec![])?;
-    command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id))?;
+    tunnel_close_handler(active_tunnels.clone(), peers.clone(), tunnel_id);
     Ok(())
 }

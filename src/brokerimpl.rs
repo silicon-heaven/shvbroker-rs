@@ -101,7 +101,6 @@ pub enum BrokerCommand {
         request: RpcMessage,
         response_sender: UnboundedSender<RpcFrame>,
     },
-    TunnelClosed(TunnelId),
 }
 
 #[derive(Debug)]
@@ -1424,14 +1423,6 @@ impl BrokerImpl {
                 )
                 .await?
             }
-            BrokerCommand::TunnelClosed(tunnel_id) => {
-                let closed = self.close_tunnel(tunnel_id).await?;
-                if let Some(true) = closed {
-                    let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
-                        .with_param(Map::from([(format!("{tunnel_id}"), false.into())]));
-                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?).await?;
-                }
-            }
         }
         Ok(())
     }
@@ -1889,20 +1880,6 @@ impl BrokerImpl {
         };
         self.active_tunnels.write().await.insert(tunid, tun);
         Ok((tunid, receiver))
-    }
-    pub(crate) async fn close_tunnel(&self, tunid: TunnelId) -> shvrpc::Result<Option<bool>> {
-        debug!(target: "Tunnel", "close_tunnel: {tunid}");
-        if let Some(tun) = self.active_tunnels.write().await.remove(&tunid) {
-            let sender = tun.sender;
-            smol::spawn(async move {
-                let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
-            })
-            .detach();
-            Ok(Some(tun.last_activity.is_some()))
-        } else {
-            // might be callback of previous close_tunel()
-            Ok(None)
-        }
     }
 
     pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
