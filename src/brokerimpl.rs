@@ -326,14 +326,14 @@ pub(crate) struct PendingRpcCall {
 
 pub(crate) async fn broker_loop(broker: Arc<BrokerImpl>, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
     let session_token_expiration_task = {
-        let broker = broker.clone();
+        let session_tokens = broker.session_tokens.clone();
 
         smol::spawn(async move {
             loop {
                 let mut interval = futures::FutureExt::fuse(smol::Timer::interval(Duration::from_hours(1)));
                 select! {
                     _ = interval => {
-                        let mut session_tokens = broker.session_tokens.write().await;
+                        let mut session_tokens = session_tokens.write().await;
                         const HOURS_BEFORE_EXPIRATION: i64 = 12;
                         let threshold = shvproto::DateTime::now().add_hours(-HOURS_BEFORE_EXPIRATION);
                         session_tokens.retain(|session| {
@@ -673,7 +673,7 @@ pub struct BrokerImpl {
     pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
 
     // session_token -> username
-    pub(crate) session_tokens: RwLock<Vec<Session>>,
+    pub(crate) session_tokens: Arc<RwLock<Vec<Session>>>,
 
     last_login: RwLock<LastLogin>,
 
@@ -961,7 +961,7 @@ impl BrokerImpl {
             active_tunnels: Default::default(),
             next_tunnel_number: RwLock::new(1),
             sql_connection,
-            session_tokens: RwLock::default(),
+            session_tokens: Arc::new(RwLock::default()),
             last_login: RwLock::new(last_login),
         }
     }
