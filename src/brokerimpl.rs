@@ -666,7 +666,7 @@ pub struct BrokerImpl {
     nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
     pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
-    mounts: RwLock<BTreeMap<String, Mount>>,
+    mounts: BTreeMap<String, Mount>,
     pub(crate) access: RwLock<AccessConfig>,
     pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
 
@@ -953,7 +953,7 @@ impl BrokerImpl {
             command_sender,
             config: config.clone(),
             peers: Default::default(),
-            mounts: RwLock::new(mounts),
+            mounts,
             access: RwLock::new(access),
             role_access_rules: RwLock::new(role_access),
             oauth2_user_groups: Default::default(),
@@ -987,14 +987,14 @@ impl BrokerImpl {
                     return Ok(());
                 }
             };
-            let local_result = process_local_dir_ls(&*self.mounts.read().await, &frame);
+            let local_result = process_local_dir_ls(&self.mounts, &frame);
             if let Some(result) = local_result {
                 Self::send_response(&self.peers, peer_id, response_meta, result).await?;
                 return Ok(());
             }
             //let self.= self.read().map_err(|e| e.to_string())?;
             let paths = find_longest_path_prefix(
-                &*self.mounts.read().await,
+                &self.mounts,
                 &shv_path,
             );
             if let Some((mount_point, node_path)) = paths {
@@ -1012,7 +1012,7 @@ impl BrokerImpl {
                     frame.set_shvpath(node_path);
                     frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
-                    match self.mounts.read().await.get(mount_point).expect("Should be mounted") {
+                    match self.mounts.get(mount_point).expect("Should be mounted") {
                         Mount::Peer(device_peer_id) => {
                             let sender = self
                                 .peers
@@ -1306,7 +1306,7 @@ impl BrokerImpl {
                     let mut lsmod_value = "";
                     while !mount_point.is_empty() {
                         (lsmod_path, lsmod_value) = split_last_fragment(lsmod_path);
-                        if self.mounts.read().await.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
+                        if self.mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
                             break;
                         }
                     }
@@ -1636,7 +1636,7 @@ impl BrokerImpl {
 
         flatten_roles
     }
-    async fn remove_peer(&self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
+    async fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         let mount_point = Self::mount_point(&self.peers, peer_id).await;
         if let Some(mount_point) = mount_point.as_ref() {
             info!("Unmounting peer: {peer_id} at: {mount_point}");
@@ -1652,7 +1652,7 @@ impl BrokerImpl {
                 }
             }
         }
-        self.mounts.write().await.retain(|_k, v| {
+        self.mounts.retain(|_k, v| {
             if let Mount::Peer(id) = v
                 && *id == peer_id {
                     return false;
@@ -1668,7 +1668,7 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn add_peer(&self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
+    async fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
         if self.peers.read().await.contains_key(&peer_id) {
             // this might happen when connection to parent broker is restored
             // after parent broker reset
@@ -1718,7 +1718,7 @@ impl BrokerImpl {
         };
 
         if let Some(mount_point) = effective_mount_point.as_ref() {
-            if let Some(mount) = self.mounts.read().await.get(mount_point) {
+            if let Some(mount) = self.mounts.get(mount_point) {
                 return Err(DisconnectPeerReason {
                     msg: format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
                         Mount::Peer(id) => format!("peer_id({id})"),
@@ -1728,10 +1728,10 @@ impl BrokerImpl {
                 });
             }
             info!("Mounting peer: {peer_id} at: {mount_point}");
-            self.mounts.write().await.insert(mount_point.clone(), Mount::Peer(peer_id));
+            self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
         }
 
-        self.mounts.write().await.insert(client_path, Mount::Peer(peer_id));
+        self.mounts.insert(client_path, Mount::Peer(peer_id));
 
         let peer = Peer {
             peer_id,
