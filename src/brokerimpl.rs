@@ -1942,13 +1942,6 @@ impl BrokerImpl {
             Err(format!("Invalid tunnel ID: {tunid}").into())
         }
     }
-    pub(crate) async fn is_tunnel_active(&self, tunid: TunnelId) -> bool {
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            tun.last_activity.is_some()
-        } else {
-            false
-        }
-    }
 
     pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
         let peer_sender = peers

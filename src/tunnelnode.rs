@@ -112,7 +112,7 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let is_active = ctx.state.is_tunnel_active(tunid).await;
+                    let is_active = is_tunnel_active(&ctx.state.active_tunnels, tunid).await;
                     let _ = ctx.state.command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunid));
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
@@ -171,6 +171,14 @@ pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<Tunnel
         tun.last_activity
     } else {
         None
+    }
+}
+
+pub(crate) async fn is_tunnel_active(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) -> bool {
+    if let Some(tun) = active_tunnels.read().await.get(&tunid) {
+        tun.last_activity.is_some()
+    } else {
+        false
     }
 }
 
