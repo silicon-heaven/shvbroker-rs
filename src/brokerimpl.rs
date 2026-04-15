@@ -685,7 +685,7 @@ pub struct BrokerImpl {
 
     pub(crate) sql_connection: Option<async_sqlite::Client>,
 
-    pending_rpc_calls: RwLock<Vec<PendingRpcCall>>,
+    pending_rpc_calls: Vec<PendingRpcCall>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -949,7 +949,7 @@ impl BrokerImpl {
         let role_access = parse_config_roles(access.roles());
         Self {
             nodes,
-            pending_rpc_calls: RwLock::new(vec![]),
+            pending_rpc_calls: vec![],
             command_sender,
             config: config.clone(),
             peers: Default::default(),
@@ -1150,7 +1150,7 @@ impl BrokerImpl {
     }
 
     async fn start_broker_rpc_call(
-        &self,
+        &mut self,
         request: RpcMessage,
         pending_call: PendingRpcCall,
     ) -> shvrpc::Result<()> {
@@ -1163,12 +1163,12 @@ impl BrokerImpl {
             .sender
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
-        self.pending_rpc_calls.write().await.push(pending_call);
+        self.pending_rpc_calls.push(pending_call);
         sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
         Ok(())
     }
     async fn process_pending_broker_rpc_call(
-        &self,
+        &mut self,
         client_id: PeerId,
         response_frame: RpcFrame,
     ) -> shvrpc::Result<()> {
@@ -1177,15 +1177,15 @@ impl BrokerImpl {
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;
-        let pending_call_ix = self.pending_rpc_calls.read().await.iter().position(|pc| {
+        let pending_call_ix = self.pending_rpc_calls.iter().position(|pc| {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
             request_id == rqid && pc.peer_id == client_id
         });
         if let Some(ix) = pending_call_ix {
-            let pending_call = self.pending_rpc_calls.write().await.remove(ix);
+            let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.unbounded_send(response_frame)?;
         }
-        Self::gc_pending_rpc_calls(&mut *self.pending_rpc_calls.write().await).await?;
+        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls).await?;
         Ok(())
     }
     async fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
@@ -1322,7 +1322,7 @@ impl BrokerImpl {
                     self.emit_rpc_signal_frame(0, &msg.to_frame()?)
                         .await?;
                 }
-                self.pending_rpc_calls.write().await.retain(|c| c.peer_id != peer_id);
+                self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
             BrokerCommand::CheckToken { sender, peer_id, ip_addr, token } => {
                 let result = 'result: {
