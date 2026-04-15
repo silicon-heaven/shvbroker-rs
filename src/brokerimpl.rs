@@ -1436,7 +1436,7 @@ impl BrokerImpl {
                     const TIMEOUT: Duration = Duration::from_secs(60 * 60);
                     loop {
                         smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = Self::last_tunnel_activity(&active_tunnels, tunnel_id).await;
+                        let last_activity = crate::tunnelnode::last_tunnel_activity(&active_tunnels, tunnel_id).await;
                         if let Some(last_activity) = last_activity {
                             if Instant::now().duration_since(last_activity) > TIMEOUT {
                                 debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
@@ -1966,18 +1966,6 @@ impl BrokerImpl {
             Ok(())
         } else {
             Err(format!("Invalid tunnel ID: {tunid}").into())
-        }
-    }
-    pub(crate) async fn touch_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) {
-        if let Some(tun) = active_tunnels.write().await.get_mut(&tunid) {
-            tun.last_activity = Some(Instant::now());
-        }
-    }
-    pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<Instant> {
-        if let Some(tun) = active_tunnels.read().await.get(&tunid) {
-            tun.last_activity
-        } else {
-            None
         }
     }
     pub(crate) async fn is_tunnel_active(&self, tunid: TunnelId) -> bool {

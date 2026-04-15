@@ -160,6 +160,20 @@ pub(crate) struct ActiveTunnel {
     pub(crate) last_activity: Option<Instant>,
 }
 
+pub(crate) async fn touch_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) {
+    if let Some(tun) = active_tunnels.write().await.get_mut(&tunid) {
+        tun.last_activity = Some(Instant::now());
+    }
+}
+
+pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<Instant> {
+    if let Some(tun) = active_tunnels.read().await.get(&tunid) {
+        tun.last_activity
+    } else {
+        None
+    }
+}
+
 pub(crate) async fn tunnel_task(
     tunnel_id: TunnelId,
     mut request_meta: MetaMap,
@@ -184,7 +198,7 @@ pub(crate) async fn tunnel_task(
             return Err(e.to_string().into());
         }
     };
-    BrokerImpl::touch_tunnel(&active_tunnels, tunnel_id).await;
+    touch_tunnel(&active_tunnels, tunnel_id).await;
     to_broker_sender.unbounded_send(BrokerCommand::TunnelActive(tunnel_id))?;
     let (socket_reader, socket_writer) = stream.split();
     let mut read_buff: [u8; 256] = [0; 256];
@@ -224,7 +238,7 @@ pub(crate) async fn tunnel_task(
             bytes_read = socket_reader.read(&mut read_buff).fuse() => match bytes_read {
                 Ok(bytes_read) => {
                     trace!(target: "Tunnel", "Read {bytes_read} bytes from client socket.");
-                    BrokerImpl::touch_tunnel(&active_tunnels, tunnel_id).await;
+                    touch_tunnel(&active_tunnels, tunnel_id).await;
                     if bytes_read == 0 {
                         trace!(target: "Tunnel", "Client socket closed.");
                         break;
@@ -247,7 +261,7 @@ pub(crate) async fn tunnel_task(
                     match cmd {
                         ToRemoteMsg::WriteData(rqid, data) => {
                             trace!(target: "Tunnel", "CMD WriteData, data size: {}", data.len());
-                            BrokerImpl::touch_tunnel(&active_tunnels, tunnel_id).await;
+                            touch_tunnel(&active_tunnels, tunnel_id).await;
                             if write_request_id.is_none() {
                                 write_request_id = Some(rqid);
                                 response_meta.set_request_id(rqid);
