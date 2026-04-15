@@ -4,7 +4,7 @@ use crate::shvnode::{
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
-use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
+use crate::tunnelnode::{ActiveTunnel, TunnelNode};
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::channel::oneshot;
@@ -20,7 +20,7 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
-use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId, Tag};
+use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, Tag};
 use shvrpc::util::{find_longest_path_prefix, join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol_timeout::TimeoutExt;
@@ -679,7 +679,7 @@ pub struct BrokerImpl {
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
 
     pub(crate) active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
-    next_tunnel_number: RwLock<TunnelId>,
+    pub(crate) next_tunnel_number: Arc<RwLock<TunnelId>>,
 
     pub(crate) sql_connection: Option<async_sqlite::Client>,
 
@@ -957,7 +957,7 @@ impl BrokerImpl {
             oauth2_user_groups: Default::default(),
             subscr_cmd_sender,
             active_tunnels: Default::default(),
-            next_tunnel_number: RwLock::new(1),
+            next_tunnel_number: Arc::new(RwLock::new(1)),
             sql_connection,
             session_tokens: Arc::new(RwLock::default()),
             last_login: RwLock::new(last_login),
@@ -1861,25 +1861,6 @@ impl BrokerImpl {
 
     pub(crate) async fn peer_user(&self, peer_id: PeerId) -> Option<String> {
         self.peers.read().await.get(&peer_id).map(Peer::user).map(ToOwned::to_owned)
-    }
-
-    pub(crate) async fn create_tunnel(
-        &self,
-        request: &RpcMessage,
-    ) -> shvrpc::Result<(TunnelId, UnboundedReceiver<ToRemoteMsg>)> {
-        let mut tunid_lock = self.next_tunnel_number.write().await;
-        let tunid = *tunid_lock;
-        *tunid_lock += 1;
-        debug!(target: "Tunnel", "create_tunnel: {tunid}");
-        let caller_ids = request.caller_ids();
-        let (sender, receiver) = unbounded::<ToRemoteMsg>();
-        let tun = ActiveTunnel {
-            caller_ids,
-            sender,
-            last_activity: None,
-        };
-        self.active_tunnels.write().await.insert(tunid, tun);
-        Ok((tunid, receiver))
     }
 
     pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {

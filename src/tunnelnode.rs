@@ -128,7 +128,7 @@ impl ShvNode for TunnelNode {
                         .ok_or("'host' parameter must be provided")?
                         .as_str()
                         .to_string();
-                    let (tunid, receiver) = ctx.state.create_tunnel(&rq).await?;
+                    let (tunid, receiver) = create_tunnel(&ctx.state.next_tunnel_number, &ctx.state.active_tunnels, &rq).await?;
                     let rq_meta = rq.meta().clone();
                     let command_sender = ctx.state.command_sender.clone();
                     let peers = ctx.state.peers.clone();
@@ -235,6 +235,26 @@ pub(crate) async fn close_tunnel(
     } else {
         Ok(None)
     }
+}
+
+pub(crate) async fn create_tunnel(
+    next_tunnel_number: &Arc<RwLock<TunnelId>>,
+    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    request: &shvrpc::RpcMessage,
+) -> shvrpc::Result<(TunnelId, UnboundedReceiver<ToRemoteMsg>)> {
+    let mut tunid_lock = next_tunnel_number.write().await;
+    let tunid = *tunid_lock;
+    *tunid_lock += 1;
+    debug!(target: "Tunnel", "create_tunnel: {tunid}");
+    let caller_ids = request.caller_ids();
+    let (sender, receiver) = unbounded::<ToRemoteMsg>();
+    let tun = ActiveTunnel {
+        caller_ids,
+        sender,
+        last_activity: None,
+    };
+    active_tunnels.write().await.insert(tunid, tun);
+    Ok((tunid, receiver))
 }
 
 pub(crate) fn tunnel_close_handler(
