@@ -324,7 +324,7 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
+pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
     let session_token_expiration_task = {
         let session_tokens = broker.session_tokens.clone();
 
@@ -663,7 +663,7 @@ pub struct LastLogin(pub(crate) BTreeMap<String, shvproto::DateTime>);
 
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
-    nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
+    nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
     pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: RwLock<BTreeMap<String, Mount>>,
@@ -948,7 +948,7 @@ impl BrokerImpl {
 
         let role_access = parse_config_roles(access.roles());
         Self {
-            nodes: RwLock::new(nodes),
+            nodes,
             pending_rpc_calls: RwLock::new(vec![]),
             command_sender,
             config: config.clone(),
@@ -965,7 +965,7 @@ impl BrokerImpl {
             last_login: RwLock::new(last_login),
         }
     }
-    pub(crate) async fn process_rpc_frame(&self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
+    pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;
             if let Some(req_user_id) = frame.user_id() {
@@ -1041,8 +1041,7 @@ impl BrokerImpl {
                         return Ok(());
                     }
                     Action::NodeRequest { node_id, frame, ctx, } => {
-                        let nodes = &*self.nodes.read().await;
-                        let node = nodes.get(&node_id).expect("Should be mounted");
+                        let node = self.nodes.get(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame, &ctx).await {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx).await {
                                 Err(e) => Err(RpcError::new(
@@ -1254,7 +1253,7 @@ impl BrokerImpl {
         SessionToken(format!("{SESSION_TOKEN_PREFIX}{token}"))
     }
 
-    async fn process_broker_command(&self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id: client_id,
@@ -2076,7 +2075,7 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
                 let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
