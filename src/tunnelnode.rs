@@ -4,7 +4,7 @@ use smol::lock::RwLock;
 use std::collections::BTreeMap;
 
 use crate::brokerimpl::{
-    BrokerCommand, BrokerImpl, NodeRequestContext, Peer, TunnelId
+    BrokerImpl, NodeRequestContext, Peer, TunnelId
 };
 use crate::shvnode::{self, SIG_LSMOD};
 use crate::shvnode::{
@@ -130,13 +130,12 @@ impl ShvNode for TunnelNode {
                         .to_string();
                     let (tunid, receiver) = create_tunnel(&ctx.state.next_tunnel_number, &ctx.state.active_tunnels, &rq).await?;
                     let rq_meta = rq.meta().clone();
-                    let command_sender = ctx.state.command_sender.clone();
                     let peers = ctx.state.peers.clone();
                     let active_tunnels = ctx.state.active_tunnels.clone();
                     smol::spawn(async move {
                         let peers_for_close = peers.clone();
                         let active_tunnels_for_close = active_tunnels.clone();
-                        if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, command_sender, peers, active_tunnels).await {
+                        if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, peers, active_tunnels).await {
                             error!("{e}")
                         }
                         tunnel_close_handler(active_tunnels_for_close, peers_for_close, tunid);
@@ -284,7 +283,6 @@ pub(crate) async fn tunnel_task(
     mut request_meta: MetaMap,
     addr: String,
     mut from_broker_receiver: UnboundedReceiver<ToRemoteMsg>,
-    command_sender: UnboundedSender<BrokerCommand>,
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
 ) -> shvrpc::Result<()> {
@@ -307,7 +305,6 @@ pub(crate) async fn tunnel_task(
         .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
     BrokerImpl::emit_rpc_signal_frame(&peers, 0, &msg.to_frame()?).await?;
     {
-        let command_sender = command_sender.clone();
         let active_tunnels = active_tunnels.clone();
         let peers = peers.clone();
         smol::spawn(async move {
