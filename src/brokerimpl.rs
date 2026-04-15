@@ -1102,19 +1102,19 @@ impl BrokerImpl {
                 self.process_pending_broker_rpc_call(peer_id, frame).await?;
             }
         } else if frame.is_signal() {
-            self.emit_rpc_signal_frame(peer_id, &frame).await?;
+            Self::emit_rpc_signal_frame(&self.peers, peer_id, &frame).await?;
         }
         Ok(())
     }
     pub(crate) async fn emit_rpc_signal_frame(
-        &self,
+        peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
         originating_peer_id: PeerId,
         signal_frame: &RpcFrame,
     ) -> shvrpc::Result<()> {
         assert!(signal_frame.is_signal());
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
-            if let Some(peer) = self.peers.read().await.get(&originating_peer_id) {
+            if let Some(peer) = peers.read().await.get(&originating_peer_id) {
                 if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
                     // remove imported_shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
@@ -1130,8 +1130,7 @@ impl BrokerImpl {
                 signal_frame.source().unwrap_or("get"),
                 signal_frame.method(),
             )?;
-            self
-                .peers
+            peers
                 .read()
                 .await
                 .values()
@@ -1288,12 +1287,12 @@ impl BrokerImpl {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(dir.to_string(), true.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
 
                     let msg = RpcMessage::new_signal(&mount_point, SIG_MNTMOD)
                         .with_param(true);
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
                 }
                 spawn_and_log_error(Self::on_device_mounted(self.peers.clone(), self.command_sender.clone(), self.subscr_cmd_sender.clone(), peer_id));
@@ -1314,12 +1313,12 @@ impl BrokerImpl {
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
                     let msg = RpcMessage::new_signal_with_source( lsmod_path, SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(lsmod_value.to_string(), false.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
 
                     let msg = RpcMessage::new_signal( &mount_point, SIG_MNTMOD)
                         .with_param(false);
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
                 }
                 self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
@@ -1429,7 +1428,7 @@ impl BrokerImpl {
             BrokerCommand::TunnelActive(tunnel_id) => {
                 let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
                     .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
-                self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
+                Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?).await?;
                 let command_sender = self.command_sender.clone();
                 let active_tunnels = self.active_tunnels.clone();
                 smol::spawn(async move {
@@ -1455,7 +1454,7 @@ impl BrokerImpl {
                 if let Some(true) = closed {
                     let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(format!("{tunnel_id}"), false.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?).await?;
                 }
             }
         }
