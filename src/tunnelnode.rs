@@ -78,7 +78,7 @@ impl ShvNode for TunnelNode {
             .collect();
         if shv_path.is_empty() {
             Some(tunnels)
-        } else if tunnels.contains(&shv_path.to_string()) {
+        } else if tunnels.iter().any(|s| s == shv_path) {
             Some(vec![])
         } else {
             None
