@@ -141,12 +141,10 @@ impl ShvNode for TunnelNode {
                     let peers = ctx.state.peers.clone();
                     let active_tunnels = self.active_tunnels.clone();
                     smol::spawn(async move {
-                        let peers_for_close = peers.clone();
-                        let active_tunnels_for_close = active_tunnels.clone();
-                        if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, peers, active_tunnels).await {
+                        if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, peers.clone(), active_tunnels.clone()).await {
                             error!("{e}")
                         }
-                        tunnel_close_handler(active_tunnels_for_close, peers_for_close, tunid);
+                        tunnel_close_handler(active_tunnels, peers, tunid);
                     }).detach();
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
