@@ -166,7 +166,7 @@ pub(crate) struct ActiveTunnel {
     pub(crate) last_activity: Option<Instant>,
 }
 
-pub(crate) async fn touch_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) {
+pub(crate) async fn touch_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) {
     if let Some(tun) = active_tunnels.write().await.get_mut(&tunid) {
         tun.last_activity = Some(Instant::now());
     }
@@ -180,7 +180,7 @@ pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<Tunnel
     }
 }
 
-pub(crate) async fn is_tunnel_active(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: TunnelId) -> bool {
+pub(crate) async fn is_tunnel_active(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> bool {
     if let Some(tun) = active_tunnels.read().await.get(&tunid) {
         tun.last_activity.is_some()
     } else {
@@ -188,7 +188,7 @@ pub(crate) async fn is_tunnel_active(active_tunnels: &Arc<RwLock<BTreeMap<Tunnel
     }
 }
 
-pub(crate) async fn active_tunnel_ids(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>) -> Vec<TunnelId> {
+pub(crate) async fn active_tunnel_ids(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>) -> Vec<TunnelId> {
     active_tunnels
         .read()
         .await
@@ -198,7 +198,7 @@ pub(crate) async fn active_tunnel_ids(active_tunnels: &Arc<RwLock<BTreeMap<Tunne
         .collect()
 }
 
-pub(crate) async fn is_request_granted_tunnel(active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, tunid: &str, frame: &RpcFrame) -> bool {
+pub(crate) async fn is_request_granted_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: &str, frame: &RpcFrame) -> bool {
     let Ok(tunid) = tunid.parse::<TunnelId>() else {
         return false;
     };
@@ -214,7 +214,7 @@ pub(crate) async fn is_request_granted_tunnel(active_tunnels: &Arc<RwLock<BTreeM
 }
 
 pub(crate) async fn write_tunnel(
-    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
     tunid: TunnelId,
     rqid: RqId,
     data: Vec<u8>,
@@ -228,7 +228,7 @@ pub(crate) async fn write_tunnel(
 }
 
 pub(crate) async fn close_tunnel(
-    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
     tunid: TunnelId,
 ) -> shvrpc::Result<Option<bool>> {
     debug!(target: "Tunnel", "close_tunnel: {tunid}");
@@ -245,8 +245,8 @@ pub(crate) async fn close_tunnel(
 }
 
 pub(crate) async fn create_tunnel(
-    next_tunnel_number: &Arc<RwLock<TunnelId>>,
-    active_tunnels: &Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
+    next_tunnel_number: &RwLock<TunnelId>,
+    active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
     request: &shvrpc::RpcMessage,
 ) -> shvrpc::Result<(TunnelId, UnboundedReceiver<ToRemoteMsg>)> {
     let mut tunid_lock = next_tunnel_number.write().await;
