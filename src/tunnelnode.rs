@@ -220,7 +220,7 @@ pub(crate) async fn write_tunnel(
 pub(crate) async fn close_tunnel(
     active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
     tunid: TunnelId,
-) -> shvrpc::Result<Option<bool>> {
+) -> Option<bool> {
     debug!(target: "Tunnel", "close_tunnel: {tunid}");
     if let Some(tun) = active_tunnels.write().await.remove(&tunid) {
         let sender = tun.sender;
@@ -228,9 +228,9 @@ pub(crate) async fn close_tunnel(
             let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
         })
         .detach();
-        Ok(Some(tun.last_activity.is_some()))
+        Some(tun.last_activity.is_some())
     } else {
-        Ok(None)
+        None
     }
 }
 
@@ -261,7 +261,7 @@ pub(crate) fn tunnel_close_handler(
 ) {
     smol::spawn(async move {
         let closed = close_tunnel(&active_tunnels, tunid).await;
-        if let Ok(Some(true)) = closed {
+        if let Some(true) = closed {
             let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunid}"), SIG_LSMOD, METH_LS)
                 .with_param(Map::from([(format!("{tunid}"), false.into())]));
             match msg.to_frame() {
