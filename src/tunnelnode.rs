@@ -222,16 +222,14 @@ pub(crate) async fn close_tunnel(
     tunid: TunnelId,
 ) -> Option<bool> {
     debug!(target: "Tunnel", "close_tunnel: {tunid}");
-    if let Some(tun) = active_tunnels.write().await.remove(&tunid) {
+    active_tunnels.write().await.remove(&tunid).map(|tun| {
         let sender = tun.sender;
         smol::spawn(async move {
             let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
         })
         .detach();
-        Some(tun.last_activity.is_some())
-    } else {
-        None
-    }
+        tun.last_activity.is_some()
+    })
 }
 
 pub(crate) async fn create_tunnel(
