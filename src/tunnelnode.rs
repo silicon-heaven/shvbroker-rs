@@ -50,13 +50,13 @@ const OPEN_TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
 
 pub(crate) struct TunnelNode {
     active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
-    next_tunnel_number: Arc<RwLock<TunnelId>>,
+    next_tunnel_number: RwLock<TunnelId>,
 }
 impl TunnelNode {
     pub fn new() -> Self {
         TunnelNode {
             active_tunnels: Arc::new(RwLock::default()),
-            next_tunnel_number: Arc::new(RwLock::new(1)),
+            next_tunnel_number: RwLock::new(1),
         }
     }
 }
