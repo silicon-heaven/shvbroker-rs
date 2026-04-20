@@ -788,7 +788,7 @@ impl ShvNode for BrokerAccessMountsNode {
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
-                let mount = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let mount = param.get(1).filter(|&m| !m.is_null());
                 let mount = mount.map(crate::config::Mount::try_from);
                 let mount = match mount {
                     None => None,
@@ -875,7 +875,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
-                let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let rv = param.get(1).filter(|&m| !m.is_null());
                 let user = if let Some(rv) = rv {
                     match crate::config::User::try_from(rv) {
                         Ok(user) => { Some(user) }
@@ -941,7 +941,7 @@ impl ShvNode for BrokerAccessRolesNode {
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?.clone();
-                let rv = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let rv = param.get(1).filter(|&m| !m.is_null());
                 let role = rv.map(crate::config::Role::try_from);
                 let role = match role {
                     None => None,
@@ -1003,7 +1003,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
-                let allowed_ips = param.get(1).and_then(|m| if m.is_null() {None} else {Some(m)});
+                let allowed_ips = param.get(1).filter(|&m| !m.is_null());
                 let allowed_ips: Option<Result<Vec<ipnet::IpNet>,_>> = allowed_ips
                     .map(|val| val
                         .as_list()
