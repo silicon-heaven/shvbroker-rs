@@ -4,7 +4,7 @@ use crate::shvnode::{
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
-use crate::tunnelnode::{ActiveTunnel, ToRemoteMsg, TunnelNode};
+use crate::tunnelnode::TunnelNode;
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::channel::oneshot;
@@ -20,7 +20,7 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
-use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId, Tag};
+use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, Tag};
 use shvrpc::util::{find_longest_path_prefix, join_path, sha1_hash, split_glob_on_match};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol_timeout::TimeoutExt;
@@ -101,8 +101,6 @@ pub enum BrokerCommand {
         request: RpcMessage,
         response_sender: UnboundedSender<RpcFrame>,
     },
-    TunnelActive(TunnelId),
-    TunnelClosed(TunnelId),
 }
 
 #[derive(Debug)]
@@ -324,16 +322,16 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(broker: Arc<BrokerImpl>, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
+pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
     let session_token_expiration_task = {
-        let broker = broker.clone();
+        let session_tokens = broker.session_tokens.clone();
 
         smol::spawn(async move {
             loop {
                 let mut interval = futures::FutureExt::fuse(smol::Timer::interval(Duration::from_hours(1)));
                 select! {
                     _ = interval => {
-                        let mut session_tokens = broker.session_tokens.write().await;
+                        let mut session_tokens = session_tokens.write().await;
                         const HOURS_BEFORE_EXPIRATION: i64 = 12;
                         let threshold = shvproto::DateTime::now().add_hours(-HOURS_BEFORE_EXPIRATION);
                         session_tokens.retain(|session| {
@@ -454,7 +452,7 @@ async fn server_accept_loop(
     Ok(())
 }
 
-pub async fn run_broker(broker_impl: Arc<BrokerImpl>, command_receiver: UnboundedReceiver<BrokerCommand>) -> shvrpc::Result<()> {
+pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedReceiver<BrokerCommand>) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
     let broker_config = broker_impl.config.clone();
     let broker_task = smol::spawn(broker_loop(broker_impl, command_receiver));
@@ -622,8 +620,6 @@ fn can_interfaces_config(broker_config: &crate::config::BrokerConfig) -> Vec<Can
 }
 
 
-pub type TunnelId = u64;
-
 struct DisconnectPeerReason {
     msg: String,
     msg_for_peer: Option<String>,
@@ -663,29 +659,26 @@ pub struct LastLogin(pub(crate) BTreeMap<String, shvproto::DateTime>);
 
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
-    nodes: RwLock<BTreeMap<String, Box<dyn ShvNode>>>,
+    nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
-    pub(crate) peers: RwLock<BTreeMap<PeerId, Peer>>,
-    mounts: RwLock<BTreeMap<String, Mount>>,
+    pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    mounts: BTreeMap<String, Mount>,
     pub(crate) access: RwLock<AccessConfig>,
     pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
 
     pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
 
     // session_token -> username
-    pub(crate) session_tokens: RwLock<Vec<Session>>,
+    pub(crate) session_tokens: Arc<RwLock<Vec<Session>>>,
 
     last_login: RwLock<LastLogin>,
 
     pub(crate) command_sender: UnboundedSender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
 
-    active_tunnels: RwLock<BTreeMap<TunnelId, ActiveTunnel>>,
-    next_tunnel_number: RwLock<TunnelId>,
-
     pub(crate) sql_connection: Option<async_sqlite::Client>,
 
-    pending_rpc_calls: RwLock<Vec<PendingRpcCall>>,
+    pending_rpc_calls: Vec<PendingRpcCall>,
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
@@ -948,24 +941,22 @@ impl BrokerImpl {
 
         let role_access = parse_config_roles(access.roles());
         Self {
-            nodes: RwLock::new(nodes),
-            pending_rpc_calls: RwLock::new(vec![]),
+            nodes,
+            pending_rpc_calls: vec![],
             command_sender,
             config: config.clone(),
             peers: Default::default(),
-            mounts: RwLock::new(mounts),
+            mounts,
             access: RwLock::new(access),
             role_access_rules: RwLock::new(role_access),
             oauth2_user_groups: Default::default(),
             subscr_cmd_sender,
-            active_tunnels: Default::default(),
-            next_tunnel_number: RwLock::new(1),
             sql_connection,
-            session_tokens: RwLock::default(),
+            session_tokens: Arc::new(RwLock::default()),
             last_login: RwLock::new(last_login),
         }
     }
-    pub(crate) async fn process_rpc_frame(self: &Arc<Self>, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
+    pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;
             if let Some(req_user_id) = frame.user_id() {
@@ -983,27 +974,27 @@ impl BrokerImpl {
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
-                    self.send_response(peer_id, response_meta, Err(err)).await?;
+                    Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
                     return Ok(());
                 }
             };
-            let local_result = process_local_dir_ls(&*self.mounts.read().await, &frame);
+            let local_result = process_local_dir_ls(&self.mounts, &frame);
             if let Some(result) = local_result {
-                self.send_response(peer_id, response_meta, result).await?;
+                Self::send_response(&self.peers, peer_id, response_meta, result).await?;
                 return Ok(());
             }
             //let self.= self.read().map_err(|e| e.to_string())?;
             let paths = find_longest_path_prefix(
-                &*self.mounts.read().await,
+                &self.mounts,
                 &shv_path,
             );
             if let Some((mount_point, node_path)) = paths {
-                enum Action {
+                enum Action<'a> {
                     ToPeer(UnboundedSender<BrokerToPeerMessage>, BrokerToPeerMessage),
                     NodeRequest {
                         node_id: String,
                         frame: RpcFrame,
-                        ctx: NodeRequestContext,
+                        ctx: NodeRequestContext<'a>,
                     },
                 }
                 let action = {
@@ -1012,7 +1003,7 @@ impl BrokerImpl {
                     frame.set_shvpath(node_path);
                     frame.set_tag(Tag::AccessLevel as i32, grant_access_level.map(RpcValue::from));
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
-                    match self.mounts.read().await.get(mount_point).expect("Should be mounted") {
+                    match self.mounts.get(mount_point).expect("Should be mounted") {
                         Mount::Peer(device_peer_id) => {
                             let sender = self
                                 .peers
@@ -1030,7 +1021,7 @@ impl BrokerImpl {
                             ctx: NodeRequestContext {
                                 peer_id,
                                 node_path: node_path.to_string(),
-                                state: self.clone(),
+                                state: self,
                             },
                         },
                     }
@@ -1041,8 +1032,7 @@ impl BrokerImpl {
                         return Ok(());
                     }
                     Action::NodeRequest { node_id, frame, ctx, } => {
-                        let nodes = &*self.nodes.read().await;
-                        let node = nodes.get(&node_id).expect("Should be mounted");
+                        let node = self.nodes.get(&node_id).expect("Should be mounted");
                         if node.is_request_granted(&frame, &ctx).await {
                             let result = match node.process_request_and_dir_ls(&frame, &ctx).await {
                                 Err(e) => Err(RpcError::new(
@@ -1060,7 +1050,7 @@ impl BrokerImpl {
                                 Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
                                 Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
                             };
-                            self.send_response(peer_id, response_meta, result).await?;
+                            Self::send_response(&self.peers, peer_id, response_meta, result).await?;
                         } else {
                             let err = RpcError::new(
                                 RpcErrorCode::PermissionDenied,
@@ -1070,7 +1060,7 @@ impl BrokerImpl {
                                     frame.method().unwrap_or_default()
                                 ),
                             );
-                            self.send_response(peer_id, response_meta, Err(err)).await?;
+                            Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
                         }
                     }
                 }
@@ -1079,7 +1069,7 @@ impl BrokerImpl {
                     RpcErrorCode::MethodNotFound,
                     format!("Invalid shv path {shv_path}:{method}()"),
                 );
-                self.send_response(peer_id, response_meta, Err(err)).await?;
+                Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
             }
             return Ok(());
         } else if frame.is_response() {
@@ -1103,19 +1093,19 @@ impl BrokerImpl {
                 self.process_pending_broker_rpc_call(peer_id, frame).await?;
             }
         } else if frame.is_signal() {
-            self.emit_rpc_signal_frame(peer_id, &frame).await?;
+            Self::emit_rpc_signal_frame(&self.peers, peer_id, &frame).await?;
         }
         Ok(())
     }
     pub(crate) async fn emit_rpc_signal_frame(
-        &self,
-        peer_id: PeerId,
+        peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        originating_peer_id: PeerId,
         signal_frame: &RpcFrame,
     ) -> shvrpc::Result<()> {
         assert!(signal_frame.is_signal());
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
-            if let Some(peer) = self.peers.read().await.get(&peer_id) {
+            if let Some(peer) = peers.read().await.get(&originating_peer_id) {
                 if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
                     // remove imported_shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
@@ -1131,15 +1121,12 @@ impl BrokerImpl {
                 signal_frame.source().unwrap_or("get"),
                 signal_frame.method(),
             )?;
-            self
-                .peers
+            peers
                 .read()
                 .await
-                .iter()
-                .filter(|(tested_peer_id, peer)| {
-                    peer_id != **tested_peer_id && peer.is_signal_subscribed(&ri)
-                })
-                .map(|(_, peer)| {
+                .values()
+                .filter(|peer| peer.is_signal_subscribed(&ri))
+                .map(|peer| {
                     let mut frame = signal_frame.clone();
                     frame.set_shvpath(&shv_path);
                     (frame, peer.sender.clone())
@@ -1153,7 +1140,7 @@ impl BrokerImpl {
     }
 
     async fn start_broker_rpc_call(
-        &self,
+        &mut self,
         request: RpcMessage,
         pending_call: PendingRpcCall,
     ) -> shvrpc::Result<()> {
@@ -1166,12 +1153,12 @@ impl BrokerImpl {
             .sender
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
-        self.pending_rpc_calls.write().await.push(pending_call);
+        self.pending_rpc_calls.push(pending_call);
         sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
         Ok(())
     }
     async fn process_pending_broker_rpc_call(
-        &self,
+        &mut self,
         client_id: PeerId,
         response_frame: RpcFrame,
     ) -> shvrpc::Result<()> {
@@ -1180,15 +1167,15 @@ impl BrokerImpl {
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;
-        let pending_call_ix = self.pending_rpc_calls.read().await.iter().position(|pc| {
+        let pending_call_ix = self.pending_rpc_calls.iter().position(|pc| {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
             request_id == rqid && pc.peer_id == client_id
         });
         if let Some(ix) = pending_call_ix {
-            let pending_call = self.pending_rpc_calls.write().await.remove(ix);
+            let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.unbounded_send(response_frame)?;
         }
-        Self::gc_pending_rpc_calls(&mut *self.pending_rpc_calls.write().await).await?;
+        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls).await?;
         Ok(())
     }
     async fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
@@ -1207,7 +1194,7 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn user_is_allowed_to_login(self: &Arc<Self>, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
+    async fn user_is_allowed_to_login(&self, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
         if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(user, ip_addr).await {
             info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
             return false;
@@ -1224,7 +1211,7 @@ impl BrokerImpl {
         self.last_login.read().await
     }
 
-    pub(crate) async fn set_last_login(self: &Arc<Self>, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
+    pub(crate) async fn set_last_login(&self, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
         let json = serde_json::to_string(&timestamp).unwrap_or_else(|e| {
             error!("Generate SQL entry error: {e}");
             "".to_string()
@@ -1243,7 +1230,7 @@ impl BrokerImpl {
         Ok(last_login.insert(id.to_string(), timestamp))
     }
 
-    async fn get_or_create_token(self: &Arc<Self>, user: &str) -> SessionToken {
+    async fn get_or_create_token(&self, user: &str) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
             token.clone()
@@ -1256,7 +1243,7 @@ impl BrokerImpl {
         SessionToken(format!("{SESSION_TOKEN_PREFIX}{token}"))
     }
 
-    async fn process_broker_command(self: &Arc<Self>, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id: client_id,
@@ -1286,20 +1273,20 @@ impl BrokerImpl {
                     return Err(msg.into());
                 };
 
-                let mount_point = self.mount_point(peer_id).await;
+                let mount_point = Self::mount_point(&self.peers, peer_id).await;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(dir.to_string(), true.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
 
                     let msg = RpcMessage::new_signal(&mount_point, SIG_MNTMOD)
                         .with_param(true);
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
                 }
-                spawn_and_log_error(Self::on_device_mounted(self.clone(), peer_id));
+                spawn_and_log_error(Self::on_device_mounted(self.peers.clone(), self.command_sender.clone(), self.subscr_cmd_sender.clone(), peer_id));
             }
             BrokerCommand::PeerGone { peer_id } => {
                 debug!("Peer gone, id: {peer_id}.");
@@ -1309,7 +1296,7 @@ impl BrokerImpl {
                     let mut lsmod_value = "";
                     while !mount_point.is_empty() {
                         (lsmod_path, lsmod_value) = split_last_fragment(lsmod_path);
-                        if self.mounts.read().await.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
+                        if self.mounts.keys().map(|path| split_last_fragment(path).0).any(|path| path == lsmod_path) {
                             break;
                         }
                     }
@@ -1317,15 +1304,15 @@ impl BrokerImpl {
                     debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
                     let msg = RpcMessage::new_signal_with_source( lsmod_path, SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(lsmod_value.to_string(), false.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
 
                     let msg = RpcMessage::new_signal( &mount_point, SIG_MNTMOD)
                         .with_param(false);
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?)
+                    Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
                 }
-                self.pending_rpc_calls.write().await.retain(|c| c.peer_id != peer_id);
+                self.pending_rpc_calls.retain(|c| c.peer_id != peer_id);
             }
             BrokerCommand::CheckToken { sender, peer_id, ip_addr, token } => {
                 let result = 'result: {
@@ -1429,59 +1416,27 @@ impl BrokerImpl {
                 )
                 .await?
             }
-            BrokerCommand::TunnelActive(tunnel_id) => {
-                let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
-                    .with_param(Map::from([(format!("{tunnel_id}"), true.into())]));
-                self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
-                let command_sender = self.command_sender.clone();
-                let state = self.clone();
-                smol::spawn(async move {
-                    const TIMEOUT: Duration = Duration::from_secs(60 * 60);
-                    loop {
-                        smol::Timer::after(TIMEOUT / 60).await;
-                        let last_activity = state.last_tunnel_activity(tunnel_id).await;
-                        if let Some(last_activity) = last_activity {
-                            if Instant::now().duration_since(last_activity) > TIMEOUT {
-                                debug!(target: "Tunnel", "Closing tunnel: {tunnel_id} as inactive for {TIMEOUT:#?}");
-                                let _ = command_sender.unbounded_send(BrokerCommand::TunnelClosed(tunnel_id));
-                                break;
-                            }
-                        } else {
-                            // tunnel closed already
-                            break;
-                        }
-                    }
-                }).detach();
-            }
-            BrokerCommand::TunnelClosed(tunnel_id) => {
-                let closed = self.close_tunnel(tunnel_id).await?;
-                if let Some(true) = closed {
-                    let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunnel_id}"), SIG_LSMOD, METH_LS)
-                        .with_param(Map::from([(format!("{tunnel_id}"), false.into())]));
-                    self.emit_rpc_signal_frame(0, &msg.to_frame()?).await?;
-                }
-            }
         }
         Ok(())
     }
 
-    async fn on_device_mounted(self: Arc<BrokerImpl>, new_peer_id: PeerId) -> shvrpc::Result<()> {
-        if self.mount_point(new_peer_id).await.is_none() {
+    async fn on_device_mounted(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, command_sender: UnboundedSender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>, new_peer_id: PeerId) -> shvrpc::Result<()> {
+        if Self::mount_point(peers.as_ref(), new_peer_id).await.is_none() {
             return Ok(());
         }
-        if self.check_subscribe_api(new_peer_id).await?.is_none() {
+        if Self::check_subscribe_api(peers.as_ref(), command_sender.clone(), new_peer_id).await?.is_none() {
             return Ok(());
         }
-        let forwarded_ris = self.peers.read()
+        let forwarded_ris = peers.read()
             .await
             .iter()
             .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
             .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
             .collect::<Vec<_>>();
 
-        let subscr_cmd_sender = self.subscr_cmd_sender.clone();
+        let subscr_cmd_sender = subscr_cmd_sender.clone();
 
-        if let Some(new_peer) = self.peers.write().await.get_mut(&new_peer_id) {
+        if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
             for ri in forwarded_ris {
                 new_peer
                     .add_forwarded_subscription(&ri, &subscr_cmd_sender)
@@ -1492,9 +1447,9 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn check_subscribe_api(&self, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
+    async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sender: UnboundedSender<BrokerCommand>, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
         log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        let broker_command_sender = self.command_sender.clone();
+        let broker_command_sender = command_sender.clone();
         let subscribe_api = {
             let (response_sender, mut response_receiver) = unbounded();
             let request = RpcMessage::new_request(".broker", METH_LS);
@@ -1522,12 +1477,12 @@ impl BrokerImpl {
         };
 
         log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
-        self.set_subscribe_api(peer_id, subscribe_api).await?;
+        Self::set_subscribe_api(peers, peer_id, subscribe_api).await?;
         Ok(subscribe_api)
     }
 
-    async fn mount_point(&self, peer_id: PeerId) -> Option<String> {
-        self.peers
+    async fn mount_point(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<String> {
+        peers
             .read()
             .await
             .get(&peer_id)
@@ -1639,8 +1594,8 @@ impl BrokerImpl {
 
         flatten_roles
     }
-    async fn remove_peer(&self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
-        let mount_point = self.mount_point(peer_id).await;
+    async fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
+        let mount_point = Self::mount_point(&self.peers, peer_id).await;
         if let Some(mount_point) = mount_point.as_ref() {
             info!("Unmounting peer: {peer_id} at: {mount_point}");
         }
@@ -1655,7 +1610,7 @@ impl BrokerImpl {
                 }
             }
         }
-        self.mounts.write().await.retain(|_k, v| {
+        self.mounts.retain(|_k, v| {
             if let Mount::Peer(id) = v
                 && *id == peer_id {
                     return false;
@@ -1664,14 +1619,14 @@ impl BrokerImpl {
         });
         Ok(mount_point)
     }
-    async fn set_subscribe_api(&self, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
-        let mut peers = self.peers.write().await;
+    async fn set_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
+        let mut peers = peers.write().await;
         let peer = peers.get_mut(&peer_id).ok_or("Peer not found")?;
         peer.subscribe_api = subscribe_api;
         Ok(())
     }
 
-    async fn add_peer(&self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
+    async fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
         if self.peers.read().await.contains_key(&peer_id) {
             // this might happen when connection to parent broker is restored
             // after parent broker reset
@@ -1721,7 +1676,7 @@ impl BrokerImpl {
         };
 
         if let Some(mount_point) = effective_mount_point.as_ref() {
-            if let Some(mount) = self.mounts.read().await.get(mount_point) {
+            if let Some(mount) = self.mounts.get(mount_point) {
                 return Err(DisconnectPeerReason {
                     msg: format!("peer({peer_id}): can't mount on {mount_point}, because it is already mounted as: {mount}", mount = match mount {
                         Mount::Peer(id) => format!("peer_id({id})"),
@@ -1731,10 +1686,10 @@ impl BrokerImpl {
                 });
             }
             info!("Mounting peer: {peer_id} at: {mount_point}");
-            self.mounts.write().await.insert(mount_point.clone(), Mount::Peer(peer_id));
+            self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
         }
 
-        self.mounts.write().await.insert(client_path, Mount::Peer(peer_id));
+        self.mounts.insert(client_path, Mount::Peer(peer_id));
 
         let peer = Peer {
             peer_id,
@@ -1901,99 +1856,8 @@ impl BrokerImpl {
         self.peers.read().await.get(&peer_id).map(Peer::user).map(ToOwned::to_owned)
     }
 
-    pub(crate) async fn create_tunnel(
-        &self,
-        request: &RpcMessage,
-    ) -> shvrpc::Result<(TunnelId, UnboundedReceiver<ToRemoteMsg>)> {
-        let mut tunid_lock = self.next_tunnel_number.write().await;
-        let tunid = *tunid_lock;
-        *tunid_lock += 1;
-        debug!(target: "Tunnel", "create_tunnel: {tunid}");
-        let caller_ids = request.caller_ids();
-        let (sender, receiver) = unbounded::<ToRemoteMsg>();
-        let tun = ActiveTunnel {
-            caller_ids,
-            sender,
-            last_activity: None,
-        };
-        self.active_tunnels.write().await.insert(tunid, tun);
-        Ok((tunid, receiver))
-    }
-    pub(crate) async fn close_tunnel(&self, tunid: TunnelId) -> shvrpc::Result<Option<bool>> {
-        debug!(target: "Tunnel", "close_tunnel: {tunid}");
-        if let Some(tun) = self.active_tunnels.write().await.remove(&tunid) {
-            let sender = tun.sender;
-            smol::spawn(async move {
-                let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
-            })
-            .detach();
-            Ok(Some(tun.last_activity.is_some()))
-        } else {
-            // might be callback of previous close_tunel()
-            Ok(None)
-        }
-    }
-    pub(crate) async fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        self
-            .active_tunnels
-            .read()
-            .await
-            .iter()
-            .filter(|(_id, tun)| tun.last_activity.is_some())
-            .map(|(id, _tun)| *id)
-            .collect()
-    }
-    pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
-        // trace!(target: "Tunnel", "Is tunnel request granted, tunid: '{tunid}'?");
-        let Ok(tunid) = tunid.parse::<TunnelId>() else {
-            return false;
-        };
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            let cids = frame.caller_ids();
-            cids == tun.caller_ids
-                || AccessLevel::try_from(frame.access_level().unwrap_or(0))
-                    .unwrap_or(AccessLevel::Browse)
-                    == AccessLevel::Superuser
-        } else {
-            false
-        }
-    }
-    pub(crate) async fn write_tunnel(
-        &self,
-        tunid: TunnelId,
-        rqid: RqId,
-        data: Vec<u8>,
-    ) -> shvrpc::Result<()> {
-        if let Some(tun) = self.active_tunnels.write().await.get(&tunid) {
-            let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
-            Ok(())
-        } else {
-            Err(format!("Invalid tunnel ID: {tunid}").into())
-        }
-    }
-    pub(crate) async fn touch_tunnel(&self, tunid: TunnelId) {
-        if let Some(tun) = self.active_tunnels.write().await.get_mut(&tunid) {
-            tun.last_activity = Some(Instant::now());
-        }
-    }
-    pub(crate) async fn last_tunnel_activity(&self, tunid: TunnelId) -> Option<Instant> {
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            tun.last_activity
-        } else {
-            None
-        }
-    }
-    pub(crate) async fn is_tunnel_active(&self, tunid: TunnelId) -> bool {
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            tun.last_activity.is_some()
-        } else {
-            false
-        }
-    }
-
-    pub(crate) async fn send_response(&self, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
-        let peer_sender = self
-            .peers
+    pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
+        let peer_sender = peers
             .read()
             .await
             .get(&peer_id)
@@ -2007,16 +1871,14 @@ impl BrokerImpl {
     }
 }
 
-pub(crate) struct NodeRequestContext {
+pub(crate) struct NodeRequestContext<'a> {
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
-    pub(crate) state: Arc<BrokerImpl>,
+    pub(crate) state: &'a BrokerImpl,
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-
     use futures::channel::mpsc::unbounded;
     use futures::channel::oneshot;
 
@@ -2081,7 +1943,7 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let broker = Arc::new(BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None));
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
                 let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
