@@ -34,6 +34,8 @@ pub struct BrokerConfig {
     pub azure: Option<AzureConfig>,
     #[serde(default)]
     pub google_auth: Option<GoogleAuthConfig>,
+    #[serde(default = "default_exported_root_user")]
+    pub trusted_user_ids_role: String,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -558,6 +560,7 @@ impl Default for BrokerConfig {
             tunnelling: Default::default(),
             azure: Default::default(),
             google_auth: Default::default(),
+            trusted_user_ids_role: default_exported_root_user(),
         }
     }
 }

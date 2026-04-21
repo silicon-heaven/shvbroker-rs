@@ -529,6 +529,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             tunnelling: shvbroker::config::TunnellingConfig::default(),
             azure,
             google_auth: None,
+            trusted_user_ids_role: "broker".to_string(),
         }
     }
 }
