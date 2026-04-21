@@ -18,14 +18,14 @@ use crate::shvnode::{METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRI
 struct CallCtx {
     writer: UnboundedSender<BrokerCommand>,
     reader: UnboundedReceiver<BrokerToPeerMessage>,
-    client_id: PeerId,
+    peer_id: PeerId,
 }
 async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut CallCtx, resp_rq_id: Option<RqId>) -> Result<(RqId, RpcValue), RpcError> {
     let rq = RpcMessage::new_request(shv_path, method).with_param(param);
     let rqid = if let Some(resp_rq_id) = resp_rq_id { Some(resp_rq_id) } else { rq.request_id() };
     let frame = RpcFrame::from_rpcmessage(&rq).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
-    ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.client_id, frame }).unwrap();
+    ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.peer_id, frame }).unwrap();
     let retval = loop {
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {
@@ -77,19 +77,19 @@ async fn test_broker_loop_as_user_async() {
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-    let client_id = 2;
+    let peer_id = 2;
 
     let mut call_ctx = CallCtx {
         writer: broker_sender.clone(),
         reader: peer_reader,
-        client_id,
+        peer_id,
     };
 
     // login
     let user = "user";
     //let password = "admin";
     broker_sender.unbounded_send(BrokerCommand::NewPeer {
-        peer_id: client_id,
+        peer_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
@@ -163,19 +163,19 @@ async fn test_broker_loop_as_admin_async() {
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-    let client_id = 2;
+    let peer_id = 2;
 
     let mut call_ctx = CallCtx {
         writer: broker_sender.clone(),
         reader: peer_reader,
-        client_id,
+        peer_id,
     };
 
     // login
     let user = "admin";
     //let password = "admin";
     broker_sender.unbounded_send(BrokerCommand::NewPeer {
-        peer_id: client_id,
+        peer_id,
         peer_kind: PeerKind::Device{
             user: user.to_string(),
             device_id: None,
@@ -307,19 +307,19 @@ smol_macros::test! {
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-        let client_id = 3;
+        let peer_id = 3;
 
         let mut call_ctx = CallCtx {
             writer: broker_sender.clone(),
             reader: peer_reader,
-            client_id,
+            peer_id,
         };
 
         // login
         let user = "test";
         //let password = "test";
         broker_sender.unbounded_send(BrokerCommand::NewPeer {
-            peer_id: client_id,
+            peer_id,
             peer_kind: PeerKind::Client{ user: user.to_string() },
             sender: peer_writer.clone() }).unwrap();
 

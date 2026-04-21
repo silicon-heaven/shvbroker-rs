@@ -1010,7 +1010,7 @@ impl BrokerImpl {
                                 .read()
                                 .await
                                 .get(device_peer_id)
-                                .ok_or("client ID must exist")?
+                                .ok_or("peer ID must exist")?
                                 .sender
                                 .clone();
                             Action::ToPeer(sender, BrokerToPeerMessage::SendFrame(frame))
@@ -1149,7 +1149,7 @@ impl BrokerImpl {
             .read()
             .await
             .get(&pending_call.peer_id)
-            .ok_or(format!("Invalid client ID: {}", pending_call.peer_id))?
+            .ok_or(format!("Invalid peer ID: {}", pending_call.peer_id))?
             .sender
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
@@ -1159,7 +1159,7 @@ impl BrokerImpl {
     }
     async fn process_pending_broker_rpc_call(
         &mut self,
-        client_id: PeerId,
+        peer_id: PeerId,
         response_frame: RpcFrame,
     ) -> shvrpc::Result<()> {
         assert!(response_frame.is_response());
@@ -1169,7 +1169,7 @@ impl BrokerImpl {
             .ok_or("Request ID must be set.")?;
         let pending_call_ix = self.pending_rpc_calls.iter().position(|pc| {
             let request_id = pc.request_meta.request_id().unwrap_or_default();
-            request_id == rqid && pc.peer_id == client_id
+            request_id == rqid && pc.peer_id == peer_id
         });
         if let Some(ix) = pending_call_ix {
             let pending_call = self.pending_rpc_calls.remove(ix);
@@ -1246,10 +1246,10 @@ impl BrokerImpl {
     async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
-                peer_id: client_id,
+                peer_id,
                 frame,
             } => {
-                if let Err(err) = self.process_rpc_frame(client_id, frame).await {
+                if let Err(err) = self.process_rpc_frame(peer_id, frame).await {
                     warn!("Process RPC frame error: {err}");
                 }
             }
@@ -1397,7 +1397,7 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::RpcCall {
-                peer_id: client_id,
+                peer_id,
                 request,
                 response_sender,
             } => {
@@ -1408,7 +1408,7 @@ impl BrokerImpl {
                 self.start_broker_rpc_call(
                     rq2,
                     PendingRpcCall {
-                        peer_id: client_id,
+                        peer_id,
                         request_meta,
                         response_sender,
                         started: Instant::now(),
@@ -1649,7 +1649,7 @@ impl BrokerImpl {
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point
                     && mount_point.starts_with("test/") {
-                        info!("Client id: {} mounted on path: '{}'", peer_id, &mount_point);
+                        info!("Peer id: {} mounted on path: '{}'", peer_id, &mount_point);
                         break 'find_mount Some(mount_point.clone());
                     }
                 if let Some(device_id) = &device_id {
@@ -1664,7 +1664,7 @@ impl BrokerImpl {
                         Some(mount) => {
                             let mount_point = mount.mount_point.clone();
                             info!(
-                                "Client id: {}, device id: {} mounted on path: '{}'",
+                                "Peer id: {}, device id: {} mounted on path: '{}'",
                                 peer_id, device_id, &mount_point
                             );
                             break 'find_mount Some(mount_point);
@@ -1726,7 +1726,7 @@ impl BrokerImpl {
             },
         }
     }
-    fn peer_to_info(client_id: PeerId, peer: &Peer) -> rpcvalue::Map {
+    fn peer_to_info(peer_id: PeerId, peer: &Peer) -> rpcvalue::Map {
         let subs = Self::subscriptions_to_map(&peer.subscriptions);
         let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
             device_id.clone().unwrap_or_default()
@@ -1734,7 +1734,7 @@ impl BrokerImpl {
             "".to_owned()
         };
         rpcvalue::Map::from([
-            ("clientId".to_string(), client_id.into()),
+            ("clientId".to_string(), peer_id.into()),
             (
                 "userName".to_string(),
                 RpcValue::from(peer.user()),
@@ -1747,18 +1747,18 @@ impl BrokerImpl {
             ("subscriptions".to_string(), subs.into()),
         ])
     }
-    pub(crate) async fn client_info(&self, client_id: PeerId) -> Option<rpcvalue::Map> {
+    pub(crate) async fn client_info(&self, peer_id: PeerId) -> Option<rpcvalue::Map> {
         self.peers
             .read()
             .await
-            .get(&client_id)
-            .map(|peer| BrokerImpl::peer_to_info(client_id, peer))
+            .get(&peer_id)
+            .map(|peer| BrokerImpl::peer_to_info(peer_id, peer))
     }
     pub(crate) async fn mounted_client_info(&self, mount_point: &str) -> Option<rpcvalue::Map> {
-        for (client_id, peer) in self.peers.read().await.iter() {
+        for (peer_id, peer) in self.peers.read().await.iter() {
             if let Some(mount_point1) = &peer.mount_point
                 && mount_point1 == mount_point {
-                    return Some(BrokerImpl::peer_to_info(*client_id, peer));
+                    return Some(BrokerImpl::peer_to_info(*peer_id, peer));
                 }
         }
         None
@@ -1779,11 +1779,11 @@ impl BrokerImpl {
             })
             .collect()
     }
-    pub(crate) async fn subscriptions(&self, client_id: PeerId) -> shvrpc::Result<Map> {
+    pub(crate) async fn subscriptions(&self, peer_id: PeerId) -> shvrpc::Result<Map> {
         let peers = self.peers.read().await;
         let peer = peers
-            .get(&client_id)
-            .ok_or_else(|| format!("Invalid client ID: {client_id}"))?;
+            .get(&peer_id)
+            .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
         Ok(Self::subscriptions_to_map(&peer.subscriptions))
     }
     pub(crate) async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
@@ -1793,17 +1793,17 @@ impl BrokerImpl {
             .await;
         let peer = peers
             .get_mut(&peer_id)
-            .ok_or_else(|| format!("Invalid client ID: {peer_id}"))?;
+            .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
         if let Some(sub) = peer
             .subscriptions
             .iter_mut()
             .find(|sub| sub.param.ri == subpar.ri)
         {
-            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for client id: {peer_id} - {subpar}");
+            log!(target: "Subscr", Level::Debug, "Changing subscription TTL for peer id: {peer_id} - {subpar}");
             sub.param.ttl = subpar.ttl;
             Ok(false)
         } else {
-            log!(target: "Subscr", Level::Debug, "Adding subscription for client id: {peer_id} - {subpar}");
+            log!(target: "Subscr", Level::Debug, "Adding subscription for peer id: {peer_id} - {subpar}");
             peer.subscriptions.push(Subscription::new(subpar)?);
 
             // Forward this subscription to all other peers - sub-brokers
@@ -1823,14 +1823,14 @@ impl BrokerImpl {
         }
     }
     pub(crate) async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        log!(target: "Subscr", Level::Debug, "Removing subscription for client id: {peer_id} - {subpar}");
+        log!(target: "Subscr", Level::Debug, "Removing subscription for peer id: {peer_id} - {subpar}");
         let mut peers = self
             .peers
             .write()
             .await;
         let peer = peers
             .get_mut(&peer_id)
-            .ok_or_else(|| format!("Invalid client ID: {peer_id}"))?;
+            .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
         let cnt = peer.subscriptions.len();
         peer.subscriptions
             .retain(|subscr| subscr.param.ri != subpar.ri);

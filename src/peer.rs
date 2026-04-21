@@ -1281,17 +1281,17 @@ async fn broker_as_client_peer_loop(
             },
             event = fut_receive_broker_event => match event {
                 Err(e) => {
-                    debug!("broker loop has closed peer channel, client ID {peer_id}");
+                    debug!("broker loop has closed peer channel, peer ID {peer_id}");
                     return Err(e.into());
                 }
                 Ok(event) => {
                     match event {
                         BrokerToPeerMessage::DisconnectByBroker {reason} => {
-                            info!("Disconnected by parent broker, client ID: {peer_id}, reason: {reason:?}");
+                            info!("Disconnected by parent broker, peer ID: {peer_id}, reason: {reason:?}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
-                            // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, client id: {}", client_id);
+                            // log!(target: "RpcMsg", Level::Debug, "<---- Send frame, peer id: {}", peer_id);
                             let mut frame = frame;
                             if frame.is_signal()
                                 && let Some(new_path) = cut_prefix(frame.shv_path().unwrap_or_default(), &connection_settings.exported_shv_root) {
