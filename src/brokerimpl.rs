@@ -974,7 +974,7 @@ impl BrokerImpl {
                 let broker_id = self.config.name.as_ref()
                     .map(|broker_id| format!(":{broker_id}"))
                     .unwrap_or_default();
-                let user_id_chain = format!("{req_user_id};{user}{broker_id}");
+                let user_id_chain = format!("{req_user_id}{maybe_semicolon}{user}{broker_id}", maybe_semicolon = if !req_user_id.is_empty() {";"} else {""});
                 frame.set_user_id(&user_id_chain);
             }
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
