@@ -959,11 +959,22 @@ impl BrokerImpl {
     pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;
-            if let Some(req_user_id) = frame.user_id() {
+            if let Some(mut req_user_id) = frame.user_id() {
+                let peers = self.peers.read().await;
+                let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
+                let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
+                let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
+                let user = peer.user();
+
+                // We only trust user_id chains from peers with the trusted_user_ids_role.
+                if !flatten_roles.contains(&self.config.trusted_user_ids_role) {
+                    req_user_id = "";
+                }
+
                 let broker_id = self.config.name.as_ref()
                     .map(|broker_id| format!(":{broker_id}"))
                     .unwrap_or_default();
-                let user_id_chain = format!("{req_user_id};{user}{broker_id}", user = self.peers.read().await.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?.user());
+                let user_id_chain = format!("{req_user_id};{user}{broker_id}");
                 frame.set_user_id(&user_id_chain);
             }
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
