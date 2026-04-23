@@ -610,7 +610,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = ctx.state.subscriptions(ctx.peer_id).await?;
+                let result = BrokerImpl::subscriptions(&self.peers, ctx.peer_id).await?;
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {

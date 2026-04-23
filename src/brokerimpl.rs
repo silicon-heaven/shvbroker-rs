@@ -1787,8 +1787,8 @@ impl BrokerImpl {
             })
             .collect()
     }
-    pub(crate) async fn subscriptions(&self, peer_id: PeerId) -> shvrpc::Result<Map> {
-        let peers = self.peers.read().await;
+    pub(crate) async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
+        let peers = peers.read().await;
         let peer = peers
             .get(&peer_id)
             .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
