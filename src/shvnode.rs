@@ -163,7 +163,7 @@ pub(crate) trait ShvNode : Send + Sync {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult;
 }
 impl dyn ShvNode {
-    pub async fn process_request_and_dir_ls<'a>(&self, frame: &RpcFrame, ctx: &NodeRequestContext<'a>) -> ProcessRequestResult {
+    pub async fn process_request_and_dir_ls(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         let result = self.process_request(frame, ctx).await;
         if let Ok(ProcessRequestRetval::MethodNotFound) = result {
             match frame.method().unwrap_or_default() {

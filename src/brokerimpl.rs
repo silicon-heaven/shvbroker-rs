@@ -1033,12 +1033,12 @@ impl BrokerImpl {
                 &shv_path,
             );
             if let Some((mount_point, node_path)) = paths {
-                enum Action<'a> {
+                enum Action {
                     ToPeer(UnboundedSender<BrokerToPeerMessage>, BrokerToPeerMessage),
                     NodeRequest {
                         node_id: String,
                         frame: RpcFrame,
-                        ctx: NodeRequestContext<'a>,
+                        ctx: NodeRequestContext,
                     },
                 }
                 let action = {
@@ -1065,7 +1065,6 @@ impl BrokerImpl {
                             ctx: NodeRequestContext {
                                 peer_id,
                                 node_path: node_path.to_string(),
-                                state: self,
                             },
                         },
                     }
@@ -1867,10 +1866,9 @@ impl BrokerImpl {
     }
 }
 
-pub(crate) struct NodeRequestContext<'a> {
+pub(crate) struct NodeRequestContext {
     pub(crate) peer_id: PeerId,
     pub(crate) node_path: String,
-    pub(crate) state: &'a BrokerImpl,
 }
 
 #[cfg(test)]
