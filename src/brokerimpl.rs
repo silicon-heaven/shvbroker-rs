@@ -1142,7 +1142,7 @@ impl BrokerImpl {
         Ok(())
     }
     pub(crate) async fn emit_rpc_signal_frame(
-        peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        peers: &RwLock<BTreeMap<PeerId, Peer>>,
         originating_peer_id: PeerId,
         signal_frame: &RpcFrame,
     ) -> shvrpc::Result<()> {
@@ -1843,7 +1843,7 @@ impl BrokerImpl {
         Ok(cnt != peer_subscr_len)
     }
 
-    pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
+    pub(crate) async fn send_response(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
         let peer_sender = peers
             .read()
             .await
