@@ -1,17 +1,18 @@
 use std::collections::{BTreeMap, HashMap};
 use std::format;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use log::{Level, log};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
 use shvrpc::{metamethod, RpcMessageMetaTags};
-use shvproto::{List, RpcValue, rpcvalue};
+use shvproto::{List, Map, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use futures::channel::mpsc::UnboundedSender;
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, SubscriptionCommand, user_base_roles};
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
 use crate::config::AccessConfig;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
@@ -441,7 +442,7 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().try_into()?;
-                let info = match BrokerImpl::mounted_client_info(&self.peers, mount_point).await {
+                let info = match mounted_client_info(&self.peers, mount_point).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -602,9 +603,60 @@ impl BrokerCurrentClientNode {
         res
     }
 }
+fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
+    subscriptions
+        .iter()
+        .map(|subscr| match subscr.param.ttl {
+            None => {
+                let key = subscr.glob.as_str().to_string();
+                (key, ().into())
+            }
+            Some(ttl) => {
+                let key = subscr.glob.as_str().to_string();
+                let ttl = Instant::now() + Duration::from_secs(ttl as u64) - subscr.subscribed;
+                (key, (ttl.as_secs() as i64).into())
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
+    let subs = subscriptions_to_map(&peer.subscriptions);
+    let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
+        device_id.clone().unwrap_or_default()
+    } else {
+        "".to_owned()
+    };
+    rpcvalue::Map::from([
+        ("clientId".to_string(), peer.peer_id.into()),
+        (
+            "userName".to_string(),
+            RpcValue::from(peer.user()),
+        ),
+        ("deviceId".to_string(), RpcValue::from(device_id)),
+        (
+            "mountPoint".to_string(),
+            RpcValue::from(peer.mount_point.clone().unwrap_or_default()),
+        ),
+        ("subscriptions".to_string(), subs.into()),
+    ])
+}
+
+pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
+    peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
+        .map(peer_to_info)
+}
 
 pub(crate) async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
-    peers.read().await.get(&peer_id).map(BrokerImpl::peer_to_info)
+    peers.read().await.get(&peer_id).map(peer_to_info)
+}
+
+pub(crate) async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
+    let peers = peers.read().await;
+    let peer = peers
+        .get(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    Ok(subscriptions_to_map(&peer.subscriptions))
 }
 
 #[async_trait::async_trait]
@@ -632,7 +684,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = BrokerImpl::subscriptions(&self.peers, ctx.peer_id).await?;
+                let result = subscriptions(&self.peers, ctx.peer_id).await?;
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {

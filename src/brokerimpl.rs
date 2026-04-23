@@ -15,7 +15,7 @@ use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use log::Level;
 use log::{debug, error, info, log, warn};
-use shvproto::{DateTime, Map, MetaMap, RpcValue, rpcvalue};
+use shvproto::{DateTime, Map, MetaMap, RpcValue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
@@ -1724,54 +1724,6 @@ impl BrokerImpl {
                 Password::Sha1(password) => Some(password.clone()),
             },
         }
-    }
-    pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
-        let subs = Self::subscriptions_to_map(&peer.subscriptions);
-        let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
-            device_id.clone().unwrap_or_default()
-        } else {
-            "".to_owned()
-        };
-        rpcvalue::Map::from([
-            ("clientId".to_string(), peer.peer_id.into()),
-            (
-                "userName".to_string(),
-                RpcValue::from(peer.user()),
-            ),
-            ("deviceId".to_string(), RpcValue::from(device_id)),
-            (
-                "mountPoint".to_string(),
-                RpcValue::from(peer.mount_point.clone().unwrap_or_default()),
-            ),
-            ("subscriptions".to_string(), subs.into()),
-        ])
-    }
-    pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
-        peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
-            .map(BrokerImpl::peer_to_info)
-    }
-    fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
-        subscriptions
-            .iter()
-            .map(|subscr| match subscr.param.ttl {
-                None => {
-                    let key = subscr.glob.as_str().to_string();
-                    (key, ().into())
-                }
-                Some(ttl) => {
-                    let key = subscr.glob.as_str().to_string();
-                    let ttl = Instant::now() + Duration::from_secs(ttl as u64) - subscr.subscribed;
-                    (key, (ttl.as_secs() as i64).into())
-                }
-            })
-            .collect()
-    }
-    pub(crate) async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
-        let peers = peers.read().await;
-        let peer = peers
-            .get(&peer_id)
-            .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
-        Ok(Self::subscriptions_to_map(&peer.subscriptions))
     }
     pub(crate) async fn subscribe(
         peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
