@@ -51,12 +51,14 @@ const OPEN_TUNNEL_NODE_METHODS: &[&MetaMethod] = &[
 pub(crate) struct TunnelNode {
     active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>,
     next_tunnel_number: RwLock<TunnelId>,
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
 }
 impl TunnelNode {
-    pub fn new() -> Self {
+    pub fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>) -> Self {
         TunnelNode {
             active_tunnels: Arc::new(RwLock::default()),
             next_tunnel_number: RwLock::new(1),
+            peers,
         }
     }
 
@@ -269,7 +271,7 @@ impl ShvNode for TunnelNode {
             OPEN_TUNNEL_NODE_METHODS
         }
     }
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         let tunnels = self.active_tunnel_ids()
             .await
             .iter()
@@ -294,7 +296,7 @@ impl ShvNode for TunnelNode {
         }
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> shvnode::ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> shvnode::ProcessRequestResult {
         let method = frame.method().unwrap_or_default();
         let tunid = frame
             .shv_path()
@@ -315,7 +317,7 @@ impl ShvNode for TunnelNode {
                 }
                 METH_CLOSE => {
                     let is_active = self.last_tunnel_activity(tunid).await.is_some();
-                    tunnel_close_handler(self.active_tunnels.clone(), ctx.state.peers.clone(), tunid);
+                    tunnel_close_handler(self.active_tunnels.clone(), self.peers.clone(), tunid);
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
                 _ => Ok(ProcessRequestRetval::MethodNotFound),
@@ -332,7 +334,7 @@ impl ShvNode for TunnelNode {
                         .to_string();
                     let (tunid, receiver) = self.create_tunnel(&rq).await?;
                     let rq_meta = rq.meta().clone();
-                    let peers = ctx.state.peers.clone();
+                    let peers = self.peers.clone();
                     let active_tunnels = self.active_tunnels.clone();
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, peers.clone(), active_tunnels.clone()).await {

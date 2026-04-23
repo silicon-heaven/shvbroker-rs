@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::sync::Arc;
 use crate::{brokerimpl::ParsedAccessRule, sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS}};
@@ -406,6 +406,30 @@ impl AccessConfig {
 
     pub(crate) fn access_role(&self, id: &str) -> Option<&crate::config::Role> {
         self.roles.get(id)
+    }
+
+    pub(crate) fn flatten_roles(&self, roles: &[String]) -> Vec<String> {
+        let mut queue: VecDeque<String> = VecDeque::new();
+        fn enqueue(queue: &mut VecDeque<String>, role: &str) {
+            let role = role.to_string();
+            if !queue.contains(&role) {
+                queue.push_back(role);
+            }
+        }
+        for role in roles.iter() {
+            enqueue(&mut queue, role);
+        }
+        let mut flatten_roles = Vec::new();
+        while let Some(role_name) = queue.pop_front() {
+            if let Some(role) = self.roles.get(&role_name) {
+                for role in role.roles.iter() {
+                    enqueue(&mut queue, role);
+                }
+            }
+            flatten_roles.push(role_name);
+        }
+
+        flatten_roles
     }
 
     pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
