@@ -153,7 +153,7 @@ pub(crate) type ProcessRequestResult = Result<ProcessRequestRetval, shvrpc::Erro
 #[async_trait::async_trait]
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>>;
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>>;
     async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         let methods = self.methods(shv_path);
@@ -175,7 +175,7 @@ impl dyn ShvNode {
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
-                    if let Some(children) = self.children(shv_path, ctx.state).await {
+                    if let Some(children) = self.children(shv_path).await {
                         match LsParam::from(rq.param()) {
                             LsParam::List => {
                                 Ok(ProcessRequestRetval::Retval(children.into()))
@@ -249,7 +249,7 @@ impl ShvNode for AppNode {
         APP_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -305,7 +305,7 @@ impl ShvNode for AppDeviceNode {
         APP_DEVICE_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -411,7 +411,7 @@ impl ShvNode for BrokerNode {
         BROKER_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -595,7 +595,7 @@ impl ShvNode for BrokerCurrentClientNode {
         BROKER_CURRENT_CLIENT_NODE_METHODS
     }
 
-    async fn children(&self, _shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, _shv_path: &str) -> Option<Vec<String>> {
         Some(vec![])
     }
 
@@ -786,9 +786,9 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -853,9 +853,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.users().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.users().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -951,9 +951,9 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.roles().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.roles().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -1018,9 +1018,9 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -1086,7 +1086,7 @@ impl ShvNode for BrokerAccessLastLoginNode {
         VALUE_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(self.last_login.read().await.get().keys().map(|m| m.to_string()).collect())
         } else {
@@ -1160,7 +1160,7 @@ impl ShvNode for Shv2BrokerAppNode {
         SHV2_BROKER_APP_NODE_METHODS
     }
 
-    async fn children(&self, _shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, _shv_path: &str) -> Option<Vec<String>> {
         Some(vec![])
     }
 

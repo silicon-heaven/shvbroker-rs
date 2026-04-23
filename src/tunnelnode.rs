@@ -269,7 +269,7 @@ impl ShvNode for TunnelNode {
             OPEN_TUNNEL_NODE_METHODS
         }
     }
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         let tunnels = self.active_tunnel_ids()
             .await
             .iter()
