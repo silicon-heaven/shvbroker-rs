@@ -1274,7 +1274,7 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::NewPeer {
-                peer_id,
+                peer_id: new_peer_id,
                 peer_kind,
                 sender,
             } => {
@@ -1286,14 +1286,14 @@ impl BrokerImpl {
                 } else {
                     None
                 };
-                debug!("New peer, id: {peer_id}, user: {user:?}, last_login: {previous_login:?}");
-                let peer_add_result = self.add_peer(peer_id, peer_kind, sender.clone()).await;
+                debug!("New peer, id: {new_peer_id}, user: {user:?}, last_login: {previous_login:?}");
+                let peer_add_result = self.add_peer(new_peer_id, peer_kind, sender.clone()).await;
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
                     return Err(msg.into());
                 };
 
-                let mount_point = Self::mount_point(&self.peers, peer_id).await;
+                let mount_point = Self::mount_point(&self.peers, new_peer_id).await;
                 if let Some(mount_point) = mount_point {
                     let (shv_path, dir) = split_last_fragment(&mount_point);
                     let msg = RpcMessage::new_signal_with_source(shv_path, SIG_LSMOD, METH_LS)
@@ -1306,7 +1306,33 @@ impl BrokerImpl {
                     Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
                 }
-                spawn_and_log_error(Self::on_device_mounted(self.peers.clone(), self.command_sender.clone(), self.subscr_cmd_sender.clone(), peer_id));
+
+                let peers = self.peers.clone();
+                let command_sender = self.command_sender.clone();
+                let subscr_cmd_sender = self.subscr_cmd_sender.clone();
+                spawn_and_log_error(async move {
+                    if Self::mount_point(peers.as_ref(), new_peer_id).await.is_none() {
+                        return Ok(());
+                    }
+                    if Self::check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
+                        return Ok(());
+                    }
+                    let forwarded_ris = peers.read()
+                        .await
+                        .iter()
+                        .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
+                        .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
+                        .collect::<Vec<_>>();
+                    if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
+                        for ri in forwarded_ris {
+                            new_peer
+                                .add_forwarded_subscription(&ri, &subscr_cmd_sender)
+                                .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
+                                .ok();
+                            }
+                    }
+                    Ok(())
+                });
             }
             BrokerCommand::PeerGone { peer_id } => {
                 debug!("Peer gone, id: {peer_id}.");
@@ -1436,33 +1462,6 @@ impl BrokerImpl {
                 )
                 .await?
             }
-        }
-        Ok(())
-    }
-
-    async fn on_device_mounted(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, command_sender: UnboundedSender<BrokerCommand>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>, new_peer_id: PeerId) -> shvrpc::Result<()> {
-        if Self::mount_point(peers.as_ref(), new_peer_id).await.is_none() {
-            return Ok(());
-        }
-        if Self::check_subscribe_api(peers.as_ref(), command_sender.clone(), new_peer_id).await?.is_none() {
-            return Ok(());
-        }
-        let forwarded_ris = peers.read()
-            .await
-            .iter()
-            .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
-            .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
-            .collect::<Vec<_>>();
-
-        let subscr_cmd_sender = subscr_cmd_sender.clone();
-
-        if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
-            for ri in forwarded_ris {
-                new_peer
-                    .add_forwarded_subscription(&ri, &subscr_cmd_sender)
-                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
-                    .ok();
-                }
         }
         Ok(())
     }
