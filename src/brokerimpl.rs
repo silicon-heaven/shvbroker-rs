@@ -927,9 +927,9 @@ impl BrokerImpl {
         };
         add_node(DIR_APP, Box::new(AppNode::new()));
         if config.tunnelling.enabled {
-            add_node(".app/tunnel", Box::new(TunnelNode::new()));
+            add_node(".app/tunnel", Box::new(TunnelNode::new(peers.clone())));
             if let Some(tsub_dir) = &config.tunnelling.tsub_dir {
-                add_node(tsub_dir, Box::new(TunnelNode::new()));
+                add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
             }
         }
         add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone())));
