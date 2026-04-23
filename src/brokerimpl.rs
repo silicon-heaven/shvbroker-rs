@@ -666,7 +666,7 @@ pub struct BrokerImpl {
     pub(crate) access: Arc<RwLock<AccessConfig>>,
     pub(crate) role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 
-    pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
+    pub(crate) oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
 
     // session_token -> username
     pub(crate) session_tokens: Arc<RwLock<Vec<Session>>>,
@@ -890,6 +890,7 @@ impl BrokerImpl {
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
         let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
         let access = Arc::new(RwLock::new(access));
+        let oauth2_user_groups = Arc::new(RwLock::new(Default::default()));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             mounts
                 .insert(path.into(), Mount::Node);
@@ -905,7 +906,7 @@ impl BrokerImpl {
         add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
@@ -951,7 +952,7 @@ impl BrokerImpl {
             mounts,
             access,
             role_access_rules,
-            oauth2_user_groups: Default::default(),
+            oauth2_user_groups,
             subscr_cmd_sender,
             sql_connection,
             session_tokens: Arc::new(RwLock::default()),

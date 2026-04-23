@@ -542,13 +542,15 @@ pub(crate) struct BrokerCurrentClientNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
+    oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
 }
 impl BrokerCurrentClientNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>) -> Self {
         Self {
             peers,
             sql_connection,
             access,
+            oauth2_user_groups,
         }
     }
 }
@@ -705,7 +707,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*self.access.read().await, peer);
+                let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let access = self.access.read().await;
                 let merged_profile = ctx.state
                     .flatten_roles(user_roles.as_slice())
@@ -727,7 +729,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*self.access.read().await, peer);
+                let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
 
                 if user_roles.is_empty() {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
