@@ -1745,8 +1745,8 @@ impl BrokerImpl {
             ("subscriptions".to_string(), subs.into()),
         ])
     }
-    pub(crate) async fn mounted_client_info(&self, mount_point: &str) -> Option<rpcvalue::Map> {
-        for (peer_id, peer) in self.peers.read().await.iter() {
+    pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, mount_point: &str) -> Option<rpcvalue::Map> {
+        for (peer_id, peer) in peers.read().await.iter() {
             if let Some(mount_point1) = &peer.mount_point
                 && mount_point1 == mount_point {
                     return Some(BrokerImpl::peer_to_info(*peer_id, peer));

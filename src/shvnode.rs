@@ -433,7 +433,7 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().try_into()?;
-                let info = match ctx.state.mounted_client_info(mount_point).await {
+                let info = match BrokerImpl::mounted_client_info(&self.peers, mount_point).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
