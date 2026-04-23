@@ -887,6 +887,7 @@ impl BrokerImpl {
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
         let mut mounts: BTreeMap<String, Mount> = Default::default();
+        let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             mounts
                 .insert(path.into(), Mount::Node);
@@ -899,10 +900,10 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new()));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new()));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new()),
+            Box::new(BrokerCurrentClientNode::new(peers.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
@@ -945,7 +946,7 @@ impl BrokerImpl {
             pending_rpc_calls: vec![],
             command_sender,
             config: config.clone(),
-            peers: Default::default(),
+            peers,
             mounts,
             access: RwLock::new(access),
             role_access_rules: RwLock::new(role_access),

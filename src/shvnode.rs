@@ -380,10 +380,13 @@ pub const METH_USER_PROFILE: &str = "userProfile";
 pub const METH_USER_ROLES: &str = "userRoles";
 
 
-pub(crate) struct BrokerNode {}
+pub(crate) struct BrokerNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+}
 impl BrokerNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>) -> Self {
         Self {
+            peers,
         }
     }
 }
@@ -418,7 +421,7 @@ impl ShvNode for BrokerNode {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                let info = match client_info(&ctx.state.peers, peer_id).await {
+                let info = match client_info(&self.peers, peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -434,11 +437,11 @@ impl ShvNode for BrokerNode {
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = ctx.state.peers.read().await.keys().map(|id| RpcValue::from(*id)).collect();
+                let clients: rpcvalue::List = self.peers.read().await.keys().map(|id| RpcValue::from(*id)).collect();
                 Ok(ProcessRequestRetval::Retval(clients.into()))
             }
             METH_MOUNTS => {
-                let mounts: List = ctx.state.peers.read().await.values()
+                let mounts: List = self.peers.read().await.values()
                     .filter(|peer| peer.mount_point.is_some())
                     .map(|peer| if let Some(mount_point) = &peer.mount_point {RpcValue::from(mount_point)} else { RpcValue::null() } )
                     .collect();
@@ -447,7 +450,7 @@ impl ShvNode for BrokerNode {
             METH_DISCONNECT_CLIENT => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                if let Some(peer) = ctx.state.peers.read().await.get(&peer_id) {
+                if let Some(peer) = self.peers.read().await.get(&peer_id) {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
                         let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
@@ -473,7 +476,7 @@ impl ShvNode for BrokerNode {
                 let [username, shv_path, method] = params.as_slice() else {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
-                let Some(peer_id) = ctx.state.peers.read().await
+                let Some(peer_id) = self.peers.read().await
                     .iter()
                     .find_map(|(peer_id, peer)| match &peer.peer_kind {
                         crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
@@ -532,10 +535,13 @@ const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_stati
 const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flags::empty(), AccessLevel::Read, "void", "RpcValue", &[], "");
 const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flags::empty(), AccessLevel::Read, "void", "List", &[], "");
 
-pub(crate) struct BrokerCurrentClientNode {}
+pub(crate) struct BrokerCurrentClientNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+}
 impl BrokerCurrentClientNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>) -> Self {
         Self {
+            peers,
         }
     }
 }
@@ -599,7 +605,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
-                let info = match client_info(&ctx.state.peers, ctx.peer_id).await {
+                let info = match client_info(&self.peers, ctx.peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -688,7 +694,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(access_level.into()))
             }
             METH_USER_PROFILE => {
-                let peers = ctx.state.peers.read().await;
+                let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
@@ -710,7 +716,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
             }
             METH_USER_ROLES => {
-                let peers = ctx.state.peers.read().await;
+                let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
