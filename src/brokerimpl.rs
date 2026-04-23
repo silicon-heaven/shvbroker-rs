@@ -25,7 +25,7 @@ use shvrpc::util::{find_longest_path_prefix, join_path, sha1_hash, split_glob_on
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol_timeout::TimeoutExt;
 use url::Url;
-use std::collections::{BTreeMap, HashMap,VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use smol::lock::RwLock;
@@ -996,7 +996,7 @@ impl BrokerImpl {
                 let peers = self.peers.read().await;
                 let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
-let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).await;
+                let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
                 let user = peer.user();
 
                 // We only trust user_id chains from peers with the trusted_user_ids_role.
@@ -1578,7 +1578,7 @@ let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).awa
         let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
         // request from logged-in user,
         // it can be client, device, child broker or parent broker as client
-        let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).await;
+        let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
         log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
@@ -1592,29 +1592,6 @@ let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).awa
         max_level
     }
 
-    pub(crate) async fn flatten_roles(access: &Arc<RwLock<AccessConfig>>, roles: &[String]) -> Vec<String> {
-        let mut queue: VecDeque<String> = VecDeque::new();
-        fn enqueue(queue: &mut VecDeque<String>, role: &str) {
-            let role = role.to_string();
-            if !queue.contains(&role) {
-                queue.push_back(role);
-            }
-        }
-        for role in roles.iter() {
-            enqueue(&mut queue, role);
-        }
-        let mut flatten_roles = Vec::new();
-        while let Some(role_name) = queue.pop_front() {
-            if let Some(role) = access.read().await.access_role(&role_name) {
-                for role in role.roles.iter() {
-                    enqueue(&mut queue, role);
-                }
-            }
-            flatten_roles.push(role_name);
-        }
-
-        flatten_roles
-    }
     async fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         let mount_point = Self::mount_point(&self.peers, peer_id).await;
         if let Some(mount_point) = mount_point.as_ref() {
@@ -1904,9 +1881,7 @@ mod test {
         async fn test_broker() {
             let config = BrokerConfig::default();
             let access = config.access.clone();
-            let (command_sender, _) = unbounded();
-            let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), LastLogin::default(), command_sender, None);
-            let roles = BrokerImpl::flatten_roles(&broker.access, access.access_user("child-broker").unwrap().roles.as_slice()).await;
+            let roles = access.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice());
             assert_eq!(
                 roles,
                 vec![
