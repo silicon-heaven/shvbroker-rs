@@ -622,10 +622,9 @@ fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
 
 pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     let subs = subscriptions_to_map(&peer.subscriptions);
-    let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
-        device_id.clone().unwrap_or_default()
-    } else {
-        "".to_owned()
+    let device_id = match &peer.peer_kind {
+        PeerKind::Device { device_id, .. } => device_id.clone().unwrap_or_default(),
+        _ => "".to_owned(),
     };
     rpcvalue::Map::from([
         ("clientId".to_string(), peer.peer_id.into()),
