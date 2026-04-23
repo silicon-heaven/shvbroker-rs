@@ -1305,34 +1305,32 @@ impl BrokerImpl {
                         .with_param(true);
                     Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
                         .await?;
-                }
 
-                let peers = self.peers.clone();
-                let command_sender = self.command_sender.clone();
-                let subscr_cmd_sender = self.subscr_cmd_sender.clone();
-                spawn_and_log_error(async move {
-                    if Self::mount_point(peers.as_ref(), new_peer_id).await.is_none() {
-                        return Ok(());
-                    }
-                    if Self::check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
-                        return Ok(());
-                    }
-                    let forwarded_ris = peers.read()
-                        .await
-                        .iter()
-                        .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
-                        .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
-                        .collect::<Vec<_>>();
-                    if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
-                        for ri in forwarded_ris {
-                            new_peer
-                                .add_forwarded_subscription(&ri, &subscr_cmd_sender)
-                                .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
-                                .ok();
-                            }
-                    }
-                    Ok(())
-                });
+                    let peers = self.peers.clone();
+                    let command_sender = self.command_sender.clone();
+                    let subscr_cmd_sender = self.subscr_cmd_sender.clone();
+
+                    spawn_and_log_error(async move {
+                        if Self::check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
+                            return Ok(());
+                        }
+                        let forwarded_ris = peers.read()
+                            .await
+                            .iter()
+                            .filter_map(|(peer_id, peer)| (*peer_id != new_peer_id).then_some(peer))
+                            .flat_map(|peer| peer.subscriptions.iter().map(|s| s.param.ri.clone()))
+                            .collect::<Vec<_>>();
+                        if let Some(new_peer) = peers.write().await.get_mut(&new_peer_id) {
+                            for ri in forwarded_ris {
+                                new_peer
+                                    .add_forwarded_subscription(&ri, &subscr_cmd_sender)
+                                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
+                                    .ok();
+                                }
+                        }
+                        Ok(())
+                    });
+                }
             }
             BrokerCommand::PeerGone { peer_id } => {
                 debug!("Peer gone, id: {peer_id}.");
