@@ -713,8 +713,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 };
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let access = self.access.read().await;
-                let merged_profile = ctx.state
-                    .flatten_roles(user_roles.as_slice())
+                let merged_profile = BrokerImpl::flatten_roles(&self.access, user_roles.as_slice())
                     .await
                     .iter()
                     .flat_map(|role| access.access_role(role))
@@ -739,7 +738,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
                 }
 
-                Ok(ProcessRequestRetval::Retval(ctx.state.flatten_roles(user_roles.as_slice()).await.into()))
+                Ok(ProcessRequestRetval::Retval(BrokerImpl::flatten_roles(&self.access, user_roles.as_slice()).await.into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)

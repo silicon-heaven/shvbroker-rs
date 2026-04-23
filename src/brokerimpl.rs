@@ -996,7 +996,7 @@ impl BrokerImpl {
                 let peers = self.peers.read().await;
                 let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
-                let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
+let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).await;
                 let user = peer.user();
 
                 // We only trust user_id chains from peers with the trusted_user_ids_role.
@@ -1578,7 +1578,7 @@ impl BrokerImpl {
         let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
         // request from logged-in user,
         // it can be client, device, child broker or parent broker as client
-        let flatten_roles = self.flatten_roles(user_roles.as_slice()).await;
+        let flatten_roles = Self::flatten_roles(&self.access, user_roles.as_slice()).await;
         log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
@@ -1592,7 +1592,7 @@ impl BrokerImpl {
         max_level
     }
 
-    pub(crate) async fn flatten_roles(&self, roles: &[String]) -> Vec<String> {
+    pub(crate) async fn flatten_roles(access: &Arc<RwLock<AccessConfig>>, roles: &[String]) -> Vec<String> {
         let mut queue: VecDeque<String> = VecDeque::new();
         fn enqueue(queue: &mut VecDeque<String>, role: &str) {
             let role = role.to_string();
@@ -1605,7 +1605,7 @@ impl BrokerImpl {
         }
         let mut flatten_roles = Vec::new();
         while let Some(role_name) = queue.pop_front() {
-            if let Some(role) = self.access.read().await.access_role(&role_name) {
+            if let Some(role) = access.read().await.access_role(&role_name) {
                 for role in role.roles.iter() {
                     enqueue(&mut queue, role);
                 }
@@ -1906,7 +1906,7 @@ mod test {
             let access = config.access.clone();
             let (command_sender, _) = unbounded();
             let broker = BrokerImpl::new(SharedBrokerConfig::new(config), access.clone(), LastLogin::default(), command_sender, None);
-            let roles = broker.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice()).await;
+            let roles = BrokerImpl::flatten_roles(&broker.access, access.access_user("child-broker").unwrap().roles.as_slice()).await;
             assert_eq!(
                 roles,
                 vec![
