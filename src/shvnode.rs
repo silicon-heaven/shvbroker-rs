@@ -607,10 +607,6 @@ pub(crate) async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id:
     peers.read().await.get(&peer_id).map(|peer| BrokerImpl::peer_to_info(peer_id, peer))
 }
 
-pub(crate) async fn peer_user(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<String> {
-    peers.read().await.get(&peer_id).map(Peer::user).map(ToOwned::to_owned)
-}
-
 #[async_trait::async_trait]
 impl ShvNode for BrokerCurrentClientNode {
     fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
@@ -667,7 +663,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let Some(user_name) = peer_user(&self.peers, ctx.peer_id).await else {
+                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(Peer::user).map(ToOwned::to_owned) else {
                     return Err("Undefined user".into());
                 };
                 if user_name.starts_with("ldap:") {
