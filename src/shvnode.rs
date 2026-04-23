@@ -626,19 +626,13 @@ pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
         PeerKind::Device { device_id: Some(device_id), .. } => device_id.as_str(),
         _ => "",
     };
-    rpcvalue::Map::from([
-        ("clientId".to_string(), peer.peer_id.into()),
-        (
-            "userName".to_string(),
-            RpcValue::from(peer.user()),
-        ),
-        ("deviceId".to_string(), RpcValue::from(device_id)),
-        (
-            "mountPoint".to_string(),
-            RpcValue::from(peer.mount_point.clone().unwrap_or_default()),
-        ),
-        ("subscriptions".to_string(), subs.into()),
-    ])
+    shvproto::make_map!{
+        "clientId" => peer.peer_id,
+        "userName" => peer.user(),
+        "deviceId" => device_id,
+        "mountPoint" => peer.mount_point.clone().unwrap_or_default(),
+        "subscriptions" => subs,
+    }
 }
 
 pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
