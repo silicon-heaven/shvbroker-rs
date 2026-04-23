@@ -1711,13 +1711,10 @@ impl BrokerImpl {
     }
 
     async fn sha_password(&self, user: &str) -> Option<String> {
-        match self.access.read().await.access_user(user) {
-            None => None,
-            Some(user) => match &user.password {
-                Password::Plain(password) => Some(sha1_hash(password.as_bytes())),
-                Password::Sha1(password) => Some(password.clone()),
-            },
-        }
+        self.access.read().await.access_user(user).map(|user| match &user.password {
+            Password::Plain(password) => sha1_hash(password.as_bytes()),
+            Password::Sha1(password) => password.clone(),
+        })
     }
     pub(crate) async fn subscribe(
         peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
