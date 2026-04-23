@@ -1737,7 +1737,7 @@ impl BrokerImpl {
             },
         }
     }
-    fn peer_to_info(peer_id: PeerId, peer: &Peer) -> rpcvalue::Map {
+    pub(crate) fn peer_to_info(peer_id: PeerId, peer: &Peer) -> rpcvalue::Map {
         let subs = Self::subscriptions_to_map(&peer.subscriptions);
         let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
             device_id.clone().unwrap_or_default()
@@ -1757,13 +1757,6 @@ impl BrokerImpl {
             ),
             ("subscriptions".to_string(), subs.into()),
         ])
-    }
-    pub(crate) async fn client_info(&self, peer_id: PeerId) -> Option<rpcvalue::Map> {
-        self.peers
-            .read()
-            .await
-            .get(&peer_id)
-            .map(|peer| BrokerImpl::peer_to_info(peer_id, peer))
     }
     pub(crate) async fn mounted_client_info(&self, mount_point: &str) -> Option<rpcvalue::Map> {
         for (peer_id, peer) in self.peers.read().await.iter() {

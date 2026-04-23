@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::format;
+use std::sync::Arc;
 use log::{Level, log};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
@@ -9,7 +10,8 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles};
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles, Peer};
+use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
 
 pub const METH_DIR: &str = "dir";
@@ -416,7 +418,7 @@ impl ShvNode for BrokerNode {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                let info = match ctx.state.client_info(peer_id).await {
+                let info = match client_info(&ctx.state.peers, peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -564,6 +566,10 @@ impl BrokerCurrentClientNode {
     }
 }
 
+pub(crate) async fn client_info(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
+    peers.read().await.get(&peer_id).map(|peer| BrokerImpl::peer_to_info(peer_id, peer))
+}
+
 #[async_trait::async_trait]
 impl ShvNode for BrokerCurrentClientNode {
     fn methods(&self, _shv_path: &str) -> &'static[&'static MetaMethod] {
@@ -593,7 +599,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
-                let info = match ctx.state.client_info(ctx.peer_id).await {
+                let info = match client_info(&ctx.state.peers, ctx.peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
