@@ -10,7 +10,8 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, user_base_roles};
+use futures::channel::mpsc::UnboundedSender;
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, SubscriptionCommand, user_base_roles};
 use crate::config::AccessConfig;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
@@ -550,15 +551,24 @@ const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES,
 
 pub(crate) struct BrokerCurrentClientNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
     role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 }
 impl BrokerCurrentClientNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>) -> Self {
+    pub(crate) fn new(
+        peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+        sql_connection: Option<async_sqlite::Client>,
+        access: Arc<RwLock<AccessConfig>>,
+        oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+        role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    ) -> Self {
         Self {
             peers,
+            subscr_cmd_sender,
             sql_connection,
             access,
             oauth2_user_groups,
@@ -581,13 +591,13 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
 ];
 
 impl BrokerCurrentClientNode {
-    async fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.subscribe(peer_id, subpar).await;
+    async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = BrokerImpl::subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
-    async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.unsubscribe(peer_id, subpar).await;
+    async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = BrokerImpl::unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
@@ -616,13 +626,13 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_removed = self.unsubscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
@@ -1136,14 +1146,19 @@ pub const SHV2_METH_APP_VERSION: &str = "appVersion";
 const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(SHV2_METH_APP_VERSION, Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
 const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
 
-pub(crate) struct Shv2BrokerAppNode {}
+pub(crate) struct Shv2BrokerAppNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+}
 impl Shv2BrokerAppNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
         Self {
+            peers,
+            subscr_cmd_sender,
         }
     }
 
-    async fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
+    async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
         let ri_to_shv2_compat = |ri: &shvrpc::rpc::ShvRI| {
             let path = if !ri.path().ends_with("/**") {
                 format!("{path}/**", path = ri.path())
@@ -1157,13 +1172,13 @@ impl Shv2BrokerAppNode {
                 .map_err(|err| format!("Cannot convert RI '{ri}' to shv2 compatible equivalent: {err}", ri = subpar.ri.as_str()))?,
             ttl: subpar.ttl,
         };
-        let res = state.subscribe(peer_id, &subpar).await;
+        let res = BrokerImpl::subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, &subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 
-    async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.unsubscribe(peer_id, subpar).await;
+    async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = BrokerImpl::unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
@@ -1193,13 +1208,13 @@ impl ShvNode for Shv2BrokerAppNode {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_removed = self.unsubscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             _ => {

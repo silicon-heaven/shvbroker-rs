@@ -935,7 +935,7 @@ impl BrokerImpl {
         add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
@@ -960,7 +960,7 @@ impl BrokerImpl {
         if config.shv2_compatibility {
             add_node(
                 DIR_SHV2_BROKER_APP,
-                Box::new(Shv2BrokerAppNode::new()),
+                Box::new(Shv2BrokerAppNode::new(peers.clone(), subscr_cmd_sender.clone())),
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_MOUNTS,
@@ -1782,11 +1782,13 @@ impl BrokerImpl {
             .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
         Ok(Self::subscriptions_to_map(&peer.subscriptions))
     }
-    pub(crate) async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        let mut peers = self
-            .peers
-            .write()
-            .await;
+    pub(crate) async fn subscribe(
+        peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+        peer_id: PeerId,
+        subpar: &SubscriptionParam,
+    ) -> shvrpc::Result<bool> {
+        let mut peers = peers.write().await;
         let peer = peers
             .get_mut(&peer_id)
             .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
@@ -1810,7 +1812,7 @@ impl BrokerImpl {
                 )
                 .for_each(|peer| {
                     let ri = &subpar.ri;
-                    peer.add_forwarded_subscription(ri, &self.subscr_cmd_sender)
+                    peer.add_forwarded_subscription(ri, subscr_cmd_sender)
                         .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {peer_id}, err: {e}"))
                         .ok();
                     }
@@ -1818,12 +1820,14 @@ impl BrokerImpl {
             Ok(true)
         }
     }
-    pub(crate) async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+    pub(crate) async fn unsubscribe(
+        peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+        peer_id: PeerId,
+        subpar: &SubscriptionParam,
+    ) -> shvrpc::Result<bool> {
         log!(target: "Subscr", Level::Debug, "Removing subscription for peer id: {peer_id} - {subpar}");
-        let mut peers = self
-            .peers
-            .write()
-            .await;
+        let mut peers = peers.write().await;
         let peer = peers
             .get_mut(&peer_id)
             .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
@@ -1840,7 +1844,7 @@ impl BrokerImpl {
             )
             .for_each(|peer| {
                 let ri = &subpar.ri;
-                peer.remove_forwarded_subscription(ri, &self.subscr_cmd_sender)
+                peer.remove_forwarded_subscription(ri, subscr_cmd_sender)
                     .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
                     .ok();
                 }
