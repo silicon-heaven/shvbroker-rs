@@ -1054,8 +1054,15 @@ impl BrokerImpl {
             let shv_path = frame.shv_path().unwrap_or_default().to_string();
             let method = frame.method().unwrap_or_default().to_string();
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
-            // println!("response meta: {:?}", response_meta);
-            let access = self.access_level_for_request(peer_id, &frame).await;
+            let access = Self::access_level_for_request_params(
+                &self.peers,
+                &self.role_access_rules,
+                &self.oauth2_user_groups,
+                &self.access,
+                peer_id,
+                &shv_path,
+                &method,
+                frame.tag(Tag::AccessLevel as i32).map(RpcValue::as_i32)).await;
             let (grant_access_level, grant_access) = match access {
                 Ok(grant) => grant,
                 Err(err) => {
@@ -1511,20 +1518,6 @@ impl BrokerImpl {
             .await
             .get(&peer_id)
             .and_then(|peer| peer.mount_point.clone())
-    }
-
-    async fn access_level_for_request(&self, peer_id: PeerId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
-        log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
-        Self::access_level_for_request_params(
-            &self.peers,
-            &self.role_access_rules,
-            &self.oauth2_user_groups,
-            &self.access,
-            peer_id,
-            frame.shv_path().unwrap_or_default(),
-            frame.method().unwrap_or_default(),
-            frame.tag(Tag::AccessLevel as i32).map(RpcValue::as_i32),
-        ).await
     }
 
     #[expect(clippy::too_many_arguments, reason = "It's fine for now, might fix this later")]
