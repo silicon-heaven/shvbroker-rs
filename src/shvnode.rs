@@ -10,7 +10,7 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles, Peer, ParsedAccessRule};
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, user_base_roles};
 use crate::config::AccessConfig;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
@@ -1071,10 +1071,13 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     }
 }
 
-pub(crate) struct BrokerAccessLastLoginNode {}
+pub(crate) struct BrokerAccessLastLoginNode {
+    last_login: Arc<RwLock<LastLogin>>,
+}
 impl BrokerAccessLastLoginNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(last_login: Arc<RwLock<LastLogin>>) -> Self {
         Self {
+            last_login,
         }
     }
 }
@@ -1085,9 +1088,9 @@ impl ShvNode for BrokerAccessLastLoginNode {
         VALUE_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.last_login().await.0.keys().map(|m| m.to_string()).collect())
+            Some(self.last_login.read().await.get().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -1097,10 +1100,10 @@ impl ShvNode for BrokerAccessLastLoginNode {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 if ctx.node_path.is_empty() {
-                    return Ok(ProcessRequestRetval::Retval(ctx.state.last_login().await.0.clone().into()));
+                    return Ok(ProcessRequestRetval::Retval(self.last_login.read().await.get().clone().into()));
                 }
 
-                match ctx.state.last_login().await.0.get(&ctx.node_path) {
+                match self.last_login.read().await.get().get(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }

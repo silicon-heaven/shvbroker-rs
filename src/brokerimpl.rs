@@ -28,7 +28,7 @@ use url::Url;
 use std::collections::{BTreeMap, HashMap,VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
-use smol::lock::{RwLock, RwLockReadGuard};
+use smol::lock::RwLock;
 use std::time::{Duration, Instant};
 use peer::SESSION_TOKEN_PREFIX;
 
@@ -654,8 +654,36 @@ pub(crate) struct Session {
     token: String,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct LastLogin(pub(crate) BTreeMap<String, shvproto::DateTime>);
+#[derive(Debug, Default)]
+pub struct LastLogin(BTreeMap<String, shvproto::DateTime>);
+
+impl LastLogin {
+    pub fn new(map: BTreeMap<String, shvproto::DateTime>) -> Self {
+        Self(map)
+    }
+
+    pub fn get(&self) -> &BTreeMap<String, shvproto::DateTime> {
+        &self.0
+    }
+
+    pub async fn set_last_login(&mut self, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
+        let json = serde_json::to_string(&timestamp).unwrap_or_else(|e| {
+            error!("Generate SQL entry error: {e}");
+            "".to_string()
+        });
+        if let Some(sql_connection) = sql_connection {
+            let sqlop = if self.0.contains_key(id) {
+                UpdateSqlOperation::Update { table: TBL_LAST_LOGIN, id, json }
+            } else {
+                UpdateSqlOperation::Insert { table: TBL_LAST_LOGIN, id, json }
+            };
+
+            update_sql(vec![sqlop], sql_connection).await?;
+        }
+
+        Ok(self.0.insert(id.to_string(), timestamp))
+    }
+}
 
 pub struct BrokerImpl {
     pub(crate) config: SharedBrokerConfig,
@@ -671,7 +699,7 @@ pub struct BrokerImpl {
     // session_token -> username
     pub(crate) session_tokens: Arc<RwLock<Vec<Session>>>,
 
-    last_login: RwLock<LastLogin>,
+    last_login: Arc<RwLock<LastLogin>>,
 
     pub(crate) command_sender: UnboundedSender<BrokerCommand>,
     pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
@@ -891,6 +919,7 @@ impl BrokerImpl {
         let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
         let access = Arc::new(RwLock::new(access));
         let oauth2_user_groups = Arc::new(RwLock::new(Default::default()));
+        let last_login = Arc::new(RwLock::new(last_login));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             mounts
                 .insert(path.into(), Mount::Node);
@@ -926,7 +955,7 @@ impl BrokerImpl {
         );
         add_node(
             DIR_BROKER_ACCESS_LAST_LOGIN,
-            Box::new(BrokerAccessLastLoginNode::new()),
+            Box::new(BrokerAccessLastLoginNode::new(last_login.clone())),
         );
         if config.shv2_compatibility {
             add_node(
@@ -956,7 +985,7 @@ impl BrokerImpl {
             subscr_cmd_sender,
             sql_connection,
             session_tokens: Arc::new(RwLock::default()),
-            last_login: RwLock::new(last_login),
+            last_login,
         }
     }
 
@@ -1222,29 +1251,6 @@ impl BrokerImpl {
         true
     }
 
-    pub(crate) async fn last_login(&self) -> RwLockReadGuard<'_, LastLogin> {
-        self.last_login.read().await
-    }
-
-    pub(crate) async fn set_last_login(&self, id: &str, timestamp: shvproto::DateTime, sql_connection: Option<&async_sqlite::Client>) -> shvrpc::Result<Option<shvproto::DateTime>> {
-        let json = serde_json::to_string(&timestamp).unwrap_or_else(|e| {
-            error!("Generate SQL entry error: {e}");
-            "".to_string()
-        });
-        let last_login = &mut self.last_login.write().await.0;
-        if let Some(sql_connection) = sql_connection {
-            let sqlop = if last_login.contains_key(id) {
-                UpdateSqlOperation::Update { table: TBL_LAST_LOGIN, id, json }
-            } else {
-                UpdateSqlOperation::Insert { table: TBL_LAST_LOGIN, id, json }
-            };
-
-            update_sql(vec![sqlop], sql_connection).await?;
-        }
-
-        Ok(last_login.insert(id.to_string(), timestamp))
-    }
-
     async fn get_or_create_token(&self, user: &str) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
@@ -1275,7 +1281,7 @@ impl BrokerImpl {
             } => {
                 let user = peer_kind.user();
                 let previous_login = if let Some(user) = user {
-                    self.set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref()).await.inspect_err(|err| {
+                    self.last_login.write().await.set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref()).await.inspect_err(|err| {
                         log::error!("Unable to set last_login for {user}: {err}");
                     }).ok()
                 } else {

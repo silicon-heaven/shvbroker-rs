@@ -80,7 +80,7 @@ async fn create_access_sqlite(sql_conn: &Client, access: &AccessConfig, last_log
     save_table(sql_conn, TBL_USERS, access.users().clone()).await?;
     save_table(sql_conn, TBL_ROLES, access.roles().clone()).await?;
     save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips().clone()).await?;
-    save_table(sql_conn, TBL_LAST_LOGIN, last_login.0.clone()).await?;
+    save_table(sql_conn, TBL_LAST_LOGIN, last_login.get().clone()).await?;
 
     Ok(())
 }
@@ -150,5 +150,5 @@ async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<(AccessConfig, 
             date_time.map(|date_time| (key, date_time))
         }).collect();
 
-    Ok((access, LastLogin(last_login)))
+    Ok((access, LastLogin::new(last_login)))
 }
