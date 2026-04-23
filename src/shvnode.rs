@@ -383,11 +383,13 @@ pub const METH_USER_ROLES: &str = "userRoles";
 
 pub(crate) struct BrokerNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    broker_name: Option<String>,
 }
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, broker_name: Option<String>) -> Self {
         Self {
             peers,
+            broker_name,
         }
     }
 }
@@ -462,7 +464,7 @@ impl ShvNode for BrokerNode {
                 }
             }
             METH_BROKER_ID => {
-                Ok(ProcessRequestRetval::Retval(ctx.state.config.name.clone().into()))
+                Ok(ProcessRequestRetval::Retval(self.broker_name.clone().into()))
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;

@@ -902,7 +902,7 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new()));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
             Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone())),
