@@ -1725,7 +1725,7 @@ impl BrokerImpl {
             },
         }
     }
-    pub(crate) fn peer_to_info(peer_id: PeerId, peer: &Peer) -> rpcvalue::Map {
+    pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
         let subs = Self::subscriptions_to_map(&peer.subscriptions);
         let device_id = if let PeerKind::Device { device_id, .. } = &peer.peer_kind {
             device_id.clone().unwrap_or_default()
@@ -1733,7 +1733,7 @@ impl BrokerImpl {
             "".to_owned()
         };
         rpcvalue::Map::from([
-            ("clientId".to_string(), peer_id.into()),
+            ("clientId".to_string(), peer.peer_id.into()),
             (
                 "userName".to_string(),
                 RpcValue::from(peer.user()),
@@ -1747,10 +1747,10 @@ impl BrokerImpl {
         ])
     }
     pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, mount_point: &str) -> Option<rpcvalue::Map> {
-        for (peer_id, peer) in peers.read().await.iter() {
+        for peer in peers.read().await.values() {
             if let Some(mount_point1) = &peer.mount_point
                 && mount_point1 == mount_point {
-                    return Some(BrokerImpl::peer_to_info(*peer_id, peer));
+                    return Some(BrokerImpl::peer_to_info(peer));
                 }
         }
         None

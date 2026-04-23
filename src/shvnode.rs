@@ -604,7 +604,7 @@ impl BrokerCurrentClientNode {
 }
 
 pub(crate) async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
-    peers.read().await.get(&peer_id).map(|peer| BrokerImpl::peer_to_info(peer_id, peer))
+    peers.read().await.get(&peer_id).map(BrokerImpl::peer_to_info)
 }
 
 #[async_trait::async_trait]
