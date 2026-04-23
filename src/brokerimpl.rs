@@ -167,7 +167,7 @@ impl Peer {
         self.subscriptions.iter().any(|subscr| subscr.match_shv_ri(signal))
     }
 
-    fn user(&self) -> &str {
+    pub(crate) fn user(&self) -> &str {
         match &self.peer_kind {
             PeerKind::Client { user, .. } => user,
             PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
@@ -1858,10 +1858,6 @@ impl BrokerImpl {
                 }
             );
         Ok(cnt != peer_subscr_len)
-    }
-
-    pub(crate) async fn peer_user(&self, peer_id: PeerId) -> Option<String> {
-        self.peers.read().await.get(&peer_id).map(Peer::user).map(ToOwned::to_owned)
     }
 
     pub(crate) async fn send_response(peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>, peer_id: PeerId, meta: MetaMap, result: Result<RpcValue, RpcError>) -> shvrpc::Result<()> {
