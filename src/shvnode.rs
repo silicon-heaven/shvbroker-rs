@@ -591,7 +591,7 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_USER_ROLES,
 ];
 
-pub(crate) async fn subscribe(
+async fn subscribe(
     peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
     peer_id: PeerId,
@@ -630,7 +630,7 @@ pub(crate) async fn subscribe(
     }
 }
 
-pub(crate) async fn unsubscribe(
+async fn unsubscribe(
     peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
     peer_id: PeerId,
@@ -691,7 +691,7 @@ fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
         .collect()
 }
 
-pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
+fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     let subs = subscriptions_to_map(&peer.subscriptions);
     let device_id = match &peer.peer_kind {
         PeerKind::Device { device_id: Some(device_id), .. } => device_id.as_str(),
@@ -706,16 +706,16 @@ pub(crate) fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     }
 }
 
-pub(crate) async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
+async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
     peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
         .map(peer_to_info)
 }
 
-pub(crate) async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
+async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
     peers.read().await.get(&peer_id).map(peer_to_info)
 }
 
-pub(crate) async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
+async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
     let peers = peers.read().await;
     let peer = peers
         .get(&peer_id)

@@ -686,25 +686,25 @@ impl LastLogin {
 }
 
 pub struct BrokerImpl {
-    pub(crate) config: SharedBrokerConfig,
+    config: SharedBrokerConfig,
     nodes: BTreeMap<String, Box<dyn ShvNode>>,
 
-    pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: BTreeMap<String, Mount>,
-    pub(crate) access: Arc<RwLock<AccessConfig>>,
-    pub(crate) role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    access: Arc<RwLock<AccessConfig>>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 
-    pub(crate) oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+    oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
 
     // session_token -> username
-    pub(crate) session_tokens: Arc<RwLock<Vec<Session>>>,
+    session_tokens: Arc<RwLock<Vec<Session>>>,
 
     last_login: Arc<RwLock<LastLogin>>,
 
-    pub(crate) command_sender: UnboundedSender<BrokerCommand>,
-    pub(crate) subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+    command_sender: UnboundedSender<BrokerCommand>,
+    subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
 
-    pub(crate) sql_connection: Option<async_sqlite::Client>,
+    sql_connection: Option<async_sqlite::Client>,
 
     pending_rpc_calls: Vec<PendingRpcCall>,
 }
@@ -1030,7 +1030,7 @@ impl BrokerImpl {
         }
     }
 
-    pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
+    async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;
             if let Some(mut req_user_id) = frame.user_id() {
