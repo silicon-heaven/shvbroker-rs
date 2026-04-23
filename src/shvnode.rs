@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::format;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use log::{Level, log};
+use log::{Level, log, warn};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
 use shvrpc::{metamethod, RpcMessageMetaTags};
@@ -591,14 +591,85 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_USER_ROLES,
 ];
 
+pub(crate) async fn subscribe(
+    peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+    peer_id: PeerId,
+    subpar: &SubscriptionParam,
+) -> shvrpc::Result<bool> {
+    let mut peers = peers.write().await;
+    let peer = peers
+        .get_mut(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    if let Some(sub) = peer
+        .subscriptions
+        .iter_mut()
+        .find(|sub| sub.param.ri == subpar.ri)
+    {
+        log!(target: "Subscr", Level::Debug, "Changing subscription TTL for peer id: {peer_id} - {subpar}");
+        sub.param.ttl = subpar.ttl;
+        Ok(false)
+    } else {
+        log!(target: "Subscr", Level::Debug, "Adding subscription for peer id: {peer_id} - {subpar}");
+        peer.subscriptions.push(Subscription::new(subpar)?);
+
+        // Forward this subscription to all other peers - sub-brokers
+        peers
+            .iter_mut()
+            .filter_map(|(id, peer)|
+                (peer_id != *id).then_some(peer)
+            )
+            .for_each(|peer| {
+                let ri = &subpar.ri;
+                peer.add_forwarded_subscription(ri, subscr_cmd_sender)
+                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {peer_id}, err: {e}"))
+                    .ok();
+                }
+            );
+        Ok(true)
+    }
+}
+
+pub(crate) async fn unsubscribe(
+    peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+    peer_id: PeerId,
+    subpar: &SubscriptionParam,
+) -> shvrpc::Result<bool> {
+    log!(target: "Subscr", Level::Debug, "Removing subscription for peer id: {peer_id} - {subpar}");
+    let mut peers = peers.write().await;
+    let peer = peers
+        .get_mut(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    let cnt = peer.subscriptions.len();
+    peer.subscriptions
+        .retain(|subscr| subscr.param.ri != subpar.ri);
+
+    let peer_subscr_len = peer.subscriptions.len();
+
+    peers
+        .iter_mut()
+        .filter_map(|(id, peer)|
+            (peer_id != *id).then_some(peer)
+        )
+        .for_each(|peer| {
+            let ri = &subpar.ri;
+            peer.remove_forwarded_subscription(ri, subscr_cmd_sender)
+                .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
+                .ok();
+            }
+        );
+    Ok(cnt != peer_subscr_len)
+}
+
 impl BrokerCurrentClientNode {
     async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        let res = BrokerImpl::subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
+        let res = subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
     async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        let res = BrokerImpl::unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
+        let res = unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
@@ -1213,13 +1284,13 @@ impl Shv2BrokerAppNode {
                 .map_err(|err| format!("Cannot convert RI '{ri}' to shv2 compatible equivalent: {err}", ri = subpar.ri.as_str()))?,
             ttl: subpar.ttl,
         };
-        let res = BrokerImpl::subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, &subpar).await;
+        let res = subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, &subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 
     async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
-        let res = BrokerImpl::unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
+        let res = unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
