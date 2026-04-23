@@ -384,12 +384,19 @@ pub const METH_USER_ROLES: &str = "userRoles";
 pub(crate) struct BrokerNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     broker_name: Option<String>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+    access: Arc<RwLock<AccessConfig>>,
 }
+
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, broker_name: Option<String>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, broker_name: Option<String>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>,) -> Self {
         Self {
             peers,
             broker_name,
+            role_access_rules,
+            oauth2_user_groups,
+            access,
         }
     }
 }
@@ -419,7 +426,7 @@ impl ShvNode for BrokerNode {
         }
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
@@ -488,13 +495,16 @@ impl ShvNode for BrokerNode {
                         return Err("Couldn't determine access level".into());
                     };
 
-                let access_level = ctx.state
-                    .access_level_for_request_params(
-                        peer_id,
-                        shv_path,
-                        method,
-                        None,
-                    )
+                let access_level = BrokerImpl::access_level_for_request_params(
+                    &self.peers,
+                    &self.role_access_rules,
+                    &self.oauth2_user_groups,
+                    &self.access,
+                    peer_id,
+                    shv_path,
+                    method,
+                    None,
+                )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
                     .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied.into() {
@@ -543,14 +553,16 @@ pub(crate) struct BrokerCurrentClientNode {
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 }
 impl BrokerCurrentClientNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>) -> Self {
         Self {
             peers,
             sql_connection,
             access,
             oauth2_user_groups,
+            role_access_rules,
         }
     }
 }
@@ -689,8 +701,11 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
 
-                let access_level = ctx.state
-                    .access_level_for_request_params(
+                let access_level = BrokerImpl::access_level_for_request_params(
+                        &self.peers,
+                        &self.role_access_rules,
+                        &self.oauth2_user_groups,
+                        &self.access,
                         ctx.peer_id,
                         shv_path,
                         method,

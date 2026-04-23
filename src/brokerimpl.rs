@@ -932,10 +932,10 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
@@ -1512,7 +1512,11 @@ impl BrokerImpl {
 
     async fn access_level_for_request(&self, peer_id: PeerId, frame: &RpcFrame) -> Result<(Option<i32>, Option<String>), RpcError> {
         log!(target: "Access", Level::Debug, "======================= grant_for_request {}", &frame);
-        self.access_level_for_request_params(
+        Self::access_level_for_request_params(
+            &self.peers,
+            &self.role_access_rules,
+            &self.oauth2_user_groups,
+            &self.access,
             peer_id,
             frame.shv_path().unwrap_or_default(),
             frame.method().unwrap_or_default(),
@@ -1520,8 +1524,12 @@ impl BrokerImpl {
         ).await
     }
 
+    #[expect(clippy::too_many_arguments, reason = "It's fine for now, might fix this later")]
     pub(crate) async fn access_level_for_request_params(
-        &self,
+        peers: &RwLock<BTreeMap<PeerId, Peer>>,
+        role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
+        oauth2_user_groups: &RwLock<BTreeMap<PeerId, Vec<String>>>,
+        access: &RwLock<AccessConfig>,
         peer_id: PeerId,
         shv_path: &str,
         method: &str,
@@ -1534,10 +1542,7 @@ impl BrokerImpl {
                 "Method is empty",
             ));
         }
-        let peers = self
-            .peers
-            .read()
-            .await;
+        let peers = peers.read().await;
         let peer = peers
             .get(&peer_id)
             .ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
@@ -1548,7 +1553,7 @@ impl BrokerImpl {
         log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
         let access_level_from_flatten_roles = async |flatten_roles: Vec<String>| {
-            let access_roles = self.role_access_rules.read().await;
+            let access_roles = role_access_rules.read().await;
             let found_grant = flatten_roles
                 .into_iter()
                 .filter_map(|role_name| access_roles.get(&role_name)
@@ -1573,12 +1578,12 @@ impl BrokerImpl {
                 ),
             }
         };
-        let oauth2_user_groups = self.oauth2_user_groups.read().await;
-        let access_config = self.access.read().await;
+        let oauth2_user_groups = oauth2_user_groups.read().await;
+        let access_config = access.read().await;
         let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
         // request from logged-in user,
         // it can be client, device, child broker or parent broker as client
-        let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
+        let flatten_roles = access_config.flatten_roles(user_roles.as_slice());
         log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
