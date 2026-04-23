@@ -663,8 +663,8 @@ pub struct BrokerImpl {
 
     pub(crate) peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: BTreeMap<String, Mount>,
-    pub(crate) access: RwLock<AccessConfig>,
-    pub(crate) role_access_rules: RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
+    pub(crate) access: Arc<RwLock<AccessConfig>>,
+    pub(crate) role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 
     pub(crate) oauth2_user_groups: RwLock<BTreeMap<PeerId, Vec<String>>>,
 
@@ -888,6 +888,8 @@ impl BrokerImpl {
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
         let mut mounts: BTreeMap<String, Mount> = Default::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
+        let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
+        let access = Arc::new(RwLock::new(access));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             mounts
                 .insert(path.into(), Mount::Node);
@@ -903,23 +905,23 @@ impl BrokerImpl {
         add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
-            Box::new(BrokerAccessMountsNode::new(sql_connection.clone())),
+            Box::new(BrokerAccessMountsNode::new(sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_USERS,
-            Box::new(BrokerAccessUsersNode::new(sql_connection.clone())),
+            Box::new(BrokerAccessUsersNode::new(sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_ROLES,
-            Box::new(BrokerAccessRolesNode::new(sql_connection.clone())),
+            Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_ALLOWED_IPS,
-            Box::new(BrokerAccessAllowedIpsNode::new(sql_connection.clone())),
+            Box::new(BrokerAccessAllowedIpsNode::new(sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_LAST_LOGIN,
@@ -932,15 +934,14 @@ impl BrokerImpl {
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_MOUNTS,
-                Box::new(BrokerAccessMountsNode::new(sql_connection.clone())),
+                Box::new(BrokerAccessMountsNode::new(sql_connection.clone(), access.clone())),
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_USERS,
-                Box::new(BrokerAccessUsersNode::new(sql_connection.clone())),
+                Box::new(BrokerAccessUsersNode::new(sql_connection.clone(), access.clone())),
             );
         }
 
-        let role_access = parse_config_roles(access.roles());
         Self {
             nodes,
             pending_rpc_calls: vec![],
@@ -948,8 +949,8 @@ impl BrokerImpl {
             config: config.clone(),
             peers,
             mounts,
-            access: RwLock::new(access),
-            role_access_rules: RwLock::new(role_access),
+            access,
+            role_access_rules,
             oauth2_user_groups: Default::default(),
             subscr_cmd_sender,
             sql_connection,
@@ -957,6 +958,7 @@ impl BrokerImpl {
             last_login: RwLock::new(last_login),
         }
     }
+
     pub(crate) async fn process_rpc_frame(&mut self, peer_id: PeerId, frame: RpcFrame) -> shvrpc::Result<()> {
         if frame.is_request() {
             let mut frame = frame;

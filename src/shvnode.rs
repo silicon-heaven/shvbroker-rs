@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::format;
 use std::sync::Arc;
 use log::{Level, log};
@@ -10,7 +10,8 @@ use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles, Peer};
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles, Peer, ParsedAccessRule};
+use crate::config::AccessConfig;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
 
@@ -538,12 +539,14 @@ const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES,
 pub(crate) struct BrokerCurrentClientNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
 }
 impl BrokerCurrentClientNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             peers,
             sql_connection,
+            access,
         }
     }
 }
@@ -643,7 +646,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 if user_name.starts_with("azure:") {
                     return Err("Can't change password, because you are logged in over Azure".into());
                 }
-                let mut access = ctx.state.access.write().await;
+                let mut access = self.access.write().await;
                 let Some(user) = access.access_user(&user_name) else {
                     return Err(format!("Invalid user: {user_name})").into());
                 };
@@ -700,8 +703,8 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*ctx.state.access.read().await, peer);
-                let access = ctx.state.access.read().await;
+                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*self.access.read().await, peer);
+                let access = self.access.read().await;
                 let merged_profile = ctx.state
                     .flatten_roles(user_roles.as_slice())
                     .await
@@ -722,7 +725,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*ctx.state.access.read().await, peer);
+                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*self.access.read().await, peer);
 
                 if user_roles.is_empty() {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
@@ -754,11 +757,13 @@ const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_MET
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
 pub(crate) struct BrokerAccessMountsNode {
     sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
 }
 impl BrokerAccessMountsNode {
-    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             sql_connection,
+            access,
         }
     }
 }
@@ -786,7 +791,7 @@ impl ShvNode for BrokerAccessMountsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_mount(&ctx.node_path) {
+                match self.access.read().await.access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -809,7 +814,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
+                let res = self.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -821,11 +826,13 @@ impl ShvNode for BrokerAccessMountsNode {
 
 pub(crate) struct BrokerAccessUsersNode {
     sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
 }
 impl BrokerAccessUsersNode {
-    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             sql_connection,
+            access,
         }
     }
 }
@@ -855,7 +862,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             let Some(sql_connection) = &self.sql_connection else {
                 return Err(make_access_ro_error().into())
             };
-            let mut access = ctx.state.access.write().await;
+            let mut access = self.access.write().await;
             let user = access.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
@@ -874,7 +881,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_user(&ctx.node_path) {
+                match self.access.read().await.access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -903,7 +910,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                let res = ctx.state.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
+                let res = self.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -915,11 +922,15 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
 pub(crate) struct BrokerAccessRolesNode {
     sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 }
 impl crate::shvnode::BrokerAccessRolesNode {
-    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>) -> Self {
         Self {
             sql_connection,
+            access,
+            role_access_rules,
         }
     }
 }
@@ -945,7 +956,7 @@ impl ShvNode for BrokerAccessRolesNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_role(&ctx.node_path) {
+                match self.access.read().await.access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -968,7 +979,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_access_role(key.as_str(), role, &ctx.state.role_access_rules, sql_connection).await?;
+                let res = self.access.write().await.set_access_role(key.as_str(), role, &self.role_access_rules, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -980,11 +991,13 @@ impl ShvNode for BrokerAccessRolesNode {
 
 pub(crate) struct BrokerAccessAllowedIpsNode {
     sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
 }
 impl BrokerAccessAllowedIpsNode {
-    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             sql_connection,
+            access,
         }
     }
 }
@@ -1010,7 +1023,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_allowed_ips(&ctx.node_path) {
+                match self.access.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -1040,7 +1053,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Ok(allowed_ips)) => {Some(allowed_ips)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
+                let res = self.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
