@@ -537,11 +537,13 @@ const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES,
 
 pub(crate) struct BrokerCurrentClientNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    sql_connection: Option<async_sqlite::Client>,
 }
 impl BrokerCurrentClientNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, sql_connection: Option<async_sqlite::Client>) -> Self {
         Self {
             peers,
+            sql_connection,
         }
     }
 }
@@ -613,7 +615,7 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_CHANGE_PASSWORD => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err("Cannot change password, access database is not available.".into());
                 };
                 let rq = &frame.to_rpcmesage()?;
@@ -750,10 +752,13 @@ const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Fla
 const SET_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
-pub(crate) struct BrokerAccessMountsNode {}
+pub(crate) struct BrokerAccessMountsNode {
+    sql_connection: Option<async_sqlite::Client>,
+}
 impl BrokerAccessMountsNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
         Self {
+            sql_connection,
         }
     }
 }
@@ -791,7 +796,7 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -814,10 +819,13 @@ impl ShvNode for BrokerAccessMountsNode {
     }
 }
 
-pub(crate) struct BrokerAccessUsersNode {}
+pub(crate) struct BrokerAccessUsersNode {
+    sql_connection: Option<async_sqlite::Client>,
+}
 impl BrokerAccessUsersNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
         Self {
+            sql_connection,
         }
     }
 }
@@ -844,7 +852,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
-            let Some(sql_connection) = &ctx.state.sql_connection else {
+            let Some(sql_connection) = &self.sql_connection else {
                 return Err(make_access_ro_error().into())
             };
             let mut access = ctx.state.access.write().await;
@@ -878,7 +886,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             METH_DEACTIVATE => process_activation_change(DEACTIVATE).await,
             METH_ACTIVATE => process_activation_change(ACTIVATE).await,
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -905,10 +913,13 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
     }
 }
 
-pub(crate) struct BrokerAccessRolesNode {}
+pub(crate) struct BrokerAccessRolesNode {
+    sql_connection: Option<async_sqlite::Client>,
+}
 impl crate::shvnode::BrokerAccessRolesNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
         Self {
+            sql_connection,
         }
     }
 }
@@ -944,7 +955,7 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -967,10 +978,13 @@ impl ShvNode for BrokerAccessRolesNode {
     }
 }
 
-pub(crate) struct BrokerAccessAllowedIpsNode {}
+pub(crate) struct BrokerAccessAllowedIpsNode {
+    sql_connection: Option<async_sqlite::Client>,
+}
 impl BrokerAccessAllowedIpsNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>) -> Self {
         Self {
+            sql_connection,
         }
     }
 }
@@ -1006,7 +1020,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();

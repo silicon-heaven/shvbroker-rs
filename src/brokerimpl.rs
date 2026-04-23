@@ -903,23 +903,23 @@ impl BrokerImpl {
         add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), sql_connection.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
-            Box::new(BrokerAccessMountsNode::new()),
+            Box::new(BrokerAccessMountsNode::new(sql_connection.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_USERS,
-            Box::new(BrokerAccessUsersNode::new()),
+            Box::new(BrokerAccessUsersNode::new(sql_connection.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_ROLES,
-            Box::new(BrokerAccessRolesNode::new()),
+            Box::new(BrokerAccessRolesNode::new(sql_connection.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_ALLOWED_IPS,
-            Box::new(BrokerAccessAllowedIpsNode::new()),
+            Box::new(BrokerAccessAllowedIpsNode::new(sql_connection.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_LAST_LOGIN,
@@ -932,11 +932,11 @@ impl BrokerImpl {
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_MOUNTS,
-                Box::new(BrokerAccessMountsNode::new()),
+                Box::new(BrokerAccessMountsNode::new(sql_connection.clone())),
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_USERS,
-                Box::new(BrokerAccessUsersNode::new()),
+                Box::new(BrokerAccessUsersNode::new(sql_connection.clone())),
             );
         }
 
