@@ -903,6 +903,47 @@ async fn forward_subscriptions_task(
     Ok(())
 }
 
+async fn set_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
+    let mut peers = peers.write().await;
+    let peer = peers.get_mut(&peer_id).ok_or("Peer not found")?;
+    peer.subscribe_api = subscribe_api;
+    Ok(())
+}
+
+async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sender: UnboundedSender<BrokerCommand>, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
+    log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
+    let broker_command_sender = command_sender.clone();
+    let subscribe_api = {
+        let (response_sender, mut response_receiver) = unbounded();
+        let request = RpcMessage::new_request(".broker", METH_LS);
+        let cmd = BrokerCommand::RpcCall {
+            peer_id,
+            request,
+            response_sender,
+        };
+        broker_command_sender.unbounded_send(cmd)?;
+        let resp = response_receiver.recv().await?.to_rpcmesage()?;
+        match resp.response() {
+            // Ok => this is a broker, and only V2 brokers have "clients", otherwise we'll assume V3.
+            // Rust broker with SHV2 compatibility do not have "clients", just "client".
+            Ok(Response::Success(result)) => {
+                if result.as_list().iter().any(|elem| elem.as_str() == "clients") {
+                    Some(SubscribeApi::V2)
+                } else {
+                    Some(SubscribeApi::V3)
+                }
+            }
+            Ok(Response::Delay(_)) => return Err("Delay messages are not supported in SHV API version discovery.".into()),
+            // .broker:ls failed, so this is not a broker.
+            Err(_) => None,
+        }
+    };
+
+    log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
+    set_subscribe_api(peers, peer_id, subscribe_api).await?;
+    Ok(subscribe_api)
+}
+
 impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
@@ -1311,7 +1352,7 @@ impl BrokerImpl {
                     let subscr_cmd_sender = self.subscr_cmd_sender.clone();
 
                     spawn_and_log_error(async move {
-                        if Self::check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
+                        if check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
                             return Ok(());
                         }
                         let forwarded_ris = peers.read()
@@ -1464,40 +1505,6 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sender: UnboundedSender<BrokerCommand>, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
-        log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
-        let broker_command_sender = command_sender.clone();
-        let subscribe_api = {
-            let (response_sender, mut response_receiver) = unbounded();
-            let request = RpcMessage::new_request(".broker", METH_LS);
-            let cmd = BrokerCommand::RpcCall {
-                peer_id,
-                request,
-                response_sender,
-            };
-            broker_command_sender.unbounded_send(cmd)?;
-            let resp = response_receiver.recv().await?.to_rpcmesage()?;
-            match resp.response() {
-                // Ok => this is a broker, and only V2 brokers have "clients", otherwise we'll assume V3.
-                // Rust broker with SHV2 compatibility do not have "clients", just "client".
-                Ok(Response::Success(result)) => {
-                    if result.as_list().iter().any(|elem| elem.as_str() == "clients") {
-                        Some(SubscribeApi::V2)
-                    } else {
-                        Some(SubscribeApi::V3)
-                    }
-                }
-                Ok(Response::Delay(_)) => return Err("Delay messages are not supported in SHV API version discovery.".into()),
-                // .broker:ls failed, so this is not a broker.
-                Err(_) => None,
-            }
-        };
-
-        log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
-        Self::set_subscribe_api(peers, peer_id, subscribe_api).await?;
-        Ok(subscribe_api)
-    }
-
     async fn mount_point(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<String> {
         peers
             .read()
@@ -1617,12 +1624,6 @@ impl BrokerImpl {
             true
         });
         Ok(mount_point)
-    }
-    async fn set_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId, subscribe_api: Option<SubscribeApi>) -> shvrpc::Result<()> {
-        let mut peers = peers.write().await;
-        let peer = peers.get_mut(&peer_id).ok_or("Peer not found")?;
-        peer.subscribe_api = subscribe_api;
-        Ok(())
     }
 
     async fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
