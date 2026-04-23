@@ -1536,7 +1536,7 @@ impl BrokerImpl {
         }
         let peers = self
             .peers
-            .write()
+            .read()
             .await;
         let peer = peers
             .get(&peer_id)
