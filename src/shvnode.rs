@@ -1,15 +1,20 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::format;
-use log::{Level, log};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use log::{Level, log, warn};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
 use shvrpc::{metamethod, RpcMessageMetaTags};
-use shvproto::{List, RpcValue, rpcvalue};
+use shvproto::{List, Map, RpcValue, rpcvalue};
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, user_base_roles};
+use futures::channel::mpsc::UnboundedSender;
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
+use crate::config::AccessConfig;
+use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
 
 pub const METH_DIR: &str = "dir";
@@ -150,7 +155,7 @@ pub(crate) type ProcessRequestResult = Result<ProcessRequestRetval, shvrpc::Erro
 #[async_trait::async_trait]
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>>;
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>>;
     async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
         let shv_path = rq.shv_path().unwrap_or_default();
         let methods = self.methods(shv_path);
@@ -159,7 +164,7 @@ pub(crate) trait ShvNode : Send + Sync {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult;
 }
 impl dyn ShvNode {
-    pub async fn process_request_and_dir_ls<'a>(&self, frame: &RpcFrame, ctx: &NodeRequestContext<'a>) -> ProcessRequestResult {
+    pub async fn process_request_and_dir_ls(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         let result = self.process_request(frame, ctx).await;
         if let Ok(ProcessRequestRetval::MethodNotFound) = result {
             match frame.method().unwrap_or_default() {
@@ -172,7 +177,7 @@ impl dyn ShvNode {
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
-                    if let Some(children) = self.children(shv_path, ctx.state).await {
+                    if let Some(children) = self.children(shv_path).await {
                         match LsParam::from(rq.param()) {
                             LsParam::List => {
                                 Ok(ProcessRequestRetval::Retval(children.into()))
@@ -246,7 +251,7 @@ impl ShvNode for AppNode {
         APP_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -302,7 +307,7 @@ impl ShvNode for AppDeviceNode {
         APP_DEVICE_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -378,10 +383,22 @@ pub const METH_USER_PROFILE: &str = "userProfile";
 pub const METH_USER_ROLES: &str = "userRoles";
 
 
-pub(crate) struct BrokerNode {}
+pub(crate) struct BrokerNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    broker_name: Option<String>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+    access: Arc<RwLock<AccessConfig>>,
+}
+
 impl BrokerNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, broker_name: Option<String>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>,) -> Self {
         Self {
+            peers,
+            broker_name,
+            role_access_rules,
+            oauth2_user_groups,
+            access,
         }
     }
 }
@@ -403,7 +420,7 @@ impl ShvNode for BrokerNode {
         BROKER_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
             Some(vec![])
         } else {
@@ -411,12 +428,12 @@ impl ShvNode for BrokerNode {
         }
     }
 
-    async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
+    async fn process_request(&self, frame: &RpcFrame, _ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                let info = match ctx.state.client_info(peer_id).await {
+                let info = match client_info(&self.peers, peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -425,18 +442,18 @@ impl ShvNode for BrokerNode {
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().try_into()?;
-                let info = match ctx.state.mounted_client_info(mount_point).await {
+                let info = match mounted_client_info(&self.peers, mount_point).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
-                let clients: rpcvalue::List = ctx.state.peers.read().await.keys().map(|id| RpcValue::from(*id)).collect();
+                let clients: rpcvalue::List = self.peers.read().await.keys().map(|id| RpcValue::from(*id)).collect();
                 Ok(ProcessRequestRetval::Retval(clients.into()))
             }
             METH_MOUNTS => {
-                let mounts: List = ctx.state.peers.read().await.values()
+                let mounts: List = self.peers.read().await.values()
                     .filter(|peer| peer.mount_point.is_some())
                     .map(|peer| if let Some(mount_point) = &peer.mount_point {RpcValue::from(mount_point)} else { RpcValue::null() } )
                     .collect();
@@ -445,7 +462,7 @@ impl ShvNode for BrokerNode {
             METH_DISCONNECT_CLIENT => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                if let Some(peer) = ctx.state.peers.read().await.get(&peer_id) {
+                if let Some(peer) = self.peers.read().await.get(&peer_id) {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
                         let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
@@ -456,7 +473,7 @@ impl ShvNode for BrokerNode {
                 }
             }
             METH_BROKER_ID => {
-                Ok(ProcessRequestRetval::Retval(ctx.state.config.name.clone().into()))
+                Ok(ProcessRequestRetval::Retval(self.broker_name.clone().into()))
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;
@@ -471,7 +488,7 @@ impl ShvNode for BrokerNode {
                 let [username, shv_path, method] = params.as_slice() else {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
-                let Some(peer_id) = ctx.state.peers.read().await
+                let Some(peer_id) = self.peers.read().await
                     .iter()
                     .find_map(|(peer_id, peer)| match &peer.peer_kind {
                         crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
@@ -480,13 +497,16 @@ impl ShvNode for BrokerNode {
                         return Err("Couldn't determine access level".into());
                     };
 
-                let access_level = ctx.state
-                    .access_level_for_request_params(
-                        peer_id,
-                        shv_path,
-                        method,
-                        None,
-                    )
+                let access_level = BrokerImpl::access_level_for_request_params(
+                    &self.peers,
+                    &self.role_access_rules,
+                    &self.oauth2_user_groups,
+                    &self.access,
+                    peer_id,
+                    shv_path,
+                    method,
+                    None,
+                )
                     .await
                     .map(|(access_level, _)| access_level.unwrap_or_default())
                     .or_else(|rpc_err| if rpc_err.code == RpcErrorCode::PermissionDenied.into() {
@@ -530,10 +550,30 @@ const META_METH_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_stati
 const META_METH_USER_PROFILE: MetaMethod = MetaMethod::new_static(METH_USER_PROFILE, Flags::empty(), AccessLevel::Read, "void", "RpcValue", &[], "");
 const META_METH_USER_ROLES: MetaMethod = MetaMethod::new_static(METH_USER_ROLES, Flags::empty(), AccessLevel::Read, "void", "List", &[], "");
 
-pub(crate) struct BrokerCurrentClientNode {}
+pub(crate) struct BrokerCurrentClientNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+    sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+    oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+}
 impl BrokerCurrentClientNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(
+        peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+        subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+        sql_connection: Option<async_sqlite::Client>,
+        access: Arc<RwLock<AccessConfig>>,
+        oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
+        role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    ) -> Self {
         Self {
+            peers,
+            subscr_cmd_sender,
+            sql_connection,
+            access,
+            oauth2_user_groups,
+            role_access_rules,
         }
     }
 }
@@ -551,17 +591,136 @@ const BROKER_CURRENT_CLIENT_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_USER_ROLES,
 ];
 
+async fn subscribe(
+    peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+    peer_id: PeerId,
+    subpar: &SubscriptionParam,
+) -> shvrpc::Result<bool> {
+    let mut peers = peers.write().await;
+    let peer = peers
+        .get_mut(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    if let Some(sub) = peer
+        .subscriptions
+        .iter_mut()
+        .find(|sub| sub.param.ri == subpar.ri)
+    {
+        log!(target: "Subscr", Level::Debug, "Changing subscription TTL for peer id: {peer_id} - {subpar}");
+        sub.param.ttl = subpar.ttl;
+        Ok(false)
+    } else {
+        log!(target: "Subscr", Level::Debug, "Adding subscription for peer id: {peer_id} - {subpar}");
+        peer.subscriptions.push(Subscription::new(subpar)?);
+
+        // Forward this subscription to all other peers - sub-brokers
+        peers
+            .iter_mut()
+            .filter_map(|(id, peer)|
+                (peer_id != *id).then_some(peer)
+            )
+            .for_each(|peer| {
+                let ri = &subpar.ri;
+                peer.add_forwarded_subscription(ri, subscr_cmd_sender)
+                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {peer_id}, err: {e}"))
+                    .ok();
+                }
+            );
+        Ok(true)
+    }
+}
+
+async fn unsubscribe(
+    peers: &Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: &UnboundedSender<SubscriptionCommand>,
+    peer_id: PeerId,
+    subpar: &SubscriptionParam,
+) -> shvrpc::Result<bool> {
+    log!(target: "Subscr", Level::Debug, "Removing subscription for peer id: {peer_id} - {subpar}");
+    let mut peers = peers.write().await;
+    let peer = peers
+        .get_mut(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    let cnt = peer.subscriptions.len();
+    peer.subscriptions
+        .retain(|subscr| subscr.param.ri != subpar.ri);
+
+    let peer_subscr_len = peer.subscriptions.len();
+
+    peers
+        .iter_mut()
+        .filter_map(|(id, peer)|
+            (peer_id != *id).then_some(peer)
+        )
+        .for_each(|peer| {
+            let ri = &subpar.ri;
+            peer.remove_forwarded_subscription(ri, subscr_cmd_sender)
+                .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
+                .ok();
+            }
+        );
+    Ok(cnt != peer_subscr_len)
+}
+
 impl BrokerCurrentClientNode {
-    async fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.subscribe(peer_id, subpar).await;
+    async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
-    async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.unsubscribe(peer_id, subpar).await;
+    async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
+}
+fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
+    subscriptions
+        .iter()
+        .map(|subscr| match subscr.param.ttl {
+            None => {
+                let key = subscr.glob.as_str().to_string();
+                (key, ().into())
+            }
+            Some(ttl) => {
+                let key = subscr.glob.as_str().to_string();
+                let ttl = Instant::now() + Duration::from_secs(ttl as u64) - subscr.subscribed;
+                (key, (ttl.as_secs() as i64).into())
+            }
+        })
+        .collect()
+}
+
+fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
+    let subs = subscriptions_to_map(&peer.subscriptions);
+    let device_id = match &peer.peer_kind {
+        PeerKind::Device { device_id: Some(device_id), .. } => device_id.as_str(),
+        _ => "",
+    };
+    shvproto::make_map!{
+        "clientId" => peer.peer_id,
+        "userName" => peer.user(),
+        "deviceId" => device_id,
+        "mountPoint" => peer.mount_point.clone().unwrap_or_default(),
+        "subscriptions" => subs,
+    }
+}
+
+async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
+    peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
+        .map(peer_to_info)
+}
+
+async fn client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> Option<rpcvalue::Map> {
+    peers.read().await.get(&peer_id).map(peer_to_info)
+}
+
+async fn subscriptions(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: PeerId) -> shvrpc::Result<Map> {
+    let peers = peers.read().await;
+    let peer = peers
+        .get(&peer_id)
+        .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?;
+    Ok(subscriptions_to_map(&peer.subscriptions))
 }
 
 #[async_trait::async_trait]
@@ -570,7 +729,7 @@ impl ShvNode for BrokerCurrentClientNode {
         BROKER_CURRENT_CLIENT_NODE_METHODS
     }
 
-    async fn children(&self, _shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, _shv_path: &str) -> Option<Vec<String>> {
         Some(vec![])
     }
 
@@ -579,21 +738,21 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_removed = self.unsubscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             METH_SUBSCRIPTIONS => {
-                let result = ctx.state.subscriptions(ctx.peer_id).await?;
+                let result = subscriptions(&self.peers, ctx.peer_id).await?;
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
-                let info = match ctx.state.client_info(ctx.peer_id).await {
+                let info = match client_info(&self.peers, ctx.peer_id).await {
                     None => { RpcValue::null() }
                     Some(info) => { RpcValue::from(info) }
                 };
@@ -601,7 +760,7 @@ impl ShvNode for BrokerCurrentClientNode {
             }
             METH_CHANGE_PASSWORD => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<old_password>", "<new_password>"]"#;
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err("Cannot change password, access database is not available.".into());
                 };
                 let rq = &frame.to_rpcmesage()?;
@@ -620,7 +779,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let Some(user_name) = ctx.state.peer_user(ctx.peer_id).await else {
+                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(Peer::user).map(ToOwned::to_owned) else {
                     return Err("Undefined user".into());
                 };
                 if user_name.starts_with("ldap:") {
@@ -629,7 +788,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 if user_name.starts_with("azure:") {
                     return Err("Can't change password, because you are logged in over Azure".into());
                 }
-                let mut access = ctx.state.access.write().await;
+                let mut access = self.access.write().await;
                 let Some(user) = access.access_user(&user_name) else {
                     return Err(format!("Invalid user: {user_name})").into());
                 };
@@ -664,8 +823,11 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
 
-                let access_level = ctx.state
-                    .access_level_for_request_params(
+                let access_level = BrokerImpl::access_level_for_request_params(
+                        &self.peers,
+                        &self.role_access_rules,
+                        &self.oauth2_user_groups,
+                        &self.access,
                         ctx.peer_id,
                         shv_path,
                         method,
@@ -682,15 +844,13 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(access_level.into()))
             }
             METH_USER_PROFILE => {
-                let peers = ctx.state.peers.read().await;
+                let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*ctx.state.access.read().await, peer);
-                let access = ctx.state.access.read().await;
-                let merged_profile = ctx.state
-                    .flatten_roles(user_roles.as_slice())
-                    .await
+                let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
+                let access = self.access.read().await;
+                let merged_profile = access.flatten_roles(user_roles.as_slice())
                     .iter()
                     .flat_map(|role| access.access_role(role))
                     .flat_map(|role| role.profile.clone())
@@ -704,17 +864,17 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&merged_profile)?))
             }
             METH_USER_ROLES => {
-                let peers = ctx.state.peers.read().await;
+                let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
                 };
-                let user_roles = user_base_roles(&*ctx.state.oauth2_user_groups.read().await, &*ctx.state.access.read().await, peer);
+                let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
 
                 if user_roles.is_empty() {
                     return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
                 }
 
-                Ok(ProcessRequestRetval::Retval(ctx.state.flatten_roles(user_roles.as_slice()).await.into()))
+                Ok(ProcessRequestRetval::Retval(self.access.read().await.flatten_roles(user_roles.as_slice()).into()))
             }
             _ => {
                 Ok(ProcessRequestRetval::MethodNotFound)
@@ -738,10 +898,15 @@ const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Fla
 const SET_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
 const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
-pub(crate) struct BrokerAccessMountsNode {}
+pub(crate) struct BrokerAccessMountsNode {
+    sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+}
 impl BrokerAccessMountsNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
+            sql_connection,
+            access,
         }
     }
 }
@@ -758,9 +923,9 @@ impl ShvNode for BrokerAccessMountsNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -769,7 +934,7 @@ impl ShvNode for BrokerAccessMountsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_mount(&ctx.node_path) {
+                match self.access.read().await.access_mount(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -779,7 +944,7 @@ impl ShvNode for BrokerAccessMountsNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -792,7 +957,7 @@ impl ShvNode for BrokerAccessMountsNode {
                     Some(Ok(mount)) => {Some(mount)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
+                let res = self.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -802,10 +967,15 @@ impl ShvNode for BrokerAccessMountsNode {
     }
 }
 
-pub(crate) struct BrokerAccessUsersNode {}
+pub(crate) struct BrokerAccessUsersNode {
+    sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+}
 impl BrokerAccessUsersNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
+            sql_connection,
+            access,
         }
     }
 }
@@ -820,9 +990,9 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.users().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.users().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -832,10 +1002,10 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
         const DEACTIVATE: bool = true;
         const ACTIVATE: bool = false;
         let process_activation_change = async |new_deactivated| {
-            let Some(sql_connection) = &ctx.state.sql_connection else {
+            let Some(sql_connection) = &self.sql_connection else {
                 return Err(make_access_ro_error().into())
             };
-            let mut access = ctx.state.access.write().await;
+            let mut access = self.access.write().await;
             let user = access.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
@@ -854,7 +1024,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_user(&ctx.node_path) {
+                match self.access.read().await.access_user(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -866,7 +1036,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             METH_DEACTIVATE => process_activation_change(DEACTIVATE).await,
             METH_ACTIVATE => process_activation_change(ACTIVATE).await,
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -883,7 +1053,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 } else {
                     None
                 };
-                let res = ctx.state.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
+                let res = self.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -893,10 +1063,17 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
     }
 }
 
-pub(crate) struct BrokerAccessRolesNode {}
+pub(crate) struct BrokerAccessRolesNode {
+    sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+}
 impl crate::shvnode::BrokerAccessRolesNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>) -> Self {
         Self {
+            sql_connection,
+            access,
+            role_access_rules,
         }
     }
 }
@@ -911,9 +1088,9 @@ impl ShvNode for BrokerAccessRolesNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.roles().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.roles().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -922,7 +1099,7 @@ impl ShvNode for BrokerAccessRolesNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_role(&ctx.node_path) {
+                match self.access.read().await.access_role(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -932,7 +1109,7 @@ impl ShvNode for BrokerAccessRolesNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -945,7 +1122,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_access_role(key.as_str(), role, &ctx.state.role_access_rules, sql_connection).await?;
+                let res = self.access.write().await.set_access_role(key.as_str(), role, &self.role_access_rules, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -955,10 +1132,15 @@ impl ShvNode for BrokerAccessRolesNode {
     }
 }
 
-pub(crate) struct BrokerAccessAllowedIpsNode {}
+pub(crate) struct BrokerAccessAllowedIpsNode {
+    sql_connection: Option<async_sqlite::Client>,
+    access: Arc<RwLock<AccessConfig>>,
+}
 impl BrokerAccessAllowedIpsNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
+            sql_connection,
+            access,
         }
     }
 }
@@ -973,9 +1155,9 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
         }
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -984,7 +1166,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match ctx.state.access.read().await.access_allowed_ips(&ctx.node_path) {
+                match self.access.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -994,7 +1176,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 }
             }
             METH_SET_VALUE => {
-                let Some(sql_connection) = &ctx.state.sql_connection else {
+                let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
@@ -1014,7 +1196,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                     Some(Ok(allowed_ips)) => {Some(allowed_ips)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = ctx.state.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
+                let res = self.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -1024,10 +1206,13 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     }
 }
 
-pub(crate) struct BrokerAccessLastLoginNode {}
+pub(crate) struct BrokerAccessLastLoginNode {
+    last_login: Arc<RwLock<LastLogin>>,
+}
 impl BrokerAccessLastLoginNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(last_login: Arc<RwLock<LastLogin>>) -> Self {
         Self {
+            last_login,
         }
     }
 }
@@ -1038,9 +1223,9 @@ impl ShvNode for BrokerAccessLastLoginNode {
         VALUE_NODE_METHODS
     }
 
-    async fn children(&self, shv_path: &str, broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(broker_state.last_login().await.0.keys().map(|m| m.to_string()).collect())
+            Some(self.last_login.read().await.get().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -1050,10 +1235,10 @@ impl ShvNode for BrokerAccessLastLoginNode {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
                 if ctx.node_path.is_empty() {
-                    return Ok(ProcessRequestRetval::Retval(ctx.state.last_login().await.0.clone().into()));
+                    return Ok(ProcessRequestRetval::Retval(self.last_login.read().await.get().clone().into()));
                 }
 
-                match ctx.state.last_login().await.0.get(&ctx.node_path) {
+                match self.last_login.read().await.get().get(&ctx.node_path) {
                     None => {
                         Err(format!("Invalid node key: {}", &ctx.node_path).into())
                     }
@@ -1073,14 +1258,19 @@ pub const SHV2_METH_APP_VERSION: &str = "appVersion";
 const SHV2_META_METH_APP_VERSION: MetaMethod = MetaMethod::new_static(SHV2_METH_APP_VERSION, Flags::IsGetter, AccessLevel::Browse, "", "", &[], "");
 const SHV2_BROKER_APP_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_APP_NAME, &SHV2_META_METH_APP_VERSION, &META_METH_APP_PING, &META_METH_SUBSCRIBE, &META_METH_UNSUBSCRIBE];
 
-pub(crate) struct Shv2BrokerAppNode {}
+pub(crate) struct Shv2BrokerAppNode {
+    peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
+    subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
+}
 impl Shv2BrokerAppNode {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, subscr_cmd_sender: UnboundedSender<SubscriptionCommand>) -> Self {
         Self {
+            peers,
+            subscr_cmd_sender,
         }
     }
 
-    async fn subscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
+    async fn subscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
         let ri_to_shv2_compat = |ri: &shvrpc::rpc::ShvRI| {
             let path = if !ri.path().ends_with("/**") {
                 format!("{path}/**", path = ri.path())
@@ -1094,13 +1284,13 @@ impl Shv2BrokerAppNode {
                 .map_err(|err| format!("Cannot convert RI '{ri}' to shv2 compatible equivalent: {err}", ri = subpar.ri.as_str()))?,
             ttl: subpar.ttl,
         };
-        let res = state.subscribe(peer_id, &subpar).await;
+        let res = subscribe(&self.peers, &self.subscr_cmd_sender, peer_id, &subpar).await;
         log!(target: "Subscr", Level::Debug, "subscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
 
-    async fn unsubscribe(peer_id: PeerId, subpar: &SubscriptionParam, state: &BrokerImpl) -> shvrpc::Result<bool> {
-        let res = state.unsubscribe(peer_id, subpar).await;
+    async fn unsubscribe(&self, peer_id: PeerId, subpar: &SubscriptionParam) -> shvrpc::Result<bool> {
+        let res = unsubscribe(&self.peers, &self.subscr_cmd_sender, peer_id, subpar).await;
         log!(target: "Subscr", Level::Debug, "unsubscribe handler for peer id: {peer_id} - {subpar}, res: {res:?}");
         res
     }
@@ -1112,7 +1302,7 @@ impl ShvNode for Shv2BrokerAppNode {
         SHV2_BROKER_APP_NODE_METHODS
     }
 
-    async fn children(&self, _shv_path: &str, _broker_state: &BrokerImpl) -> Option<Vec<String>> {
+    async fn children(&self, _shv_path: &str) -> Option<Vec<String>> {
         Some(vec![])
     }
 
@@ -1130,13 +1320,13 @@ impl ShvNode for Shv2BrokerAppNode {
             METH_SUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_added = Self::subscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_added = self.subscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_added.into()))
             }
             METH_UNSUBSCRIBE => {
                 let rq = &frame.to_rpcmesage()?;
                 let subscription = SubscriptionParam::from_rpcvalue(rq.param().unwrap_or_default())?;
-                let subs_removed = Self::unsubscribe(ctx.peer_id, &subscription, ctx.state).await?;
+                let subs_removed = self.unsubscribe(ctx.peer_id, &subscription).await?;
                 Ok(ProcessRequestRetval::Retval(subs_removed.into()))
             }
             _ => {
