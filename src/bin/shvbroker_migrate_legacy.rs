@@ -526,6 +526,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             data_directory,
             connections,
             access: shvbroker::config::AccessConfig::default(),
+            policies: shvbroker::config::Policies::default(),
             tunnelling: shvbroker::config::TunnellingConfig::default(),
             azure,
             google_auth: None,

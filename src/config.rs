@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs;
 use std::sync::Arc;
-use crate::{brokerimpl::ParsedAccessRule, sql::{TBL_ALLOWED_IPS, TBL_MOUNTS, TBL_ROLES, TBL_USERS}};
+use crate::brokerimpl::ParsedAccessRule;
+use crate::sql::{TBL_MOUNTS, TBL_POLICIES, TBL_ROLES, TBL_USERS};
 use crate::sql::update_sql;
 use log::error;
 use serde::{Serialize, Deserialize};
@@ -28,6 +29,8 @@ pub struct BrokerConfig {
     pub connections: Vec<BrokerConnectionConfig>,
     #[serde(default)]
     pub access: AccessConfig,
+    #[serde(default)]
+    pub policies: Policies,
     #[serde(default)]
     pub tunnelling: TunnellingConfig,
     #[serde(default)]
@@ -94,8 +97,6 @@ pub struct AccessConfig {
     users: BTreeMap<String, User>,
     roles: BTreeMap<String, Role>,
     mounts: BTreeMap<DeviceId, Mount>,
-    #[serde(default)]
-    allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -244,6 +245,79 @@ pub struct AccessRule {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Policy {
+    pub allowed_ip: Option<Vec<ipnet::IpNet>>,
+    #[serde(default)]
+    pub can_mount_via_device_id: bool,
+    pub allowed_mounts: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Policies(BTreeMap<String, Policy>);
+
+impl Policies {
+    pub fn new(map: BTreeMap<String, Policy>) -> Self {
+        Self(map)
+    }
+
+    pub fn get(&self) -> &BTreeMap<String, Policy> {
+        &self.0
+    }
+
+    pub fn access_policy(&self, role: &str) -> Option<&Policy> {
+        self.0.get(role)
+    }
+
+    pub async fn set_policy(&mut self, role: &str, policy: Option<Policy>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+        let sqlop = if let Some(policy) = &policy {
+            let json = serde_json::to_string(&policy).unwrap_or_else(|e| {
+                error!("Generate SQL entry error: {e}");
+                "".to_string()
+            });
+            if self.0.contains_key(role) {
+                UpdateSqlOperation::Update {table: TBL_POLICIES, id: role, json }
+            } else {
+                UpdateSqlOperation::Insert {table: TBL_POLICIES, id: role, json }
+            }
+        } else {
+            UpdateSqlOperation::Delete {table: TBL_POLICIES, id: role }
+        };
+
+        let res = update_sql(vec![sqlop], sql_connection).await?;
+
+        if let Some(policy) = policy {
+            self.0.insert(role.to_string(), policy);
+        } else {
+            self.0.remove(role);
+        }
+
+        Ok(res)
+    }
+}
+
+impl Default for Policies {
+    fn default() -> Self {
+        Self(BTreeMap::from([
+            ("device".into(), Policy {
+                allowed_ip: Default::default(),
+                can_mount_via_device_id: true,
+                allowed_mounts: Default::default(),
+            }),
+            ("client".into(), Policy {
+                allowed_ip: Default::default(),
+                can_mount_via_device_id: false,
+                allowed_mounts: ["test".to_string()].into(),
+            }),
+            ("su".into(), Policy {
+                allowed_ip: Default::default(),
+                can_mount_via_device_id: true,
+                allowed_mounts: ["test".to_string()].into(),
+            }),
+        ]))
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Mount {
     #[serde(rename = "mountPoint")]
     pub mount_point: String,
@@ -284,9 +358,8 @@ impl AccessConfig {
         users: BTreeMap<String, User>,
         roles: BTreeMap<String, Role>,
         mounts: BTreeMap<DeviceId, Mount>,
-        allowed_ips: BTreeMap<String, Vec<ipnet::IpNet>>,
     ) -> Self {
-        AccessConfig { users, roles, mounts, allowed_ips }
+        AccessConfig { users, roles, mounts }
     }
 
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
@@ -314,11 +387,7 @@ impl AccessConfig {
                 vec![UpdateSqlOperation::Insert { table: TBL_USERS, id, json }]
             }
         } else {
-            let mut res = vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }];
-            if self.allowed_ips.remove(id).is_some() {
-                res.push(UpdateSqlOperation::Delete { table: TBL_USERS, id })
-            }
-            res
+            vec![UpdateSqlOperation::Delete { table: TBL_USERS, id }]
         };
 
         let res = update_sql(sqlop, sql_connection).await?;
@@ -361,40 +430,6 @@ impl AccessConfig {
             self.mounts.insert(id.to_string(), mount);
         } else {
             self.mounts.remove(id);
-        }
-
-        Ok(res)
-    }
-
-    pub(crate) fn allowed_ips(&self) -> &BTreeMap<String, Vec<ipnet::IpNet>> {
-        &self.allowed_ips
-    }
-
-    pub(crate) fn access_allowed_ips(&self, id: &str) -> Option<&Vec<ipnet::IpNet>> {
-        self.allowed_ips.get(id)
-    }
-
-    pub(crate) async fn set_allowed_ips(&mut self, id: &str, allowed_ips: Option<Vec<ipnet::IpNet>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-        let sqlop = if let Some(allowed_ips) = &allowed_ips {
-            let json = serde_json::to_string(&allowed_ips).unwrap_or_else(|e| {
-                error!("Generate SQL self.ent error: {e}");
-                "".to_string()
-            });
-            if self.allowed_ips.contains_key(id) {
-                UpdateSqlOperation::Update {table: TBL_ALLOWED_IPS, id, json }
-            } else {
-                UpdateSqlOperation::Insert {table: TBL_ALLOWED_IPS, id, json }
-            }
-        } else {
-            UpdateSqlOperation::Delete {table: TBL_ALLOWED_IPS, id }
-        };
-
-        let res = update_sql(vec![sqlop], sql_connection).await?;
-
-        if let Some(allowed_ips) = allowed_ips {
-            self.allowed_ips.insert(id.to_string(), allowed_ips);
-        } else {
-            self.allowed_ips.remove(id);
         }
 
         Ok(res)
@@ -579,8 +614,8 @@ impl Default for BrokerConfig {
                     ("test-device".into(), Mount{ mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() }),
                     ("test-child-broker".into(), Mount{ mount_point: "test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
-                allowed_ips: Default::default(),
             },
+            policies: Policies::default(),
             tunnelling: Default::default(),
             azure: Default::default(),
             google_auth: Default::default(),

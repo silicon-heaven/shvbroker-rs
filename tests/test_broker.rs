@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::Arc;
 use assert_cmd::cargo_bin;
@@ -12,7 +13,7 @@ use shvrpc::client::ClientConfig;
 use shvrpc::{metamethod, RpcMessage};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use smol::lock::RwLock;
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen, Policy, Policies};
 use url::Url;
 use crate::common::{KillProcessGuard, ShvCallCommand, shv_call, shv_call_many};
 use shvbroker::shvnode::{METH_DIR, METH_LS, METH_NAME, METH_PING};
@@ -21,14 +22,32 @@ mod common;
 
 #[test]
 fn test_broker() -> shvrpc::Result<()> {
+    let config = BrokerConfig {
+        policies: Policies::new(BTreeMap::from([
+            ("child-broker".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/child-broker".to_string()],
+                can_mount_via_device_id: true,
+            }),
+            ("tester".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/device".to_string()],
+                can_mount_via_device_id: true,
+            }),
+        ])),
+        ..Default::default()
+    };
+    let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
+    fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
         .arg("-v").arg("=I")
+        .arg("--config").arg(cfg_fn.as_ref())
         //.arg("-v").arg("Acc")
         .spawn()?);
     thread::sleep(Duration::from_millis(100));
     assert!(broker_process_guard.is_running());
 
-    let _process_guard_3755 = {
+    let _process_guard_3756 = {
         let config = BrokerConfig {
             listen: vec![Listen { url: Url::parse("tcp://localhost:3756")? }],
             connections: vec![
@@ -50,8 +69,16 @@ fn test_broker() -> shvrpc::Result<()> {
                     },
                 }
             ],
+            policies: Policies::new(BTreeMap::from([
+                ("tester".to_string(), Policy {
+                    allowed_ip: None,
+                    allowed_mounts: vec!["test/device".to_string()],
+                    can_mount_via_device_id: true,
+                }),
+            ])),
             ..Default::default()
         };
+
         let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
         fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
         let mut process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
@@ -316,8 +343,21 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
                 },
             }
         ],
+        policies: Policies::new(BTreeMap::from([
+            ("su".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/child-device".to_string()],
+                can_mount_via_device_id: true,
+            }),
+            ("tester".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/device".to_string()],
+                can_mount_via_device_id: true,
+            }),
+        ])),
         ..Default::default()
     };
+
     let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
     fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))

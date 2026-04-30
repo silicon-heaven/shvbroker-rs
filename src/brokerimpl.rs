@@ -1,6 +1,7 @@
 use crate::config::{AccessConfig, AccessRule, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
+pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
-    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
@@ -21,7 +22,7 @@ use shvrpc::rpc::{Glob, ShvRI, SubscriptionParam};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::Tag::RevCallerIds;
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, Tag};
-use shvrpc::util::{find_longest_path_prefix, join_path, sha1_hash, split_glob_on_match};
+use shvrpc::util::{find_longest_path_prefix, join_path, sha1_hash, split_glob_on_match, starts_with_path};
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use smol_timeout::TimeoutExt;
 use url::Url;
@@ -693,6 +694,7 @@ pub struct BrokerImpl {
     session_tokens: Arc<RwLock<Vec<Session>>>,
 
     last_login: Arc<RwLock<LastLogin>>,
+    policies: Arc<RwLock<Policies>>,
 
     command_sender: UnboundedSender<BrokerCommand>,
     subscr_cmd_sender: UnboundedSender<SubscriptionCommand>,
@@ -942,6 +944,7 @@ impl BrokerImpl {
         config: SharedBrokerConfig,
         access: AccessConfig,
         last_login: LastLogin,
+        policies: Policies,
         command_sender: UnboundedSender<BrokerCommand>,
         sql_connection: Option<async_sqlite::Client>,
     ) -> Self {
@@ -954,6 +957,7 @@ impl BrokerImpl {
         let access = Arc::new(RwLock::new(access));
         let oauth2_user_groups = Arc::new(RwLock::new(Default::default()));
         let last_login = Arc::new(RwLock::new(last_login));
+        let policies = Arc::new(RwLock::new(policies));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
             mounts
                 .insert(path.into(), Mount::Node);
@@ -984,8 +988,8 @@ impl BrokerImpl {
             Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
         );
         add_node(
-            DIR_BROKER_ACCESS_ALLOWED_IPS,
-            Box::new(BrokerAccessAllowedIpsNode::new(sql_connection.clone(), access.clone())),
+            DIR_BROKER_ACCESS_POLICIES,
+            Box::new(BrokerAccessPoliciesNode::new(sql_connection.clone(), policies.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_LAST_LOGIN,
@@ -1020,6 +1024,7 @@ impl BrokerImpl {
             sql_connection,
             session_tokens: Arc::new(RwLock::default()),
             last_login,
+            policies,
         }
     }
 
@@ -1279,7 +1284,7 @@ impl BrokerImpl {
     }
 
     async fn user_is_allowed_to_login(&self, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
-        if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(user, ip_addr).await {
+        if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(peer_id, user, ip_addr).await {
             info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
             return false;
         }
@@ -1617,13 +1622,13 @@ impl BrokerImpl {
             panic!("Peer ID: {peer_id} exists already!");
         }
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
-        let effective_mount_point = match &peer_kind {
-            PeerKind::Client { .. } => None,
+        let (effective_mount_point, via_device_id) = match &peer_kind {
+            PeerKind::Client { .. } => (None, false),
             PeerKind::Broker(connection_settings) => {
                 if connection_settings.mount_point.is_empty() {
-                    None
+                    (None, false)
                 } else {
-                    Some(connection_settings.mount_point.clone())
+                    (Some(connection_settings.mount_point.clone()), false)
                 }
             }
             PeerKind::Device {
@@ -1631,11 +1636,11 @@ impl BrokerImpl {
                 mount_point,
                 ..
             } => 'find_mount: {
-                if let Some(mount_point) = mount_point
-                    && mount_point.starts_with("test/") {
-                        info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
-                        break 'find_mount Some(mount_point.clone());
-                    }
+                if let Some(mount_point) = mount_point {
+                    info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
+                    break 'find_mount (Some(mount_point.clone()), false);
+                }
+
                 if let Some(device_id) = &device_id {
                     match self.access.read().await.access_mount(device_id) {
                         None => {
@@ -1651,12 +1656,22 @@ impl BrokerImpl {
                                 "Peer id: {}, device id: {} mounted on path: '{}'",
                                 peer_id, device_id, mount_point
                             );
-                            break 'find_mount Some(mount_point);
+                            break 'find_mount (Some(mount_point), true);
                         }
                     }
                 }
-                None
+                (None, false)
             }
+        };
+
+        let peer = Peer {
+            peer_id,
+            peer_kind,
+            sender,
+            mount_point: effective_mount_point.clone(),
+            subscribe_api: None,
+            subscriptions: vec![],
+            forwarded_subscriptions: vec![],
         };
 
         if let Some(mount_point) = effective_mount_point.as_ref() {
@@ -1669,21 +1684,21 @@ impl BrokerImpl {
                     msg_for_peer: Some(format!("Can't mount on {mount_point}, because it is already mounted")),
                 });
             }
+
+            let user = peer.peer_kind.user();
+
+            if !self.mount_allowed_for_user(&peer, mount_point, via_device_id).await {
+                return Err(DisconnectPeerReason {
+                    msg: format!("peer({peer_id}): mount to '{mount_point}' not allowed for user '{user}'"),
+                    msg_for_peer: Some(format!("Mount to '{mount_point}' is not allowed")),
+                });
+            }
             info!("Mounting peer: {peer_id} at: {mount_point}");
             self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
         }
 
         self.mounts.insert(client_path, Mount::Peer(peer_id));
 
-        let peer = Peer {
-            peer_id,
-            peer_kind,
-            sender,
-            mount_point: effective_mount_point,
-            subscribe_api: None,
-            subscriptions: vec![],
-            forwarded_subscriptions: vec![],
-        };
         self.peers.write().await.insert(peer_id, peer);
         Ok(())
     }
@@ -1692,26 +1707,56 @@ impl BrokerImpl {
         self.access.read().await.access_user(user).is_some_and(|user| user.deactivated)
     }
 
-    async fn login_allowed_from_ip(&self, user: &str, ip: core::net::IpAddr) -> bool {
+    async fn login_allowed_from_ip(&self, peer_id: PeerId, user: &str, ip: core::net::IpAddr) -> bool {
+        let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
-        let Some(user_roles) = access.access_user(user).map(|u| u.roles.clone()) else {
-            return true;
-        };
 
+        let user_roles = if let Some(roles) = oauth2_user_groups.get(&peer_id) {
+            roles.clone()
+        } else {
+            access.access_user(user)
+                .map(|u| u.roles.clone())
+                .unwrap_or_default()
+        };
         let flatten_roles = access.flatten_roles(&user_roles);
 
-        let mut any_role_has_allowed_ips = false;
+        let mut any_role_has_ip_policy = false;
+        let policies = self.policies.read().await;
 
         for role_name in &flatten_roles {
-            if let Some(allowed_ips) = access.access_allowed_ips(role_name) {
-                any_role_has_allowed_ips = true;
+            if let Some(policy) = policies.access_policy(role_name) && let Some(allowed_ips) = &policy.allowed_ip {
+                any_role_has_ip_policy = true;
                 if allowed_ips.iter().any(|allowed_ip| allowed_ip.contains(&ip)) {
                     return true;
                 }
             }
         }
 
-        !any_role_has_allowed_ips
+        !any_role_has_ip_policy
+    }
+
+    async fn mount_allowed_for_user(&self, peer: &Peer, mount_point: &str, via_device_id: bool) -> bool {
+        let oauth2_user_groups = self.oauth2_user_groups.read().await;
+        let access = self.access.read().await;
+        let user_roles = user_base_roles(&oauth2_user_groups, &access, peer);
+        let flatten_roles = access.flatten_roles(&user_roles);
+        let policies = self.policies.read().await;
+
+        for role_name in &flatten_roles {
+            if let Some(policy) = policies.access_policy(role_name) {
+                if via_device_id {
+                    if policy.can_mount_via_device_id {
+                        return true;
+                    }
+                } else {
+                    if policy.allowed_mounts.iter().any(|allowed_mount| starts_with_path(mount_point, allowed_mount)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     async fn sha_password(&self, user: &str) -> Option<String> {
@@ -1745,9 +1790,14 @@ pub(crate) struct NodeRequestContext {
 mod test {
     use futures::channel::mpsc::unbounded;
     use futures::channel::oneshot;
+    use std::collections::BTreeMap;
 
     use crate::brokerimpl::BrokerCommand;
     use crate::brokerimpl::LastLogin;
+    use crate::brokerimpl::Peer;
+    use crate::brokerimpl::PeerKind;
+    use crate::brokerimpl::Policies;
+    use crate::brokerimpl::Policy;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
@@ -1790,9 +1840,14 @@ mod test {
                 deactivated: false,
             });
 
-            let mut allowed_ips = access.allowed_ips().clone();
-            allowed_ips.insert("localhost_role".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
-            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone(), allowed_ips);
+            let mut policies_map = BTreeMap::new();
+            policies_map.insert("localhost_role".to_string(), Policy {
+                allowed_ip: Some(vec!["127.0.0.1/24".parse().unwrap()]),
+                can_mount_via_device_id: false,
+                allowed_mounts: vec![],
+            });
+            let policies = Policies::new(policies_map);
+            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone());
 
             for ((user, password, ip_addr), expected_result) in [
                 (("viewer", "viewer", None), true),
@@ -1805,7 +1860,21 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), policies.clone(), command_sender, None);
+
+                let peer = Peer {
+                    peer_id: 0,
+                    peer_kind: PeerKind::Client {
+                        user: user.to_string(),
+                    },
+                    sender: unbounded().0,
+                    mount_point: None,
+                    subscribe_api: None,
+                    subscriptions: vec![],
+                    forwarded_subscriptions: vec![],
+                };
+                broker.peers.write().await.insert(0, peer);
+
                 let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
