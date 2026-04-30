@@ -699,7 +699,7 @@ fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     };
     shvproto::make_map!{
         "clientId" => peer.peer_id,
-        "userName" => peer.user(),
+        "userName" => peer.peer_kind.user(),
         "deviceId" => device_id,
         "mountPoint" => peer.mount_point.clone().unwrap_or_default(),
         "subscriptions" => subs,
@@ -779,7 +779,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(Peer::user).map(ToOwned::to_owned) else {
+                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(|peer| peer.peer_kind.user()).map(ToOwned::to_owned) else {
                     return Err("Undefined user".into());
                 };
                 if user_name.starts_with("ldap:") {
