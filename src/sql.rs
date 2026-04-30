@@ -9,7 +9,7 @@ use crate::{brokerimpl::LastLogin, config::{AccessConfig, UpdateSqlOperation}};
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";
 pub const TBL_ROLES: &str = "roles";
-pub const TBL_ALLOWED_IPS: &str = "allowed_ips";
+pub const TBL_POLICIES: &str = "policies";
 pub const TBL_LAST_LOGIN: &str = "last_login";
 
 pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Client, AccessConfig, LastLogin)> {
@@ -79,7 +79,7 @@ async fn create_access_sqlite(sql_conn: &Client, access: &AccessConfig, last_log
     save_table(sql_conn, TBL_MOUNTS, access.mounts().clone()).await?;
     save_table(sql_conn, TBL_USERS, access.users().clone()).await?;
     save_table(sql_conn, TBL_ROLES, access.roles().clone()).await?;
-    save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips().clone()).await?;
+    save_table(sql_conn, TBL_POLICIES, access.policies().clone()).await?;
     save_table(sql_conn, TBL_LAST_LOGIN, last_login.get().clone()).await?;
 
     Ok(())
@@ -140,7 +140,7 @@ async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<(AccessConfig, 
         load_table(sql_conn, TBL_USERS).await?,
         load_table(sql_conn, TBL_ROLES).await?,
         load_table(sql_conn, TBL_MOUNTS).await?,
-        load_table(sql_conn, TBL_ALLOWED_IPS).await?,
+        load_table(sql_conn, TBL_POLICIES).await?,
     );
 
     let last_login = load_table(sql_conn, TBL_LAST_LOGIN).await?

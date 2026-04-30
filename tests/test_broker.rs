@@ -21,15 +21,26 @@ mod common;
 
 #[test]
 fn test_broker() -> shvrpc::Result<()> {
+    let mut config = BrokerConfig::default();
+    config.access.policies.insert(
+        "child-broker".to_string(),
+        shvbroker::config::Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/child-broker".to_string()],
+        },
+    );
+    let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
+    fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
         .arg("-v").arg("=I")
+        .arg("--config").arg(cfg_fn.as_ref())
         //.arg("-v").arg("Acc")
         .spawn()?);
     thread::sleep(Duration::from_millis(100));
     assert!(broker_process_guard.is_running());
 
     let _process_guard_3755 = {
-        let config = BrokerConfig {
+        let mut config = BrokerConfig {
             listen: vec![Listen { url: Url::parse("tcp://localhost:3756")? }],
             connections: vec![
                 BrokerConnectionConfig {
@@ -52,6 +63,15 @@ fn test_broker() -> shvrpc::Result<()> {
             ],
             ..Default::default()
         };
+
+        config.access.policies.insert(
+            "tester".to_string(),
+            shvbroker::config::Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/device".to_string()],
+            },
+        );
+
         let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
         fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
         let mut process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))
@@ -295,7 +315,7 @@ fn check_subscription_along_property_path(property_path: &str, port: i32) -> shv
     Ok(())
 }
 fn test_child_broker_as_client() -> shvrpc::Result<()> {
-    let config = BrokerConfig {
+    let mut config = BrokerConfig {
         listen: vec![Listen { url: Url::parse("tcp://localhost:3754")? }],
         connections: vec![
             BrokerConnectionConfig {
@@ -318,6 +338,15 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
         ],
         ..Default::default()
     };
+
+    config.access.policies.insert(
+        "su".to_string(),
+        shvbroker::config::Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/child-device".to_string()],
+        },
+    );
+
     let cfg_fn = NamedTempFile::new().expect("Failed to make tempfile for the config");
     fs::write(cfg_fn.as_ref(), &serde_yaml::to_string(&config)?)?;
     let mut broker_process_guard = KillProcessGuard::new(Command::new(cargo_bin!("shvbroker"))

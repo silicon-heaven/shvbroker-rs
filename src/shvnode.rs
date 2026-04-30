@@ -13,7 +13,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use futures::channel::mpsc::UnboundedSender;
 use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
-use crate::config::AccessConfig;
+use crate::config::{AccessConfig, Policy};
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
 
@@ -341,7 +341,7 @@ pub const DIR_BROKER_CURRENT_CLIENT: &str = ".broker/currentClient";
 pub const DIR_BROKER_ACCESS_MOUNTS: &str = ".broker/access/mounts";
 pub const DIR_BROKER_ACCESS_USERS: &str = ".broker/access/users";
 pub const DIR_BROKER_ACCESS_ROLES: &str = ".broker/access/roles";
-pub const DIR_BROKER_ACCESS_ALLOWED_IPS: &str = ".broker/access/allowedIps";
+pub const DIR_BROKER_ACCESS_POLICIES: &str = ".broker/access/policies";
 pub const DIR_BROKER_ACCESS_LAST_LOGIN: &str = ".broker/access/lastLogin";
 
 pub const DIR_SHV2_BROKER_APP: &str = ".broker/app";
@@ -1132,11 +1132,11 @@ impl ShvNode for BrokerAccessRolesNode {
     }
 }
 
-pub(crate) struct BrokerAccessAllowedIpsNode {
+pub(crate) struct BrokerAccessPoliciesNode {
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
 }
-impl BrokerAccessAllowedIpsNode {
+impl BrokerAccessPoliciesNode {
     pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             sql_connection,
@@ -1146,7 +1146,7 @@ impl BrokerAccessAllowedIpsNode {
 }
 
 #[async_trait::async_trait]
-impl ShvNode for BrokerAccessAllowedIpsNode {
+impl ShvNode for BrokerAccessPoliciesNode {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod] {
         if shv_path.is_empty() {
             SET_VALUE_NODE_METHODS
@@ -1157,7 +1157,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.allowed_ips().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.policies().keys().map(|m| m.to_string()).collect())
         } else {
             Some(vec![])
         }
@@ -1166,12 +1166,12 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
     async fn process_request(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         match frame.method().unwrap_or_default() {
             METH_VALUE => {
-                match self.access.read().await.access_allowed_ips(&ctx.node_path) {
+                match self.access.read().await.access_policy(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid role: {}", &ctx.node_path).into())
                     }
-                    Some(allowed_ips) => {
-                        Ok(ProcessRequestRetval::Retval(serde_json::to_string(&allowed_ips)?.into()))
+                    Some(policy) => {
+                        Ok(ProcessRequestRetval::Retval(serde_json::to_string(&policy)?.into()))
                     }
                 }
             }
@@ -1182,21 +1182,18 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
                 let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
                 let param = param.as_list();
                 let key = param.first().ok_or("Key is missing")?;
-                let allowed_ips = param.get(1).filter(|&m| !m.is_null());
-                let allowed_ips: Option<Result<Vec<ipnet::IpNet>,_>> = allowed_ips
-                    .map(|val| val
-                        .as_list()
-                        .iter()
-                        .map(|ip| ip
-                            .as_str()
-                            .parse()
-                        ).collect::<Result<Vec<_>,_>>());
-                let allowed_ips  = match allowed_ips {
+                let policy = param.get(1).filter(|&m| !m.is_null());
+                let policy: Option<Result<Policy,_>> = policy
+                    .map(|val| {
+                        let json = val.to_cpon();
+                        serde_json::from_str(&json).map_err(|e| e.to_string())
+                    });
+                let policy  = match policy {
                     None => None,
-                    Some(Ok(allowed_ips)) => {Some(allowed_ips)}
+                    Some(Ok(policy)) => {Some(policy)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = self.access.write().await.set_allowed_ips(key.as_str(), allowed_ips, sql_connection).await?;
+                let res = self.access.write().await.set_policy(key.as_str(), policy, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

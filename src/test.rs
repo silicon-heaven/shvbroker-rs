@@ -156,7 +156,13 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
+    let (sql_connection, mut access_config, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access).await.unwrap();
+
+    access_config.set_policy("su", Some(crate::config::Policy {
+        allowed_ip: None,
+        allowed_mounts: vec!["test/device".to_string()],
+    }), &sql_connection).await.unwrap();
+
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
     let broker = BrokerImpl::new(config, access_config, last_login, broker_sender.clone(), Some(sql_connection));
