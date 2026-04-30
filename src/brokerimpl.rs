@@ -1694,11 +1694,24 @@ impl BrokerImpl {
 
     async fn login_allowed_from_ip(&self, user: &str, ip: core::net::IpAddr) -> bool {
         let access = self.access.read().await;
-        let Some(allowed_ips) = access.access_allowed_ips(user) else {
+        let Some(user_roles) = access.access_user(user).map(|u| u.roles.clone()) else {
             return true;
         };
 
-        allowed_ips.iter().any(|allowed_ip| allowed_ip.contains(&ip))
+        let flatten_roles = access.flatten_roles(&user_roles);
+
+        let mut any_role_has_allowed_ips = false;
+
+        for role_name in &flatten_roles {
+            if let Some(allowed_ips) = access.access_allowed_ips(role_name) {
+                any_role_has_allowed_ips = true;
+                if allowed_ips.iter().any(|allowed_ip| allowed_ip.contains(&ip)) {
+                    return true;
+                }
+            }
+        }
+
+        !any_role_has_allowed_ips
     }
 
     async fn sha_password(&self, user: &str) -> Option<String> {
@@ -1773,12 +1786,12 @@ mod test {
 
             users.insert("localhost_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
-                roles: Default::default(),
+                roles: vec!["localhost_role".to_string()],
                 deactivated: false,
             });
 
             let mut allowed_ips = access.allowed_ips().clone();
-            allowed_ips.insert("localhost_user".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
+            allowed_ips.insert("localhost_role".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
             let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone(), allowed_ips);
 
             for ((user, password, ip_addr), expected_result) in [
