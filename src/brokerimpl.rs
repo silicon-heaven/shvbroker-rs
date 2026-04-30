@@ -143,10 +143,11 @@ pub enum PeerKind {
 }
 
 impl PeerKind {
-    pub fn user(&self) -> Option<&String> {
+    pub fn user(&self) -> &str {
         match self {
-            PeerKind::Client { user } | PeerKind::Device { user, .. } => Some(user),
-            PeerKind::Broker(_) => None,
+            PeerKind::Client { user, .. } => user,
+            PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
+            PeerKind::Device { user, .. } => user,
         }
     }
 }
@@ -1327,13 +1328,11 @@ impl BrokerImpl {
                 sender,
             } => {
                 let user = peer_kind.user();
-                let previous_login = if let Some(user) = user {
-                    self.last_login.write().await.set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref()).await.inspect_err(|err| {
-                        log::error!("Unable to set last_login for {user}: {err}");
-                    }).ok()
-                } else {
-                    None
-                };
+                let previous_login = self.last_login.write().await
+                    .set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref())
+                    .await
+                    .inspect_err(|err| log::error!("Unable to set last_login for {user}: {err}"))
+                    .ok();
                 debug!("New peer, id: {new_peer_id}, user: {user:?}, last_login: {previous_login:?}");
                 let peer_add_result = self.add_peer(new_peer_id, peer_kind, sender.clone()).await;
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
