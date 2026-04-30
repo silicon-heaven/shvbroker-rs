@@ -124,13 +124,28 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let (ca_crt_path, server_crt_path, server_key_path) = generate_test_cert_files().expect("Cannot generate test certificates");
 
-    let parent_broker_config = BrokerConfig {
+    let mut parent_broker_config = BrokerConfig {
         listen: vec![
             Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).unwrap() },
             Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).unwrap() },
         ],
         ..Default::default()
     };
+
+    parent_broker_config.access.policies.insert(
+        "su".to_string(),
+        shvbroker::config::Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/child-broker".to_string()],
+        },
+    );
+    parent_broker_config.access.policies.insert(
+        "child-broker".to_string(),
+        shvbroker::config::Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/child-broker".to_string()],
+        },
+    );
 
     let child_broker_config = BrokerConfig {
         listen: vec![

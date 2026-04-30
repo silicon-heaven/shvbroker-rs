@@ -1,6 +1,6 @@
 use crate::config::{AccessConfig, AccessRule, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 use crate::shvnode::{
-    AppNode, BrokerAccessAllowedIpsNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_ALLOWED_IPS, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
@@ -984,8 +984,8 @@ impl BrokerImpl {
             Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
         );
         add_node(
-            DIR_BROKER_ACCESS_ALLOWED_IPS,
-            Box::new(BrokerAccessAllowedIpsNode::new(sql_connection.clone(), access.clone())),
+            DIR_BROKER_ACCESS_POLICIES,
+            Box::new(BrokerAccessPoliciesNode::new(sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_LAST_LOGIN,
@@ -1279,7 +1279,7 @@ impl BrokerImpl {
     }
 
     async fn user_is_allowed_to_login(&self, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
-        if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(user, ip_addr).await {
+        if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(peer_id, user, ip_addr).await {
             info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
             return false;
         }
@@ -1659,6 +1659,16 @@ impl BrokerImpl {
             }
         };
 
+        let peer = Peer {
+            peer_id,
+            peer_kind,
+            sender,
+            mount_point: effective_mount_point.clone(),
+            subscribe_api: None,
+            subscriptions: vec![],
+            forwarded_subscriptions: vec![],
+        };
+
         if let Some(mount_point) = effective_mount_point.as_ref() {
             if let Some(mount) = self.mounts.get(mount_point) {
                 return Err(DisconnectPeerReason {
@@ -1669,21 +1679,21 @@ impl BrokerImpl {
                     msg_for_peer: Some(format!("Can't mount on {mount_point}, because it is already mounted")),
                 });
             }
+
+            let user = peer.peer_kind.user();
+
+            if !self.mount_allowed_for_user(&peer, mount_point).await {
+                return Err(DisconnectPeerReason {
+                    msg: format!("peer({peer_id}): mount to '{mount_point}' not allowed for user '{user}'"),
+                    msg_for_peer: Some(format!("Mount to '{mount_point}' is not allowed")),
+                });
+            }
             info!("Mounting peer: {peer_id} at: {mount_point}");
             self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
         }
 
         self.mounts.insert(client_path, Mount::Peer(peer_id));
 
-        let peer = Peer {
-            peer_id,
-            peer_kind,
-            sender,
-            mount_point: effective_mount_point,
-            subscribe_api: None,
-            subscriptions: vec![],
-            forwarded_subscriptions: vec![],
-        };
         self.peers.write().await.insert(peer_id, peer);
         Ok(())
     }
@@ -1692,26 +1702,46 @@ impl BrokerImpl {
         self.access.read().await.access_user(user).is_some_and(|user| user.deactivated)
     }
 
-    async fn login_allowed_from_ip(&self, user: &str, ip: core::net::IpAddr) -> bool {
+    async fn login_allowed_from_ip(&self, peer_id: PeerId, user: &str, ip: core::net::IpAddr) -> bool {
+        let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
-        let Some(user_roles) = access.access_user(user).map(|u| u.roles.clone()) else {
-            return true;
-        };
 
+        let user_roles = if let Some(roles) = oauth2_user_groups.get(&peer_id) {
+            roles.clone()
+        } else {
+            access.access_user(user)
+                .map(|u| u.roles.clone())
+                .unwrap_or_default()
+        };
         let flatten_roles = access.flatten_roles(&user_roles);
 
-        let mut any_role_has_allowed_ips = false;
+        let mut any_role_has_ip_policy = false;
 
         for role_name in &flatten_roles {
-            if let Some(allowed_ips) = access.access_allowed_ips(role_name) {
-                any_role_has_allowed_ips = true;
+            if let Some(policy) = access.access_policy(role_name) && let Some(allowed_ips) = &policy.allowed_ip {
+                any_role_has_ip_policy = true;
                 if allowed_ips.iter().any(|allowed_ip| allowed_ip.contains(&ip)) {
                     return true;
                 }
             }
         }
 
-        !any_role_has_allowed_ips
+        !any_role_has_ip_policy
+    }
+
+    async fn mount_allowed_for_user(&self, peer: &Peer, mount_point: &str) -> bool {
+        let oauth2_user_groups = self.oauth2_user_groups.read().await;
+        let access = self.access.read().await;
+        let user_roles = user_base_roles(&oauth2_user_groups, &access, peer);
+        let flatten_roles = access.flatten_roles(&user_roles);
+
+        for role_name in &flatten_roles {
+            if let Some(policy) = access.access_policy(role_name) && policy.allowed_mounts.contains(&mount_point.to_string()) {
+                return true;
+            }
+        }
+
+        false
     }
 
     async fn sha_password(&self, user: &str) -> Option<String> {
@@ -1748,10 +1778,13 @@ mod test {
 
     use crate::brokerimpl::BrokerCommand;
     use crate::brokerimpl::LastLogin;
+    use crate::brokerimpl::Peer;
+    use crate::brokerimpl::PeerKind;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
     use crate::config::Password;
+    use crate::config::Policy;
     use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     smol_macros::test! {
@@ -1790,9 +1823,12 @@ mod test {
                 deactivated: false,
             });
 
-            let mut allowed_ips = access.allowed_ips().clone();
-            allowed_ips.insert("localhost_role".to_string(), vec!["127.0.0.1/24".parse().unwrap()]);
-            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone(), allowed_ips);
+            let mut policies = access.policies().clone();
+            policies.insert("localhost_role".to_string(), Policy {
+                allowed_ip: Some(vec!["127.0.0.1/24".parse().unwrap()]),
+                allowed_mounts: vec![],
+            });
+            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone(), policies);
 
             for ((user, password, ip_addr), expected_result) in [
                 (("viewer", "viewer", None), true),
@@ -1806,6 +1842,20 @@ mod test {
             ] {
                 let (command_sender, _) = unbounded();
                 let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), command_sender, None);
+
+                let peer = Peer {
+                    peer_id: 0,
+                    peer_kind: PeerKind::Client {
+                        user: user.to_string(),
+                    },
+                    sender: unbounded().0,
+                    mount_point: None,
+                    subscribe_api: None,
+                    subscriptions: vec![],
+                    forwarded_subscriptions: vec![],
+                };
+                broker.peers.write().await.insert(0, peer);
+
                 let (sender, mut reader) = oneshot::channel();
                 broker.process_broker_command(BrokerCommand::CheckAuth {
                     sender,
