@@ -376,9 +376,9 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.34.0"
+version = "0.34.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb26fbd2a93308b1c1b74ac4e494a11ac10db57c476882240573bdf961463520"
+checksum = "8447f02eaa65412035e2d3eeaa3fc82bbb8d7137c84c5976b4af685136012ee9"
 dependencies = [
  "atomic-waker",
  "futures-core",
@@ -3208,7 +3208,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shvbroker"
-version = "3.27.4"
+version = "3.27.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3249,9 +3249,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "5.0.2"
+version = "5.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f43ad3fdbd8854bd73629b8b0a65323e17fcf86e3f822b59adb57b2e83ddc53"
+checksum = "ccdd09db89db3bcc187a649e60a8603c07f1079a778e3f110a2dcc92178d0482"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -3272,9 +3272,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.1.7"
+version = "6.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ac04d11293ff69b112c75c987f1c819f0989ff3a1367780ea36523e5a1f533f"
+checksum = "9ac2a51491d3858042300542beaede161ff4050df5689a7c70181f6d68d9fa2a"
 dependencies = [
  "chrono",
  "clap",

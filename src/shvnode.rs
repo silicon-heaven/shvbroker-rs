@@ -936,7 +936,7 @@ impl ShvNode for BrokerAccessMountsNode {
             METH_VALUE => {
                 match self.access.read().await.access_mount(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(mount) => {
                         Ok(ProcessRequestRetval::Retval(mount.to_rpcvalue()?))
@@ -1009,11 +1009,11 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             let user = access.access_user(&ctx.node_path).cloned();
             match user {
                 None => {
-                    Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                    Err(format!("Invalid node key: {}", ctx.node_path).into())
                 }
                 Some(mut user) => {
                     if user.deactivated == new_deactivated {
-                        return Err(format!("User {username} already {what}", username = &ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
+                        return Err(format!("User {username} already {what}", username = ctx.node_path, what = if new_deactivated { "deactivated" } else { "activated" }).into());
                     }
                     user.deactivated = new_deactivated;
                     let res = access.set_access_user(&ctx.node_path, Some(user), sql_connection).await?;
@@ -1026,7 +1026,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             METH_VALUE => {
                 match self.access.read().await.access_user(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(user) => {
                         Ok(ProcessRequestRetval::Retval(user.to_rpcvalue()?))
@@ -1101,7 +1101,7 @@ impl ShvNode for BrokerAccessRolesNode {
             METH_VALUE => {
                 match self.access.read().await.access_role(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(role) => {
                         Ok(ProcessRequestRetval::Retval(role.to_rpcvalue()?))
@@ -1168,7 +1168,7 @@ impl ShvNode for BrokerAccessAllowedIpsNode {
             METH_VALUE => {
                 match self.access.read().await.access_allowed_ips(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(allowed_ips) => {
                         Ok(ProcessRequestRetval::Retval(serde_json::to_string(&allowed_ips)?.into()))
@@ -1240,7 +1240,7 @@ impl ShvNode for BrokerAccessLastLoginNode {
 
                 match self.last_login.read().await.get().get(&ctx.node_path) {
                     None => {
-                        Err(format!("Invalid node key: {}", &ctx.node_path).into())
+                        Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(dt) => {
                         Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&dt)?))
