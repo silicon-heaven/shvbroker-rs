@@ -130,6 +130,6 @@ fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<
     // }
     let mut config = config.clone();
     config.access = access.clone();
-    println!("{}", &serde_yaml::to_string(&config)?);
+    println!("{}", serde_yaml::to_string(&config)?);
     Ok(())
 }

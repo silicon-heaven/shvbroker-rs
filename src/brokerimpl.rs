@@ -1633,7 +1633,7 @@ impl BrokerImpl {
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point
                     && mount_point.starts_with("test/") {
-                        info!("Peer id: {} mounted on path: '{}'", peer_id, &mount_point);
+                        info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
                         break 'find_mount Some(mount_point.clone());
                     }
                 if let Some(device_id) = &device_id {
@@ -1649,7 +1649,7 @@ impl BrokerImpl {
                             let mount_point = mount.mount_point.clone();
                             info!(
                                 "Peer id: {}, device id: {} mounted on path: '{}'",
-                                peer_id, device_id, &mount_point
+                                peer_id, device_id, mount_point
                             );
                             break 'find_mount Some(mount_point);
                         }

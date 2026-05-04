@@ -725,7 +725,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_
     } else if frame.is_signal() || frame.is_response() {
         broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
     } else {
-        warn!("Invalid frame type received: {}", &frame);
+        warn!("Invalid frame type received: {}", frame);
     }
     Ok(())
 }
@@ -1187,7 +1187,7 @@ async fn broker_as_client_peer_loop(
 ) -> shvrpc::Result<()>
 {
     let heartbeat_interval = login_params.heartbeat_interval;
-    info!("Heartbeat interval set to: {:?}", &heartbeat_interval);
+    info!("Heartbeat interval set to: {:?}", heartbeat_interval);
 
     let login_timeout = async move {
         const LOGIN_TIMEOUT: u64 = 10;
