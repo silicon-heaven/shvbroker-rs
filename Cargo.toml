@@ -18,7 +18,7 @@ can = ["dep:socketcan", "shvrpc/can"]
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.2"
-shvclient = { version = "5.1.2", features = ["smol"] }
+shvclient = { version = "5.1.3", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.36"
 anyhow = "1.0.102"
