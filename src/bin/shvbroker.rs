@@ -100,14 +100,14 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
-    let (access, last_login, sql_connection) = if config.use_access_db {
+    let (access, policies, last_login, sql_connection) = if config.use_access_db {
         let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
         info!("Data directory: {}", data_dir);
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
-        let (sql_connection, access_config, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access))?;
-        (access_config, last_login, Some(sql_connection))
+        let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies))?;
+        (access_config, policies, last_login, Some(sql_connection))
     } else {
-        (config.access.clone(), LastLogin::default(), None)
+        (config.access.clone(), config.policies.clone(), LastLogin::default(), None)
     };
     if cli_opts.print_config {
         print_config(&config, &access)?;
@@ -119,7 +119,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Err("Googgle auth is configured but not part of this build!".into());
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
-    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, command_sender, sql_connection);
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection);
     smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
 }
 

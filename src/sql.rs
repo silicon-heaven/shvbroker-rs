@@ -4,19 +4,19 @@ use log::{debug, info};
 use async_sqlite::{ClientBuilder, Client};
 use shvproto::RpcValue;
 
-use crate::{brokerimpl::LastLogin, config::{AccessConfig, UpdateSqlOperation}};
+use crate::{brokerimpl::LastLogin, config::{AccessConfig, Policies, UpdateSqlOperation}};
 
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";
 pub const TBL_ROLES: &str = "roles";
-pub const TBL_ALLOWED_IPS: &str = "allowed_ips";
+pub const TBL_POLICIES: &str = "policies";
 pub const TBL_LAST_LOGIN: &str = "last_login";
 
-pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig) -> shvrpc::Result<(Client, AccessConfig, LastLogin)> {
+pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig, policies: &Policies) -> shvrpc::Result<(Client, AccessConfig, Policies, LastLogin)> {
     info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
-    let (sql_connection, db_is_empty) = if sql_config_file == ":memory:" {
+    let sql_connection = if sql_config_file == ":memory:" {
         // In memoty database is the default.
-        (ClientBuilder::new().open().await?, true)
+        ClientBuilder::new().open().await?
     } else {
         if let Some(path) = sql_config_file.parent() {
             fs::create_dir_all(path)?;
@@ -38,51 +38,41 @@ pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &Acces
             Ok(())
         }).await?;
 
-        (sql_connection, !db_file_exists)
+        sql_connection
     };
-    let (access_config, last_login) = init_access_db(&sql_connection, db_is_empty, access).await?;
+    let (access_config, policies, last_login) = load_access_sqlite(&sql_connection, access, policies, &LastLogin::default()).await?;
 
-    Ok((sql_connection, access_config, last_login))
+    Ok((sql_connection, access_config, policies, last_login))
 }
 
-async fn init_access_db(sql_connection: &Client, db_is_empty: bool, access: &AccessConfig) -> shvrpc::Result<(AccessConfig, LastLogin)> {
-    let loaded_data = if db_is_empty {
-        let last_login = LastLogin::default();
-        create_access_sqlite(sql_connection, access, &last_login).await?;
-        (access.clone(), last_login)
-    } else {
-        load_access_sqlite(sql_connection).await?
-    };
-    Ok(loaded_data)
-}
+async fn ensure_table_exists<TableElementType: serde::Serialize + Send + 'static>(sql_conn: &Client, tbl_name: &'static str, default_items: BTreeMap<String, TableElementType>) -> shvrpc::Result<()> {
+    sql_conn.conn_and_then(move |sql_conn| {
+        let result = sql_conn.query_row(&format!(r#"
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                AND name = '{tbl_name}';
+            "#), [], |_| Ok(()));
 
-async fn create_access_sqlite(sql_conn: &Client, access: &AccessConfig, last_login: &LastLogin) -> shvrpc::Result<()> {
-    async fn save_table<TableElementType: serde::Serialize + Send + 'static>(sql_conn: &Client, tbl_name: &'static str, items: BTreeMap<String, TableElementType>) -> shvrpc::Result<()> {
-        sql_conn.conn_and_then(move |sql_conn| {
-            sql_conn.execute(&format!(r#"
+        if result.is_ok() {
+            return Ok(());
+        }
+
+        sql_conn.execute(&format!(r#"
                 CREATE TABLE {tbl_name} (
                     id character varying PRIMARY KEY,
                     def character varying
                 );
             "#), [])?;
-            let query = format!(r#"INSERT INTO {tbl_name} (id, def) VALUES (?1, ?2);"#);
-            let mut stmt = sql_conn.prepare(&query)?;
-            for (id, def) in items {
-                debug!("Inserting {id} into {tbl_name}");
-                stmt.execute((id, serde_json::to_string(&def)?))?;
-            }
-            Ok(())
-        }).await
-    }
 
-    info!("Creating SQLite access db");
-    save_table(sql_conn, TBL_MOUNTS, access.mounts().clone()).await?;
-    save_table(sql_conn, TBL_USERS, access.users().clone()).await?;
-    save_table(sql_conn, TBL_ROLES, access.roles().clone()).await?;
-    save_table(sql_conn, TBL_ALLOWED_IPS, access.allowed_ips().clone()).await?;
-    save_table(sql_conn, TBL_LAST_LOGIN, last_login.get().clone()).await?;
-
-    Ok(())
+        let query = format!(r#"INSERT INTO {tbl_name} (id, def) VALUES (?1, ?2);"#);
+        let mut stmt = sql_conn.prepare(&query)?;
+        for (id, def) in default_items {
+            debug!("Inserting {id} into {tbl_name}");
+            stmt.execute((id, serde_json::to_string(&def)?))?;
+        }
+        Ok(())
+    }).await
 }
 
 pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
@@ -108,16 +98,12 @@ pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection
         .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
 }
 
-async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<(AccessConfig, LastLogin)> {
-    async fn load_table<TableElementType: for <'a> serde::Deserialize<'a> + 'static + Send>(sql_conn: &Client, table_name: &'static str) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
+async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, default_policies: &Policies, default_last_login: &LastLogin) -> shvrpc::Result<(AccessConfig, Policies, LastLogin)> {
+    async fn load_table<TableElementType: serde::Serialize + for <'a> serde::Deserialize<'a> + 'static + Send>(sql_conn: &Client, table_name: &'static str, default_items: BTreeMap<String, TableElementType>) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
+        ensure_table_exists(sql_conn, table_name, default_items)
+            .await
+            .map_err(|err| err.to_string())?;
         sql_conn.conn_and_then(move |sql_conn| {
-            sql_conn.execute(&format!(r#"
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    id character varying PRIMARY KEY,
-                    def character varying
-                );
-            "#), [])
-                .map_err(|err| err.to_string())?;
 
             let mut stmt = sql_conn.prepare(&format!("SELECT id, def FROM {table_name}"))?;
             let rows = stmt.query([])?;
@@ -137,18 +123,19 @@ async fn load_access_sqlite(sql_conn: &Client) -> shvrpc::Result<(AccessConfig, 
     }
 
     let access = AccessConfig::new(
-        load_table(sql_conn, TBL_USERS).await?,
-        load_table(sql_conn, TBL_ROLES).await?,
-        load_table(sql_conn, TBL_MOUNTS).await?,
-        load_table(sql_conn, TBL_ALLOWED_IPS).await?,
+        load_table(sql_conn, TBL_USERS, default_access.users().clone()).await?,
+        load_table(sql_conn, TBL_ROLES, default_access.roles().clone()).await?,
+        load_table(sql_conn, TBL_MOUNTS, default_access.mounts().clone()).await?,
     );
 
-    let last_login = load_table(sql_conn, TBL_LAST_LOGIN).await?
+    let policies = Policies::new(load_table(sql_conn, TBL_POLICIES, default_policies.get().clone()).await?);
+
+    let last_login = load_table(sql_conn, TBL_LAST_LOGIN, default_last_login.get().iter().map(|(key, val)| (key.clone(), val.to_iso_string())).collect()).await?
         .into_iter()
         .filter_map(|(key, val): (String, String)|{
             let date_time = shvproto::DateTime::from_iso_str(&val).inspect_err(|err| log::error!("Couldn't parse last_login datetime string: {err}")).ok();
             date_time.map(|date_time| (key, date_time))
         }).collect();
 
-    Ok((access, LastLogin::new(last_login)))
+    Ok((access, policies, LastLogin::new(last_login)))
 }

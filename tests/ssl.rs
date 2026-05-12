@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -6,8 +7,8 @@ use const_format::formatcp;
 use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
-use shvbroker::brokerimpl::{BrokerImpl, LastLogin, run_broker};
-use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen};
+use shvbroker::brokerimpl::{BrokerImpl, LastLogin, Policies, run_broker};
+use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen, Policy};
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
 use shvrpc::client::ClientConfig;
@@ -30,10 +31,11 @@ const CHILD_BROKER_LISTEN_URL: &str = formatcp!("tcp://{CHILD_BROKER_ADDRESS}");
 
 async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let access_config = broker_config.access.clone();
+    let policies = broker_config.policies.clone();
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), broker_sender, None), broker_receiver)
+        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
             .await
             .expect("broker accept_loop failed")
     }).detach();
@@ -129,6 +131,18 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
             Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).unwrap() },
             Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).unwrap() },
         ],
+        policies: Policies::new(BTreeMap::from([
+            ("su".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/child-broker".to_string()],
+                can_mount_via_device_id: true,
+            }),
+            ("child-broker".to_string(), Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["test/child-broker".to_string()],
+                can_mount_via_device_id: true,
+            }),
+        ])),
         ..Default::default()
     };
 
