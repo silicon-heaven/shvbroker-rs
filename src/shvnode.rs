@@ -890,14 +890,16 @@ pub const METH_VALUE: &str = "value";
 pub const METH_SET_VALUE: &str = "setValue";
 pub const METH_DEACTIVATE: &str = "deactivate";
 pub const METH_ACTIVATE: &str = "activate";
+pub const METH_SET_EXPIRATION: &str = "setExpiration";
 
 const META_METH_VALUE: MetaMethod = MetaMethod::new_static(METH_VALUE, Flags::empty(), AccessLevel::Superuser, "void", "Map", &[], "");
 const META_METH_SET_VALUE: MetaMethod = MetaMethod::new_static(METH_SET_VALUE, Flags::empty(), AccessLevel::Superuser, "[String, Map | Null]", "void", &[], "");
 const META_METH_DEACTIVATE: MetaMethod = MetaMethod::new_static(METH_DEACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
 const META_METH_ACTIVATE: MetaMethod = MetaMethod::new_static(METH_ACTIVATE, Flags::empty(), AccessLevel::Superuser, "Null", "void", &[], "");
+const META_METH_SET_EXPIRATION: MetaMethod = MetaMethod::new_static(METH_SET_EXPIRATION, Flags::empty(), AccessLevel::Superuser, "DateTime | Null", "void", &[], "");
 const SET_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_SET_VALUE];
 const VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE];
-const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE];
+const USER_ACCESS_VALUE_NODE_METHODS: &[&MetaMethod] = &[&META_METHOD_PRIVATE_DIR, &META_METHOD_PRIVATE_LS, &META_METH_VALUE, &META_METH_ACTIVATE, &META_METH_DEACTIVATE, &META_METH_SET_EXPIRATION];
 pub(crate) struct BrokerAccessMountsNode {
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
@@ -1035,6 +1037,22 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
             }
             METH_DEACTIVATE => process_activation_change(DEACTIVATE).await,
             METH_ACTIVATE => process_activation_change(ACTIVATE).await,
+            METH_SET_EXPIRATION => {
+                let Some(sql_connection) = &self.sql_connection else {
+                    return Err(make_access_ro_error().into())
+                };
+                let mut access = self.access.write().await;
+                let user = access.access_user(&ctx.node_path).cloned();
+                match user {
+                    None => Err(format!("Invalid node key: {}", ctx.node_path).into()),
+                    Some(mut user) => {
+                        let param = frame.to_rpcmesage()?.param().cloned();
+                        user.expires = param.and_then(|p| p.to_datetime());
+                        access.set_access_user(&ctx.node_path, Some(user), sql_connection).await?;
+                        Ok(ProcessRequestRetval::Retval(RpcValue::from(())))
+                    }
+                }
+            }
             METH_SET_VALUE => {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())

@@ -36,7 +36,7 @@ fn load_users(conn: &Connection) -> Result<BTreeMap<String, User>> {
             .filter(|s| !s.is_empty())
             .collect();
 
-        users.insert(name, User { password, roles, deactivated: false });
+        users.insert(name, User { password, roles, deactivated: false, expires: None });
     }
 
     Ok(users)
