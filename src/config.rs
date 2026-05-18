@@ -39,6 +39,12 @@ pub struct BrokerConfig {
     pub google_auth: Option<GoogleAuthConfig>,
     #[serde(default = "default_trusted_user_ids_role")]
     pub trusted_user_ids_role: String,
+    #[serde(default = "default_deactivate_after_days")]
+    pub deactivate_after_days: u32,
+}
+
+fn default_deactivate_after_days() -> u32 {
+    365
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -116,6 +122,8 @@ pub struct User {
     pub deactivated: bool,
     #[serde(default)]
     pub expires: Option<shvproto::DateTime>,
+    #[serde(default)]
+    pub deactivated_reason: Option<String>,
 }
 
 impl User {
@@ -129,6 +137,7 @@ impl User {
             roles: user.roles,
             deactivated: false,
             expires: None,
+            deactivated_reason: None,
         })
     }
 }
@@ -540,6 +549,7 @@ impl Default for BrokerConfig {
             shv2_compatibility: false,
             time_broadcast: false,
             data_directory: None,
+            deactivate_after_days: 365,
             connections: vec![
                 BrokerConnectionConfig {
                     name: "TCP-to-parent-broker".to_string(),
@@ -551,13 +561,13 @@ impl Default for BrokerConfig {
             ],
             access: AccessConfig {
                 users: BTreeMap::from([
-                    ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false, expires: None }),
-                    ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false, expires: None }),
-                    ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false, expires: None }),
-                    ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None }),
-                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false, expires: None }),
-                    ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false, expires: None }),
-                    ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None }),
+                    ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+                    ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+                    ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+                    ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false, expires: None, deactivated_reason: None }),
+                    ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+                    ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                 ]),
                 roles: BTreeMap::from([
                     ("su".to_string(), Role {
