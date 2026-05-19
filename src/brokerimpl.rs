@@ -1293,6 +1293,11 @@ impl BrokerImpl {
             return false;
         }
 
+        if self.user_expired(user).await {
+            info!("peer_id({peer_id}): login disallowed, because the user ({user}) has expired");
+            return false;
+        }
+
         true
     }
 
@@ -1707,6 +1712,12 @@ impl BrokerImpl {
         self.access.read().await.access_user(user).is_some_and(|user| user.deactivated)
     }
 
+    async fn user_expired(&self, user: &str) -> bool {
+        self.access.read().await.access_user(user).is_some_and(|user| {
+            user.expires.is_some_and(|expires| DateTime::now() > expires)
+        })
+    }
+
     async fn login_allowed_from_ip(&self, peer_id: PeerId, user: &str, ip: core::net::IpAddr) -> bool {
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
@@ -1832,12 +1843,14 @@ mod test {
                 password: Password::Plain("some_pw".to_string()),
                 roles: Default::default(),
                 deactivated: true,
+                expires: None,
             });
 
             users.insert("localhost_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
                 roles: vec!["localhost_role".to_string()],
                 deactivated: false,
+                expires: None,
             });
 
             let mut policies_map = BTreeMap::new();
