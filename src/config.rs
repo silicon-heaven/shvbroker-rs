@@ -37,7 +37,7 @@ pub struct BrokerConfig {
     pub azure: Option<AzureConfig>,
     #[serde(default)]
     pub google_auth: Option<GoogleAuthConfig>,
-    #[serde(default = "default_exported_root_user")]
+    #[serde(default = "default_trusted_user_ids_role")]
     pub trusted_user_ids_role: String,
 }
 
@@ -69,6 +69,10 @@ pub struct TunnellingConfig {
 
 fn default_exported_root_user() -> String {
     "broker".to_string()
+}
+
+fn default_trusted_user_ids_role() -> String {
+    "trustUserId".to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -574,6 +578,11 @@ impl Default for BrokerConfig {
                     }),
                     ("child-broker".to_string(), Role {
                         roles: vec!["device".to_string()],
+                        access: vec![],
+                        profile: None,
+                    }),
+                    ("trustUserId".to_string(), Role {
+                        roles: vec![],
                         access: vec![],
                         profile: None,
                     }),
