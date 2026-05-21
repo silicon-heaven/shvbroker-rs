@@ -1627,13 +1627,13 @@ impl BrokerImpl {
             panic!("Peer ID: {peer_id} exists already!");
         }
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
-        let (effective_mount_point, via_device_id) = match &peer_kind {
-            PeerKind::Client { .. } => (None, false),
+        let (effective_mount_point, via_device_id, is_broker_as_client_mount) = match &peer_kind {
+            PeerKind::Client { .. } => (None, false, false),
             PeerKind::Broker(connection_settings) => {
                 if connection_settings.mount_point.is_empty() {
-                    (None, false)
+                    (None, false, false)
                 } else {
-                    (Some(connection_settings.mount_point.clone()), false)
+                    (Some(connection_settings.mount_point.clone()), false, true)
                 }
             }
             PeerKind::Device {
@@ -1643,7 +1643,7 @@ impl BrokerImpl {
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point {
                     info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
-                    break 'find_mount (Some(mount_point.clone()), false);
+                    break 'find_mount (Some(mount_point.clone()), false, false);
                 }
 
                 if let Some(device_id) = &device_id {
@@ -1661,11 +1661,11 @@ impl BrokerImpl {
                                 "Peer id: {}, device id: {} mounted on path: '{}'",
                                 peer_id, device_id, mount_point
                             );
-                            break 'find_mount (Some(mount_point), true);
+                            break 'find_mount (Some(mount_point), true, false);
                         }
                     }
                 }
-                (None, false)
+                (None, false, false)
             }
         };
 
@@ -1692,7 +1692,7 @@ impl BrokerImpl {
 
             let user = peer.peer_kind.user();
 
-            if !self.mount_allowed_for_user(&peer, mount_point, via_device_id).await {
+            if !is_broker_as_client_mount && !self.mount_allowed_for_user(&peer, mount_point, via_device_id).await {
                 return Err(DisconnectPeerReason {
                     msg: format!("peer({peer_id}): mount to '{mount_point}' not allowed for user '{user}'"),
                     msg_for_peer: Some(format!("Mount to '{mount_point}' is not allowed")),
