@@ -36,7 +36,7 @@ shvrpc = { version = "16.0.0", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.32"
-log = "0.4.21"
+log = "0.4.30"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 duration-str = "0.21"
 rand = "0.10.1"
