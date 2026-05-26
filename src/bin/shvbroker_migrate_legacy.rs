@@ -36,7 +36,7 @@ fn load_users(conn: &Connection) -> Result<BTreeMap<String, User>> {
             .filter(|s| !s.is_empty())
             .collect();
 
-        users.insert(name, User { password, roles, deactivated: false, expires: None });
+        users.insert(name, User { password, roles, deactivated: false, expires: None, deactivated_reason: None });
     }
 
     Ok(users)
@@ -531,6 +531,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             azure,
             google_auth: None,
             trusted_user_ids_role: "broker".to_string(),
+            deactivate_after_days: 365,
         }
     }
 }

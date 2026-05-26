@@ -338,6 +338,64 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
             log::debug!("periodic sync task finished");
         })
     };
+
+    let deactivate_inactive_users_task = {
+        let config = broker.config.clone();
+        let access = broker.access.clone();
+        let last_login = broker.last_login.clone();
+        let sql_connection = broker.sql_connection.clone();
+
+        smol::spawn(async move {
+            let start = Instant::now();
+            let mut interval = futures::FutureExt::fuse(smol::Timer::interval_at(start, Duration::from_hours(24)));
+            loop {
+                select! {
+                    _ = interval => {
+                        let deactivate_after_days = config.deactivate_after_days;
+                        if deactivate_after_days == 0 {
+                            continue;
+                        }
+                        let threshold = shvproto::DateTime::now().add_days(-(deactivate_after_days as i64));
+                        let last_login_map = last_login.read().await.get().clone();
+                        let mut access = access.write().await;
+                        let users_to_deactivate: Vec<_> = access.users().iter()
+                            .filter_map(|(user_id, user)| {
+                                if user.deactivated {
+                                    return None;
+                                }
+
+                                let last_login_time = last_login_map.get(user_id)?;
+
+                                if *last_login_time >= threshold {
+                                    return None;
+                                }
+
+                                Some(user_id.clone())
+                            }).collect();
+
+                        if !users_to_deactivate.is_empty() {
+                            if let Some(sql_conn) = sql_connection.as_ref() {
+                                for user_id in &users_to_deactivate {
+                                    if let Some(user) = access.users().get(user_id).cloned() {
+                                        let mut modified_user = user;
+                                        modified_user.deactivated = true;
+                                        modified_user.deactivated_reason = Some("auto_inactivity".to_string());
+                                        if let Err(e) = access.set_access_user(user_id, Some(modified_user), sql_conn).await {
+                                            error!("Failed to deactivate user {}: {}", user_id, e);
+                                        }
+                                    }
+                                }
+                            }
+                            info!("Auto-deactivated {} users due to inactivity: {:?}", users_to_deactivate.len(), users_to_deactivate);
+                        }
+                    },
+                    complete => break,
+                }
+            }
+            log::debug!("deactivate inactive users task finished");
+        })
+    };
+
     loop {
         select! {
             command = command_receiver.recv().fuse() => match command {
@@ -355,6 +413,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
     }
 
     session_token_expiration_task.cancel().await;
+    deactivate_inactive_users_task.cancel().await;
 }
 
 #[derive(Copy, Clone)]
@@ -1844,6 +1903,7 @@ mod test {
                 roles: Default::default(),
                 deactivated: true,
                 expires: None,
+                deactivated_reason: Some("manual".to_string()),
             });
 
             users.insert("localhost_user".to_string(), crate::config::User {
@@ -1851,6 +1911,7 @@ mod test {
                 roles: vec!["localhost_role".to_string()],
                 deactivated: false,
                 expires: None,
+                deactivated_reason: None,
             });
 
             let mut policies_map = BTreeMap::new();
