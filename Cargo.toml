@@ -18,7 +18,7 @@ can = ["dep:socketcan", "shvrpc/can"]
 [dev-dependencies]
 cargo-run-bin = "1.7.4"
 assert_cmd = "2.2"
-shvclient = { version = "6.0.0", features = ["smol"] }
+shvclient = { version = "6.0.1", features = ["smol"] }
 tempfile = "3"
 const_format = "0.2.36"
 anyhow = "1.0.102"
@@ -31,12 +31,12 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-shvproto = { version = "6.1.10", features = [ "serde" ] }
+shvproto = { version = "6.2.0", features = [ "serde" ] }
 shvrpc = { version = "16.1.0", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.32"
-log = "0.4.30"
+log = "0.4.32"
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 duration-str = "0.21"
 rand = "0.10.1"
