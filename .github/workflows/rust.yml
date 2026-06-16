@@ -83,17 +83,25 @@ jobs:
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
     - name: Rename artifacts
+      if: matrix.os != 'windows-latest'
       shell: bash
       run: |
         mv "target/${{matrix.target}}/release/shvbroker" "target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}"
         mv "target/${{matrix.target}}/release/shvbroker_migrate_legacy" "target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}"
+
+    - name: Rename artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: |
+        mv "target/${{matrix.target}}/release/shvbroker.exe" "target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}.exe"
+        mv "target/${{matrix.target}}/release/shvbroker_migrate_legacy.exe" "target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}.exe"
 
     - name: Upload shvbroker
       if: matrix.toolchain == 'stable'
       uses: actions/upload-artifact@v4
       with:
         name: shvbroker-${{matrix.target}}
-        path: target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}
+        path: target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
         if-no-files-found: error
 
     - name: Upload shvbroker_migrate_legacy
@@ -101,7 +109,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: shvbroker_migrate_legacy-${{matrix.target}}
-        path: target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}
+        path: target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
         if-no-files-found: error
 
   create-releases:
