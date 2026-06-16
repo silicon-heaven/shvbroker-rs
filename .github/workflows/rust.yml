@@ -23,59 +23,110 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        toolchain: [stable, nightly]
+        target:
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - x86_64-unknown-linux-gnu
+          - x86_64-pc-windows-msvc
+        toolchain: [stable]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             features: --all-features
+            filename_suffix: amd64
+            additional_arguments: "--glibc-version 2.38"
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            features: --all-features
+            filename_suffix: amd64
+            toolchain: nightly
+            additional_arguments: "--glibc-version 2.38"
+          - os: ubuntu-22.04
+            target: armv7-unknown-linux-gnueabihf
+            features: --all-features
+            filename_suffix: armv7
+            additional_arguments: ''
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            features: --all-features
+            filename_suffix: arm64
+            additional_arguments: ''
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            features: --features entra-id
+            features: --features entra-id,google-auth
+            filename_suffix: win
+            additional_arguments: ''
     runs-on: ${{ matrix.os }}
+    name: Build (${{matrix.target}}, ${{matrix.toolchain}})
 
     steps:
     - uses: actions/checkout@v6
-    - name: Install system dependencies
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt update
-        sudo apt-get install -y libudev-dev pkg-config
-    - name: Set up Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+    - name: Configure cross environment
+      uses: zijiren233/cargo-cross@v1
       with:
-        target: ${{ matrix.target }}
-        components: clippy
-        toolchain: ${{ matrix.toolchain }}
-        override: true
+        command: setup
+        toolchain: ${{matrix.toolchain}}
+        cross-args: --target ${{matrix.target}}
     - name: Clippy
-      run: cargo clippy --all-targets ${{matrix.features}} -- --deny warnings
+      run: cargo cross clippy ${{matrix.additional_arguments}} --release --all-targets ${{matrix.features}} --target ${{matrix.target}} -- --deny warnings
     - name: Build
-      run: cargo build ${{matrix.features}}
+      run: cargo cross build ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
     - name: Run tests
-      run: cargo test ${{matrix.features}} -- --test-threads=1
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: cargo cross test ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
+
+    - name: Get version from Cargo.toml
+      id: get-version
+      shell: bash
+      run: |
+        version="$(grep '^version' Cargo.toml | head -n1 | sed 's/version\s*=\s*"\(.*\)"/\1/')"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Rename artifacts
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        mv "target/${{matrix.target}}/release/shvbroker" "target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}"
+        mv "target/${{matrix.target}}/release/shvbroker_migrate_legacy" "target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}"
+
+    - name: Rename artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: |
+        mv "target/${{matrix.target}}/release/shvbroker.exe" "target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}.exe"
+        mv "target/${{matrix.target}}/release/shvbroker_migrate_legacy.exe" "target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}.exe"
+
+    - name: Upload shvbroker
+      if: matrix.toolchain == 'stable'
+      uses: actions/upload-artifact@v4
+      with:
+        name: shvbroker-${{matrix.target}}
+        path: target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
+        if-no-files-found: error
+
+    - name: Upload shvbroker_migrate_legacy
+      if: matrix.toolchain == 'stable'
+      uses: actions/upload-artifact@v4
+      with:
+        name: shvbroker_migrate_legacy-${{matrix.target}}
+        path: target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
+        if-no-files-found: error
 
   create-releases:
     name: Create releases
-    if: github.ref == 'refs/heads/master'
+    # if: github.ref == 'refs/heads/master'
     # FIXME: Enable this needs after Windows build random failures get fixed.
-    # needs: [build]
+    needs: [build]
 
-    # Build on the older Ubuntu for older glibc.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get install -y libudev-dev pkg-config
 
-      - name: Build and Install Binary
-        run: |
-          mkdir -p ${{github.workspace}}/install
-          cargo install --path '${{github.workspace}}' --root '${{github.workspace}}/install' --all-features --locked
-        shell: bash
+      - name: Consolidate artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
 
       - name: Get version from Cargo.toml
         id: get-version
@@ -87,11 +138,6 @@ jobs:
         uses: rickstaa/action-create-tag@v1
         with:
           tag: ${{ steps.get-version.outputs.version }}
-
-      - name: Rename artifacts
-        run: |
-          mv "${{github.workspace}}/install/bin/shvbroker" "${{github.workspace}}/install/bin/shvbroker-${{ steps.get-version.outputs.version }}"
-          mv "${{github.workspace}}/install/bin/shvbroker_migrate_legacy" "${{github.workspace}}/install/bin/shvbroker_migrate_legacy-${{ steps.get-version.outputs.version }}"
 
       - name: Release
         uses: softprops/action-gh-release@v3
@@ -105,16 +151,13 @@ jobs:
 
             If you find any bugs, please report them to the repository's issue tracker.
           files: |
-            ${{github.workspace}}/install/bin/shvbroker*${{ steps.get-version.outputs.version }}*
+            ${{github.workspace}}/shvbroker-${{ steps.get-version.outputs.version }}-*
+            ${{github.workspace}}/shvbroker_migrate_legacy-${{ steps.get-version.outputs.version }}-*
 
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
     steps:
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get install -y libudev-dev pkg-config
       - name: Generate coverage
         uses: silicon-heaven/rust-pycobertura-action@v4.1.0
         with:
