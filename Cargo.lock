@@ -2065,9 +2065,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "log"
-version = "0.4.32"
+version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "lru-slab"
@@ -3241,9 +3241,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "6.0.2"
+version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2095b574cb56ae25cfc7dd37e798a0a912e24c3c7d02ff82326f383c922aa25e"
+checksum = "3674b33c4f1bb7be5e126985c33f91e754a793147dd53507921befa4431dedb2"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -3264,9 +3264,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.2.0"
+version = "6.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "862081758dbca491ff261008675e85bf9c700cbf495695724890a9deda82aca1"
+checksum = "e7950352ab04c777099ad7edf68b68ebea2cf0344aa875d77cf2ee95f9c06b4b"
 dependencies = [
  "chrono",
  "clap",
@@ -3279,9 +3279,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "16.1.2"
+version = "17.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be81e1063dad375062d49f5e7501bb0fbadf156f2b0924486e7e2b26da551717"
+checksum = "af43d81a86ec9956d2adb905843245d51b813147ded1c6aed73d12a43dc1e325"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3463,9 +3463,9 @@ dependencies = [
 
 [[package]]
 name = "socketcan"
-version = "3.6.1"
+version = "3.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5e63effc7e77256358f700e5fb0160238501022fec00b75d5da03e9e385d932"
+checksum = "ea24328be148eea05f36bc3991b1c174c586853e04d1480b92429b2df6aea865"
 dependencies = [
  "bitflags 2.11.0",
  "embedded-can",
