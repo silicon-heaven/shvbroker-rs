@@ -287,7 +287,7 @@ async fn test_broker_loop_as_admin_async() {
                 assert_eq!(&role1, role2);
             }
             {
-                let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".into(), grant: "cfg".into() }], profile: None };
+                let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
                 call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();

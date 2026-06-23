@@ -1,4 +1,4 @@
-use crate::config::{AccessConfig, AccessRule, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
+use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
     AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
@@ -288,14 +288,7 @@ pub struct ParsedAccessRule {
     pub(crate) access: String,
     pub(crate) access_level: AccessLevel,
 }
-impl TryFrom<&AccessRule> for ParsedAccessRule {
-    type Error = shvrpc::Error;
 
-    fn try_from(rule: &AccessRule) -> Result<Self, Self::Error> {
-        let ri = ShvRI::try_from(rule.shv_ri.as_str()).map_err(|err| { format!("Parse RI: {} error: {err}", rule.shv_ri) })?;
-        ParsedAccessRule::new(&ri, &rule.grant)
-    }
-}
 impl ParsedAccessRule {
     pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
         Ok(Self {

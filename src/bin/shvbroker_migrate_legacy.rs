@@ -117,11 +117,7 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
         let grant: String = row.get(3)?;
 
         let shv_ri = format!("{}:{}", if path.is_empty() { "**" } else { &path }, if method.is_empty() { "*" } else { &method });
-        let access_rule = AccessRule { shv_ri, grant };
-
-        if let Err(err) = shvbroker::brokerimpl::ParsedAccessRule::try_from(&access_rule) {
-            panic!("Cannot parse AccessRule from acl_access table, row: {row:?} error: {err}");
-        }
+        let access_rule = AccessRule { shv_ri: shv_ri.try_into().unwrap_or_else(|err| panic!("Cannot parse AccessRule's ShvRI from acl_access table, row: {row:?} error: {err}")), grant };
 
         Ok((role, access_rule))
     })?;

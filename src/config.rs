@@ -8,6 +8,7 @@ use log::error;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
+use shvrpc::rpc::ShvRI;
 use smol::lock::RwLock;
 use url::Url;
 
@@ -256,7 +257,7 @@ impl TryFrom<&RpcValue> for Role {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AccessRule {
     #[serde(rename = "shvRI")]
-    pub shv_ri: String,
+    pub shv_ri: ShvRI,
     pub grant: String,
 }
 
@@ -365,7 +366,7 @@ pub(crate) enum UpdateSqlOperation<'a> {
 pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
     role.access
         .iter()
-        .map(ParsedAccessRule::try_from)
+        .map(|rule| ParsedAccessRule::new(&rule.shv_ri, &rule.grant))
         .collect::<Result<Vec<_>,_>>()
 }
 
@@ -573,14 +574,14 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".into(), grant: "su,dot_local".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "su,dot_local".to_string() },
                         ],
                         profile: None,
                     }),
                     ("client".to_string(), Role {
                         roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:*".into(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:*".try_into().unwrap(), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
@@ -602,32 +603,32 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".app/tunnel:create".into(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:ls".into(), grant: "su".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:dir".into(), grant: "su".to_string() },
-                            AccessRule { shv_ri: "test/**:*".into(), grant: "cfg".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:create".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:ls".try_into().unwrap(), grant: "su".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:dir".try_into().unwrap(), grant: "su".to_string() },
+                            AccessRule { shv_ri: "test/**:*".try_into().unwrap(), grant: "cfg".to_string() },
                         ],
                         profile: None,
                     }),
                     ("ping".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".app:ping".into(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app:ping".try_into().unwrap(), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("subscribe".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:subscribe".into(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".into(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:subscribe".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".try_into().unwrap(), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".into(), grant: "bws".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "bws".to_string() },
                         ],
                         profile: None,
                     }),
