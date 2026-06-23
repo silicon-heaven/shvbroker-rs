@@ -8,6 +8,7 @@ use log::error;
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
+use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::ShvRI;
 use smol::lock::RwLock;
 use url::Url;
@@ -261,6 +262,19 @@ pub struct AccessRule {
     pub grant: String,
 }
 
+impl AccessRule {
+    fn try_parse(&self) -> shvrpc::Result<ParsedAccessRule> {
+        Ok(ParsedAccessRule {
+            glob: self.shv_ri.to_glob()?,
+            access: self.grant.to_string(),
+            access_level: self.grant
+                .split(',')
+                .find_map(AccessLevel::from_str)
+                .ok_or_else(|| format!("Invalid access grant `{}`", self.grant))?,
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Policy {
     pub allowed_ip: Option<Vec<ipnet::IpNet>>,
@@ -366,7 +380,7 @@ pub(crate) enum UpdateSqlOperation<'a> {
 pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
     role.access
         .iter()
-        .map(|rule| ParsedAccessRule::new(&rule.shv_ri, &rule.grant))
+        .map(|rule| rule.try_parse())
         .collect::<Result<Vec<_>,_>>()
 }
 

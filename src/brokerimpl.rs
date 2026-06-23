@@ -289,19 +289,6 @@ pub struct ParsedAccessRule {
     pub(crate) access_level: AccessLevel,
 }
 
-impl ParsedAccessRule {
-    pub fn new(shv_ri: &ShvRI, grant: &str) -> shvrpc::Result<Self> {
-        Ok(Self {
-            glob: shv_ri.to_glob()?,
-            access: grant.to_string(),
-            access_level: grant
-                .split(',')
-                .find_map(AccessLevel::from_str)
-                .ok_or_else(|| format!("Invalid access grant `{grant}`"))?,
-        })
-    }
-}
-
 pub(crate) struct PendingRpcCall {
     pub(crate) peer_id: PeerId,
     pub(crate) request_meta: MetaMap,
