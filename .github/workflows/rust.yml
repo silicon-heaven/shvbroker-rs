@@ -60,7 +60,7 @@ jobs:
     name: Build (${{matrix.target}}, ${{matrix.toolchain}})
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Configure cross environment
       uses: zijiren233/cargo-cross@v1
       with:
@@ -98,7 +98,7 @@ jobs:
 
     - name: Upload shvbroker
       if: matrix.toolchain == 'stable'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: shvbroker-${{matrix.target}}
         path: target/${{matrix.target}}/release/shvbroker-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
@@ -106,7 +106,7 @@ jobs:
 
     - name: Upload shvbroker_migrate_legacy
       if: matrix.toolchain == 'stable'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: shvbroker_migrate_legacy-${{matrix.target}}
         path: target/${{matrix.target}}/release/shvbroker_migrate_legacy-${{steps.get-version.outputs.version}}-${{matrix.filename_suffix}}*
@@ -121,7 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Consolidate artifacts
         uses: actions/download-artifact@v8
