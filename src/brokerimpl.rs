@@ -1,7 +1,7 @@
 use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
-    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_ROLES, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
@@ -1046,6 +1046,10 @@ impl BrokerImpl {
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_USERS,
                 Box::new(BrokerAccessUsersNode::new(sql_connection.clone(), access.clone())),
+            );
+            add_node(
+                DIR_SHV2_BROKER_ETC_ACL_ROLES,
+                Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
             );
         }
 
