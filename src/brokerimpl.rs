@@ -146,9 +146,8 @@ pub enum PeerKind {
 impl PeerKind {
     pub fn user(&self) -> &str {
         match self {
-            PeerKind::Client { user, .. } => user,
+            PeerKind::Client { user, .. } | PeerKind::Device { user, .. } => user,
             PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
-            PeerKind::Device { user, .. } => user,
         }
     }
 }
@@ -499,7 +498,10 @@ pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedRece
                         "ssl" => 3756,
                         "ws" => 8755,
                         "wss" => 8766,
-                        _ => 3755,
+                        scheme => {
+                            info!("Unknown scheme: '{scheme}', assuming tcp");
+                            3755
+                        },
                     })
             )
         };
