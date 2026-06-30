@@ -315,7 +315,7 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
 fn check_subscription_along_property_path(property_path: &str, port: i32) -> shvrpc::Result<()> {
     let dirs = property_path.split('/').collect::<Vec<_>>();
     for i in 1 .. dirs.len() - 1 {
-        let subscribe_path = dirs[.. i].join("/") + "/**";
+        let subscribe_path = dirs.get(.. i).expect("We iterate over all subsets").join("/") + "/**";
         check_subscription(property_path, &subscribe_path, port)?;
     }
     Ok(())

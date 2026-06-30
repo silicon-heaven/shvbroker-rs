@@ -202,7 +202,7 @@ pub(crate) async fn tunnel_task(
                         break;
                     }
 
-                    let mut data = read_buff[.. bytes_read].to_vec();
+                    let mut data = read_buff.get(.. bytes_read).expect("Read must've read bytes_read").to_vec();
                     response_buff.append(&mut data);
                     let mut response_meta = response_meta.clone();
                     response_meta.set_seqno(read_seqno);
