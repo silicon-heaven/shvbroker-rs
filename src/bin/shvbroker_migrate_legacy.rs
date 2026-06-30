@@ -571,7 +571,7 @@ fn main() -> shvrpc::Result<()> {
         } else {
             data_dir
         };
-        println!("data dir: {data_dir:?}");
+        println!("data dir: {}", data_dir.display());
         broker_config.data_directory = Some(data_dir.to_string_lossy().into());
 
         let legacy_db_file_name = if let Some(legacy_sql_config) = legacy_sql_config
