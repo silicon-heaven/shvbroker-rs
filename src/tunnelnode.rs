@@ -97,7 +97,7 @@ impl TunnelNode {
 
     pub(crate) async fn write_tunnel(&self, tunid: TunnelId, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
         self.active_tunnels.write().await.get(&tunid).map_or_else(|| Err(format!("Invalid tunnel ID: {tunid}").into()), |tun| {
-            let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
+            tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data)).ok();
             Ok(())
         })
     }
@@ -377,7 +377,7 @@ pub(crate) async fn close_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, Acti
     active_tunnels.write().await.remove(&tunid).map(|tun| {
         let sender = tun.sender;
         smol::spawn(async move {
-            let _ = sender.unbounded_send(ToRemoteMsg::DestroyConnection);
+            sender.unbounded_send(ToRemoteMsg::DestroyConnection).ok();
         })
         .detach();
         tun.last_activity.is_some()

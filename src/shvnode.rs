@@ -441,7 +441,7 @@ impl ShvNode for BrokerNode {
                 self.peers.read().await.get(&peer_id).map_or_else(|| Err(format!("Disconnect client error - peer {peer_id} not found.").into()), |peer| {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
-                        let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
+                        peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).ok();
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))
                 })

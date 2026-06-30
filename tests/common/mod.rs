@@ -24,7 +24,7 @@ impl KillProcessGuard {
 }
 impl Drop for KillProcessGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        self.child.kill().ok();
         let _exit_status= self.child.wait();
         //println!("shvbroker exit status: {:?}", exit_status);
     }
