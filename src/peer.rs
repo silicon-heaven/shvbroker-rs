@@ -887,7 +887,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         }));
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "It's alright")]
     fn run_broker_server_peer_task(
         peer_local_addr: PeerLocalAddr,
         init_frame: ShvCanDataFrame,
