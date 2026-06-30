@@ -1,5 +1,6 @@
+#![expect(clippy::print_stdout, reason = "Fine for a binary")]
 use std::path::Path;
-use log::*;
+use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
@@ -48,6 +49,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
         && let Ok(num_threads) = std::thread::available_parallelism() {
         unsafe {
+            // Safety: the program is still single-threaded by this point.
             std::env::set_var(SMOL_THREADS, num_threads.to_string());
         }
     }
@@ -69,7 +71,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
             }
         }
     }
-    logger.init().unwrap();
+    logger.init().expect("Logger must work");
 
     info!("=====================================================");
     info!("{} ver. {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
@@ -101,8 +103,8 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Running in SHV2 compatibility mode");
     }
     let (access, policies, last_login, sql_connection) = if config.use_access_db {
-        let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
-        info!("Data directory: {}", data_dir);
+        let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
+        info!("Data directory: {data_dir}");
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
         let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies))?;
         (access_config, policies, last_login, Some(sql_connection))

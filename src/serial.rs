@@ -14,13 +14,13 @@ use crate::peer::server_peer_loop;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
     info!("Opening serial port: {port_name}");
-    let port = serialport::new(port_name, 115200)
+    let port = serialport::new(port_name, 115_200)
         .data_bits(serialport::DataBits::Eight)
         .stop_bits(serialport::StopBits::One)
         .parity(serialport::Parity::None)
         // serial port should never timeout,
         // timeout on serial breaks reader loop
-        .timeout(Duration::from_secs(60 * 60 *24 * 365 * 100))
+        .timeout(Duration::from_hours(24 * 365 * 100))
         .open()?;
 
     // Clone the port
@@ -37,7 +37,7 @@ pub(crate) async fn try_serial_peer_loop(
 ) -> shvrpc::Result<()> {
     info!("Entering serial peer loop peer ID: {peer_id}, port: {port_name}.");
     match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config).await {
-        Ok(_) => {
+        Ok(()) => {
             info!("Serial peer loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {

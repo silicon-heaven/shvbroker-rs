@@ -96,9 +96,9 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         // path doesn't exist
         return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {shv_path}"))))
     }
-    let is_mount_point = mount_pair.is_some() && mount_pair.unwrap().1.is_empty();
+    let is_mount_point = mount_pair.is_some_and(|mount_pair| mount_pair.1.is_empty());
     let is_remote_dir = mount_pair.is_some() && children.is_none();
-    let is_tree_leaf = mount_pair.is_some() && children.is_some() && children.as_ref().unwrap().is_empty();
+    let is_tree_leaf = mount_pair.is_some() && children.as_ref().is_some_and(Vec::is_empty);
     //println!("shv path: {shv_path}, method: {method}, mount pair: {:?}", mount_pair);
     //println!("is_mount_point: {is_mount_point}, is_tree_leaf: {is_tree_leaf}");
     if method == METH_DIR && !is_mount_point && !is_remote_dir && !is_tree_leaf {
@@ -106,43 +106,31 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let dir = dir(PUBLIC_DIR_LS_METHODS.iter(), rpcmsg.param().into());
             return Some(Ok(dir))
-        } else {
-            return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
         }
+
+        return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
     }
     if method == METH_LS && !is_tree_leaf && !is_remote_dir  {
         // ls on not-leaf node must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let ls = ls_children_to_result(children, rpcmsg.param().into());
             return Some(ls)
-        } else {
-            return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
         }
+
+        return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
     }
     None
 }
 fn ls_children_to_result(children: Option<Vec<String>>, param: LsParam) -> Result<RpcValue, RpcError> {
     match param {
         LsParam::List => {
-            match children {
-                None => {
-                    Err(RpcError::new(RpcErrorCode::MethodCallException, "Invalid shv path"))
-                }
-                Some(dirs) => {
-                    let res: rpcvalue::List = dirs.iter().map(RpcValue::from).collect();
-                    Ok(res.into())
-                }
-            }
+            children.map_or_else(|| Err(RpcError::new(RpcErrorCode::MethodCallException, "Invalid shv path")), |dirs| {
+                let res: rpcvalue::List = dirs.iter().map(RpcValue::from).collect();
+                Ok(res.into())
+            })
         }
         LsParam::Exists(path) => {
-            match children {
-                None => {
-                    Ok(false.into())
-                }
-                Some(children) => {
-                    Ok(children.contains(&path).into())
-                }
-            }
+            children.map_or_else(|| Ok(false.into()), |children| Ok(children.contains(&path).into()))
         }
     }
 }
@@ -166,7 +154,7 @@ pub(crate) trait ShvNode : Send + Sync {
 impl dyn ShvNode {
     pub async fn process_request_and_dir_ls(&self, frame: &RpcFrame, ctx: &NodeRequestContext) -> ProcessRequestResult {
         let result = self.process_request(frame, ctx).await;
-        if let Ok(ProcessRequestRetval::MethodNotFound) = result {
+        if matches!(result, Ok(ProcessRequestRetval::MethodNotFound)) {
             match frame.method().unwrap_or_default() {
                 METH_DIR => {
                     let shv_path = frame.shv_path().unwrap_or_default();
@@ -177,19 +165,14 @@ impl dyn ShvNode {
                 METH_LS => {
                     let shv_path = frame.shv_path().unwrap_or_default();
                     let rq = frame.to_rpcmesage()?;
-                    if let Some(children) = self.children(shv_path).await {
-                        match LsParam::from(rq.param()) {
-                            LsParam::List => {
-                                Ok(ProcessRequestRetval::Retval(children.into()))
-                            }
-                            LsParam::Exists(path) => {
-                                Ok(ProcessRequestRetval::Retval(children.iter().any(|s| s == &path).into()))
-                            }
+                    self.children(shv_path).await.map_or_else(|| Err(format!("Invalid path: {shv_path}.").into()), |children| match LsParam::from(rq.param()) {
+                        LsParam::List => {
+                            Ok(ProcessRequestRetval::Retval(children.into()))
                         }
-
-                    } else {
-                        Err(format!("Invalid path: {shv_path}.").into())
-                    }
+                        LsParam::Exists(path) => {
+                            Ok(ProcessRequestRetval::Retval(children.iter().any(|s| s == &path).into()))
+                        }
+                    })
                 }
                 _ => { Ok(ProcessRequestRetval::MethodNotFound) }
             }
@@ -324,7 +307,7 @@ impl ShvNode for AppDeviceNode {
                 Ok(ProcessRequestRetval::Retval(self.version.into()))
             }
             METH_SERIAL_NUMBER => {
-                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(|s| s.to_string()).unwrap_or_default().into()))
+                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(ToString::to_string).unwrap_or_default().into()))
             }
             METH_PING => {
                 Ok(ProcessRequestRetval::Retval(().into()))
@@ -432,19 +415,13 @@ impl ShvNode for BrokerNode {
             METH_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                let info = match client_info(&self.peers, peer_id).await {
-                    None => { RpcValue::null() }
-                    Some(info) => { RpcValue::from(info) }
-                };
+                let info = client_info(&self.peers, peer_id).await.map_or_else(RpcValue::null, RpcValue::from);
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_MOUNTED_CLIENT_INFO => {
                 let rq = &frame.to_rpcmesage()?;
                 let mount_point = rq.param().unwrap_or_default().try_into()?;
-                let info = match mounted_client_info(&self.peers, mount_point).await {
-                    None => { RpcValue::null() }
-                    Some(info) => { RpcValue::from(info) }
-                };
+                let info = mounted_client_info(&self.peers, mount_point).await.map_or_else(RpcValue::null, RpcValue::from);
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CLIENTS => {
@@ -454,22 +431,20 @@ impl ShvNode for BrokerNode {
             METH_MOUNTS => {
                 let mounts: List = self.peers.read().await.values()
                     .filter(|peer| peer.mount_point.is_some())
-                    .map(|peer| if let Some(mount_point) = &peer.mount_point {RpcValue::from(mount_point)} else { RpcValue::null() } )
+                    .map(|peer| peer.mount_point.as_ref().map_or_else(RpcValue::null, RpcValue::from) )
                     .collect();
                 Ok(ProcessRequestRetval::Retval(mounts.into()))
             }
             METH_DISCONNECT_CLIENT => {
                 let rq = &frame.to_rpcmesage()?;
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
-                if let Some(peer) = self.peers.read().await.get(&peer_id) {
+                self.peers.read().await.get(&peer_id).map_or_else(|| Err(format!("Disconnect client error - peer {peer_id} not found.").into()), |peer| {
                     let peer_sender = peer.sender.clone();
                     smol::spawn(async move {
-                        let _ = peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))});
+                        peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).ok();
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))
-                } else {
-                    Err(format!("Disconnect client error - peer {peer_id} not found.").into())
-                }
+                })
             }
             METH_BROKER_ID => {
                 Ok(ProcessRequestRetval::Retval(self.broker_name.clone().into()))
@@ -489,7 +464,7 @@ impl ShvNode for BrokerNode {
                 };
                 let Some(peer_id) = self.peers.read().await
                     .iter()
-                    .find_map(|(peer_id, peer)| match &peer.peer_kind {
+                    .find_map(|(peer_id, peer)| match &peer.kind {
                         crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
                         _ => None,
                     }) else {
@@ -676,29 +651,26 @@ impl BrokerCurrentClientNode {
 fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
     subscriptions
         .iter()
-        .map(|subscr| match subscr.param.ttl {
-            None => {
-                let key = subscr.glob.as_str().to_string();
-                (key, ().into())
-            }
-            Some(ttl) => {
-                let key = subscr.glob.as_str().to_string();
-                let ttl = Instant::now() + Duration::from_secs(ttl as u64) - subscr.subscribed;
-                (key, (ttl.as_secs() as i64).into())
-            }
-        })
+        .map(|subscr| subscr.param.ttl.map_or_else(|| {
+            let key = subscr.glob.as_str().to_string();
+            (key, ().into())
+        }, |ttl| {
+            let key = subscr.glob.as_str().to_string();
+            let ttl = Instant::now() + Duration::from_secs(u64::from(ttl)) - subscr.subscribed;
+            (key, ttl.as_secs().cast_signed().into())
+        }))
         .collect()
 }
 
 fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     let subs = subscriptions_to_map(&peer.subscriptions);
-    let device_id = match &peer.peer_kind {
+    let device_id = match &peer.kind {
         PeerKind::Device { device_id: Some(device_id), .. } => device_id.as_str(),
         _ => "",
     };
     shvproto::make_map!{
-        "clientId" => peer.peer_id,
-        "userName" => peer.peer_kind.user(),
+        "clientId" => peer.id,
+        "userName" => peer.kind.user(),
         "deviceId" => device_id,
         "mountPoint" => peer.mount_point.clone().unwrap_or_default(),
         "subscriptions" => subs,
@@ -706,7 +678,7 @@ fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
 }
 
 async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
-    peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
+    peers.read().await.values().find(|peer| peer.mount_point.as_ref().is_some_and(|mount_point| *mount_point == wanted_mount_point))
         .map(peer_to_info)
 }
 
@@ -751,10 +723,7 @@ impl ShvNode for BrokerCurrentClientNode {
                 Ok(ProcessRequestRetval::Retval(result.into()))
             }
             METH_INFO => {
-                let info = match client_info(&self.peers, ctx.peer_id).await {
-                    None => { RpcValue::null() }
-                    Some(info) => { RpcValue::from(info) }
-                };
+                let info = client_info(&self.peers, ctx.peer_id).await.map_or_else(RpcValue::null, RpcValue::from);
                 Ok(ProcessRequestRetval::Retval(info))
             }
             METH_CHANGE_PASSWORD => {
@@ -778,7 +747,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(|peer| peer.peer_kind.user()).map(ToOwned::to_owned) else {
+                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(|peer| peer.kind.user()).map(ToOwned::to_owned) else {
                     return Err("Undefined user".into());
                 };
                 if user_name.starts_with("ldap:") {
@@ -851,8 +820,8 @@ impl ShvNode for BrokerCurrentClientNode {
                 let access = self.access.read().await;
                 let merged_profile = access.flatten_roles(user_roles.as_slice())
                     .iter()
-                    .flat_map(|role| access.access_role(role))
-                    .flat_map(|role| role.profile.clone())
+                    .filter_map(|role| access.access_role(role))
+                    .filter_map(|role| role.profile.clone())
                     .fold(None, |mut res: Option<crate::config::ProfileValue>, profile| {
                         match &mut res {
                             Some(res) => res.merge(profile),
@@ -926,7 +895,7 @@ impl ShvNode for BrokerAccessMountsNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.mounts().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -993,7 +962,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.users().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.users().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1114,7 +1083,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.roles().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.roles().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1181,7 +1150,7 @@ impl ShvNode for BrokerAccessPoliciesNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.policies.read().await.get().keys().map(|m| m.to_string()).collect())
+            Some(self.policies.read().await.get().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1246,7 +1215,7 @@ impl ShvNode for BrokerAccessLastLoginNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.last_login.read().await.get().keys().map(|m| m.to_string()).collect())
+            Some(self.last_login.read().await.get().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }

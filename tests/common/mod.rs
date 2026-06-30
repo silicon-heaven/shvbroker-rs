@@ -1,3 +1,4 @@
+#![expect(clippy::panic, reason = "Fine for a test")]
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::LazyLock;
@@ -17,14 +18,14 @@ impl KillProcessGuard {
     }
 
     pub fn is_running(&mut self) -> bool {
-        let status = self.child.try_wait().unwrap();
+        let status = self.child.try_wait().expect("Process must work");
         //println!("shvbroker is_running status: {:?}", status);
         status.is_none()
     }
 }
 impl Drop for KillProcessGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        self.child.kill().ok();
         let _exit_status= self.child.wait();
         //println!("shvbroker exit status: {:?}", exit_status);
     }
@@ -49,8 +50,8 @@ pub fn bytes_from_output(output: Output) -> shvrpc::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 pub fn text_from_output(output: Output) -> shvrpc::Result<String> {
-    bytes_from_output(output)
-        .and_then(|bytes| String::from_utf8(bytes).map_err(Into::into))
+    let bytes = bytes_from_output(output)?;
+    String::from_utf8(bytes).map_err(Into::into)
 }
 pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     text_from_output(output)
@@ -64,12 +65,12 @@ pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
     let shvcall_package = cargo_run_bin::metadata::get_binary_packages()
-        .unwrap()
+        .expect("get_binary_packages must work")
         .iter()
         .find(|p| p.package == "shvcall")
-        .unwrap()
+        .expect("get_binary_packages must include shvcall")
         .to_owned();
-    cargo_run_bin::binary::install(shvcall_package).unwrap()
+    cargo_run_bin::binary::install(shvcall_package).expect("shvcall must be installable")
 });
 
 pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcMessage> {
@@ -83,18 +84,16 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         .arg("--method").arg(format!("{path}:{method}"));
     if !param.is_empty() {
         cmd.arg("--param-file").arg("-");
-    };
+    }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
-    let mut chld = cmd.spawn().unwrap();
-    let mut stdin = chld.stdin.take().unwrap();
-    stdin.write_all(param.as_bytes()).unwrap();
+    let mut chld = cmd.spawn().expect("Child must be spawned");
+    let mut stdin = chld.stdin.take().expect("Child must have a stdin");
+    stdin.write_all(param.as_bytes()).expect("Stdin must be writeable");
     drop(stdin);
 
     //.arg("--output-format").arg(output_format.as_str())
     chld.wait_with_output()
-        .map(rpcmsg_from_output)
-        .unwrap_or_else(|e| panic!("{shvcall_binary} exec error: {e}"))
-
+        .map_or_else(|e| panic!("{shvcall_binary} exec error: {e}"), rpcmsg_from_output)
 }
 
 #[derive(Debug)]
@@ -120,7 +119,7 @@ pub fn shv_call_many(commands: Vec<ShvCallCommand>, port: Option<i32>) -> shvrpc
             match command {
                 ShvCallCommand::Call(call) => {
                     stdin.write_all(call.as_bytes()).expect("Failed to write to stdin");
-                    stdin.write_all("\n".as_bytes()).expect("Failed to write to stdin");
+                    stdin.write_all(b"\n").expect("Failed to write to stdin");
                 },
                 ShvCallCommand::Wait(duration) => {
                     std::thread::sleep(duration);

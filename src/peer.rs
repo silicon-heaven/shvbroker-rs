@@ -74,7 +74,7 @@ pub(crate) async fn try_server_peer_loop(
         }
     };
     match res {
-        Ok(_) => {
+        Ok(()) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
@@ -200,7 +200,7 @@ pub(crate) async fn server_peer_loop(
                     peer_log!(debug, "hello received");
                     let shv2_compat = broker_config.shv2_compatibility;
                     let nonce: &String = nonce.get_or_insert_with(|| if shv2_compat {
-                        format!("{}", rand::rng().random_range(0..=2000000000))
+                        format!("{}", rand::rng().random_range(0..=2_000_000_000))
                     } else {
                         Alphanumeric.sample_string(&mut rand::rng(), 16)
                     });
@@ -235,10 +235,10 @@ pub(crate) async fn server_peer_loop(
                 "login" => {
                     peer_log!(debug, "login received");
                     let params = rpcmsg.param().ok_or("No login params")?.as_map();
-                    let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map(RpcValue::as_str).unwrap_or("<no user agent>");
+                    let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map_or("<no user agent>", RpcValue::as_str);
                     peer_log!(info, "User agent: '{user_agent}'");
                     let login = params.get("login").ok_or("Invalid login params")?.as_map();
-                    let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
+                    let login_type = login.get("type").map_or("", RpcValue::as_str);
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
                     const GOOGLE_AUTH_TOKEN_PREFIX: &str = "oauth2-google:";
@@ -279,24 +279,20 @@ pub(crate) async fn server_peer_loop(
                                         let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
                                         let response: serde_json::Value = reqwest::get(jwks_url).compat().await?.json().await?;
                                         // Find the specific key matching the 'kid'
-                                        let n = response["keys"].as_array()
+                                        let n = response.get("keys").expect("\"keys\" must be present").as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
                                             .and_then(|k| k["n"].as_str())
                                             .ok_or_else(|| "Key not found".to_string())?;
 
-                                        let e = response["keys"].as_array()
+                                        let e = response.get("keys").expect("\"keys\" must be present").as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
                                             .and_then(|k| k["e"].as_str())
                                             .ok_or_else(|| "Exponent not found".to_string())?;
                                         // Create a decoding key from RSA components (n, e)
                                         let key = DecodingKey::from_rsa_components(n, e)?;
                                         *GOOGLE_KEY_CACHE.write().await = Some(key);
-                                    };
-                                    if let Some(key) = GOOGLE_KEY_CACHE.read().await.clone() {
-                                        Ok(key)
-                                    } else {
-                                        Err("Internal error - Google key should be cached already".into())
                                     }
+                                    GOOGLE_KEY_CACHE.read().await.clone().map_or_else(|| Err("Internal error - Google key should be cached already".into()), Ok)
                                 }
 
                                 // Set up validation (check audience and issuer)
@@ -308,17 +304,15 @@ pub(crate) async fn server_peer_loop(
 
                                 // Try with cached key first
                                 let decoding_key = get_google_decoding_key(&kid, false).await?;
-                                let token_data = {
-                                    // Try to verify with cached key
-                                    match decode::<GoogleClaims>(token, &decoding_key, &validation) {
-                                        Ok(data) => data,
-                                        Err(_) => {
-                                            // Cached key failed, fetch new key and retry
-                                            let decoding_key = get_google_decoding_key(&kid, true).await?;
-                                            // Retry verification with new key
-                                            decode::<GoogleClaims>(token, &decoding_key, &validation)?
-                                        }
-                                    }
+
+                                // Try to verify with cached key
+                                let token_data = if let Ok(data) = decode::<GoogleClaims>(token, &decoding_key, &validation) {
+                                    data
+                                } else {
+                                    // Cached key failed, fetch new key and retry
+                                    let decoding_key = get_google_decoding_key(&kid, true).await?;
+                                    // Retry verification with new key
+                                    decode::<GoogleClaims>(token, &decoding_key, &validation)?
                                 };
                                 Ok(token_data.claims)
                             }
@@ -346,7 +340,7 @@ pub(crate) async fn server_peer_loop(
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
                                 Err(e) => {
-                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
+                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {e}")).or(frame_write_timeout()).await?;
                                     continue 'login_loop;
                                 }
                             }
@@ -364,11 +358,11 @@ pub(crate) async fn server_peer_loop(
                         if let Some((user, session_token)) = receiver.await? {
                             peer_log!(debug, "token OK");
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
-                        } else {
-                            peer_log!(warn, "invalid token");
-                            frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                            continue 'login_loop;
                         }
+
+                        peer_log!(warn, "invalid token");
+                        frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
+                        continue 'login_loop;
                     }
 
                     if login_type == "TOKEN" || login_type == "AZURE" {
@@ -478,11 +472,10 @@ pub(crate) async fn server_peer_loop(
                     if let Some(session_token) = receiver.await? {
                         peer_log!(debug, "password OK");
                         break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
-                    } else {
-                        peer_log!(warn, "invalid login credentials, user: {user}");
-                        frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                        continue 'login_loop;
                     }
+
+                    peer_log!(warn, "invalid login credentials, user: {user}");
+                    frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                 },
                 _ => {
                     frame_writer.send_error(resp_meta, "Invalid login message.").or(frame_write_timeout()).await?;
@@ -504,8 +497,7 @@ pub(crate) async fn server_peer_loop(
             .and_then(|options| options.get("idleWatchDogTimeOut"))
             .map(RpcValue::as_u64)
             .filter(|idle_timeout| *idle_timeout > 0)
-            .map(Duration::from_secs)
-            .unwrap_or(Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT));
+            .map_or(Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT), Duration::from_secs);
 
         let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
         let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
@@ -617,7 +609,7 @@ pub(crate) async fn server_peer_loop(
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
                                 if let Some(reason) = reason {
-                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().unwrap())?
+                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().expect("Frame must be constructed"))?;
                                 }
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
@@ -625,7 +617,7 @@ pub(crate) async fn server_peer_loop(
                                 break 'session_loop;
                             }
                             BrokerToPeerMessage::SendFrame(frame) => {
-                                frames_tx.unbounded_send(frame)?
+                                frames_tx.unbounded_send(frame)?;
                             }
                         }
                         fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();
@@ -687,7 +679,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
             broker_writer.clone(),
             tls.clone(),
         ).await {
-            Ok(_) => info!("Peer broker loop finished without error"),
+            Ok(()) => info!("Peer broker loop finished without error"),
             Err(err) => error!("Peer broker loop finished with error: {err}"),
         }
 
@@ -713,7 +705,8 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+
+fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: &UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     if frame.is_request() {
         let mut frame = frame;
         let shv_path = frame.shv_path().unwrap_or_default();
@@ -725,7 +718,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_
     } else if frame.is_signal() || frame.is_response() {
         broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
     } else {
-        warn!("Invalid frame type received: {}", frame);
+        warn!("Invalid frame type received: {frame}");
     }
     Ok(())
 }
@@ -810,8 +803,8 @@ pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> L
     LoginParams {
         user,
         password,
-        mount_point: client_config.mount.clone().unwrap_or_default().to_owned(),
-        device_id: client_config.device_id.clone().unwrap_or_default().to_owned(),
+        mount_point: client_config.mount.clone().unwrap_or_default(),
+        device_id: client_config.device_id.clone().unwrap_or_default(),
         heartbeat_interval: client_config.heartbeat_interval,
         ..Default::default()
     }
@@ -858,7 +851,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 
     fn run_broker_client_peer_task(
         connection_config: &CanConnectionConfig,
-        tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
+        tasks: &FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
         broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
@@ -890,12 +883,12 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         }));
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "It's alright")]
     fn run_broker_server_peer_task(
         peer_local_addr: PeerLocalAddr,
         init_frame: ShvCanDataFrame,
         broker_config: SharedBrokerConfig,
-        tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
+        tasks: &FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
         broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
@@ -951,7 +944,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
     for connection_config in &can_interface_config.connections {
         run_broker_client_peer_task(
             connection_config,
-            &mut client_peer_tasks,
+            &client_peer_tasks,
             &mut peers_channels,
             broker_sender.clone(),
             writer_frames_tx.clone(),
@@ -972,7 +965,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         }));
 
         let time_broadcast_interval: std::pin::Pin<Box<dyn futures::Stream<Item = ()> + Send>>  = if broker_config.time_broadcast {
-            Box::pin(futures::StreamExt::map(Timer::interval(Duration::from_secs(60)), |_| ()))
+            Box::pin(futures::StreamExt::map(Timer::interval(Duration::from_mins(1)), |_| ()))
         } else {
             Box::pin(futures::stream::empty())
         };
@@ -998,16 +991,16 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 
                                     if let std::collections::hash_map::Entry::Occupied(entry) = peers_channels.entry(peer_local_addr) {
                                         debug!(target: "shvcan", "{can_iface} RECV: {frame}", frame = shvcan_frame.to_brief_string());
-                                        let peer_channels = entry.get();
+                                        let channel = entry.get();
                                         match shvcan_frame {
                                             ShvCanFrame::Data(data_frame) => {
-                                                peer_channels
+                                                channel
                                                     .reader_frames_tx
                                                     .unbounded_send(data_frame)
                                                     .unwrap_or_else(|e| warn!("Cannot send a Data frame to peer task 0x{peer_addr:x}->0x{local_addr:x}: {e}"));
                                                 }
                                             ShvCanFrame::Ack(ack_frame) => {
-                                                peer_channels
+                                                channel
                                                     .writer_ack_tx
                                                     .unbounded_send(ack_frame)
                                                     .unwrap_or_else(|e| warn!("Cannot send an ACK frame to peer task 0x{peer_addr:x}->0x{local_addr:x}: {e}"));
@@ -1030,7 +1023,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                                             PeerLocalAddr { peer_addr, local_addr },
                                             data_frame,
                                             broker_config.clone(),
-                                            &mut server_peer_tasks,
+                                            &server_peer_tasks,
                                             &mut peers_channels,
                                             broker_sender.clone(),
                                             writer_frames_tx.clone(),
@@ -1057,7 +1050,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                         }
                     }
                 }
-                _ = time_broadcast_interval.select_next_some() => {
+                () = time_broadcast_interval.select_next_some() => {
                     static CAN_ID_UTC_TIME: std::sync::LazyLock<socketcan::CanId> = std::sync::LazyLock::new(|| socketcan::CanId::standard(0x04).expect("Time broadcast CAN ID should be valid"));
 
                     fn to_string<E: std::fmt::Display>(e: E) -> String {
@@ -1124,7 +1117,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = server_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
                         Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
@@ -1139,7 +1132,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = client_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
                         Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
@@ -1164,7 +1157,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 connection_cfg = reconnect_rx.select_next_some() => {
                     run_broker_client_peer_task(
                         &connection_cfg,
-                        &mut client_peer_tasks,
+                        &client_peer_tasks,
                         &mut peers_channels,
                         broker_sender.clone(),
                         writer_frames_tx.clone(),
@@ -1187,7 +1180,7 @@ async fn broker_as_client_peer_loop(
 ) -> shvrpc::Result<()>
 {
     let heartbeat_interval = login_params.heartbeat_interval;
-    info!("Heartbeat interval set to: {:?}", heartbeat_interval);
+    info!("Heartbeat interval set to: {heartbeat_interval:?}");
 
     let login_timeout = async move {
         const LOGIN_TIMEOUT: u64 = 10;
@@ -1222,7 +1215,7 @@ async fn broker_as_client_peer_loop(
     smol::spawn(async move {
         while let Some(frame) = frames_rx.next().await {
             if let Err(e) = frame_writer.send_frame(frame).await {
-                log::debug!("frame send failed: {}", e);
+                log::debug!("frame send failed: {e}");
                 return Err((e, frame_writer));
             }
         }
@@ -1250,7 +1243,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, &broker_writer)?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1273,7 +1266,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, &broker_writer)?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
@@ -1319,7 +1312,7 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Re
         if let Some(method) = frame.method() && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE) {
             // prepend exported root to subscribed path
             let is_subscribe = method == METH_SUBSCRIBE;
-            frame = fix_subscribe_param(frame, shv_root, is_subscribe)?;
+            frame = fix_subscribe_param(&frame, shv_root, is_subscribe)?;
         }
         shv_path
     } else if is_dot_local_request(&frame) {
@@ -1333,7 +1326,7 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Re
     Ok(frame)
 }
 
-fn fix_subscribe_param(frame: RpcFrame, exported_root: &str, is_subscribe: bool) -> shvrpc::Result<RpcFrame> {
+fn fix_subscribe_param(frame: &RpcFrame, exported_root: &str, is_subscribe: bool) -> shvrpc::Result<RpcFrame> {
     let mut msg = frame.to_rpcmesage()?;
     let param = msg.param().unwrap_or_default();
     let mut subpar = SubscriptionParam::from_rpcvalue(param)?;

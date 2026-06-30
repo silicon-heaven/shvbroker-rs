@@ -172,10 +172,7 @@ impl TryFrom<&RpcValue> for User {
         match serde_json::from_str(&cpon) {
             Ok(user) => { Ok(user) }
             Err(e) => {
-                match UserV2::try_from(cpon.as_str()) {
-                    Ok(user) => { User::from_v2(user) }
-                    Err(_) => { Err(e.to_string()) }
-                }
+                UserV2::try_from(cpon.as_str()).map_or_else(|_| Err(e.to_string()), User::from_v2)
             }
         }
     }
@@ -287,7 +284,7 @@ impl AccessRule {
     fn try_parse(&self) -> shvrpc::Result<ParsedAccessRule> {
         Ok(ParsedAccessRule {
             glob: self.shv_ri.to_glob()?,
-            access: self.grant.to_string(),
+            access: self.grant.clone(),
             access_level: self.grant
                 .split(',')
                 .find_map(AccessLevel::from_str)
@@ -351,17 +348,17 @@ impl Default for Policies {
     fn default() -> Self {
         Self(BTreeMap::from([
             ("device".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: true,
-                allowed_mounts: Default::default(),
+                allowed_mounts: Vec::default(),
             }),
             ("client".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: false,
                 allowed_mounts: ["test".to_string()].into(),
             }),
             ("su".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: true,
                 allowed_mounts: ["test".to_string()].into(),
             }),
@@ -401,7 +398,7 @@ pub(crate) enum UpdateSqlOperation<'a> {
 pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
     role.access
         .iter()
-        .map(|rule| rule.try_parse())
+        .map(AccessRule::try_parse)
         .collect::<Result<Vec<_>,_>>()
 }
 
@@ -608,7 +605,7 @@ impl Default for BrokerConfig {
                     ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
-                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false, expires: None, deactivated_reason: None }),
+                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(ToString::to_string).collect(), deactivated: false, expires: None, deactivated_reason: None }),
                     ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                 ]),
@@ -616,14 +613,14 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "su,dot_local".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().expect("RI must be valid"), grant: "su,dot_local".to_string() },
                         ],
                         profile: None,
                     }),
                     ("client".to_string(), Role {
                         roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:*".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:*".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
@@ -645,32 +642,32 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".app/tunnel:create".try_into().unwrap(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:ls".try_into().unwrap(), grant: "su".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:dir".try_into().unwrap(), grant: "su".to_string() },
-                            AccessRule { shv_ri: "test/**:*".try_into().unwrap(), grant: "cfg".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:create".try_into().expect("RI must be valid"), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:ls".try_into().expect("RI must be valid"), grant: "su".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:dir".try_into().expect("RI must be valid"), grant: "su".to_string() },
+                            AccessRule { shv_ri: "test/**:*".try_into().expect("RI must be valid"), grant: "cfg".to_string() },
                         ],
                         profile: None,
                     }),
                     ("ping".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".app:ping".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app:ping".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("subscribe".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:subscribe".try_into().unwrap(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:subscribe".try_into().expect("RI must be valid"), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "bws".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().expect("RI must be valid"), grant: "bws".to_string() },
                         ],
                         profile: None,
                     }),
@@ -681,9 +678,9 @@ impl Default for BrokerConfig {
                 ]),
             },
             policies: Policies::default(),
-            tunnelling: Default::default(),
-            azure: Default::default(),
-            google_auth: Default::default(),
+            tunnelling: TunnellingConfig::default(),
+            azure: None,
+            google_auth: None,
             trusted_user_ids_role: default_exported_root_user(),
         }
     }
@@ -786,7 +783,7 @@ mod tests {
         fn merge_non_map_not_replaced_by_map() {
             let mut a = ProfileValue::Int(5);
             let b = map([("key", ProfileValue::Bool(true))]);
-            a.merge(b.clone());
+            a.merge(b);
             assert_eq!(a, ProfileValue::Int(5));
         }
 
@@ -812,7 +809,7 @@ mod tests {
         fn merge_list_concats() {
             let mut a = ProfileValue::List(vec![ProfileValue::Int(1)]);
             let b = ProfileValue::List(vec![ProfileValue::Int(2), ProfileValue::Int(3)]);
-            a.merge(b.clone());
+            a.merge(b);
             assert_eq!(a, ProfileValue::List(vec![ProfileValue::Int(1), ProfileValue::Int(2), ProfileValue::Int(3)]));
         }
 
