@@ -200,7 +200,7 @@ pub(crate) async fn server_peer_loop(
                     peer_log!(debug, "hello received");
                     let shv2_compat = broker_config.shv2_compatibility;
                     let nonce: &String = nonce.get_or_insert_with(|| if shv2_compat {
-                        format!("{}", rand::rng().random_range(0..=2000000000))
+                        format!("{}", rand::rng().random_range(0..=2_000_000_000))
                     } else {
                         Alphanumeric.sample_string(&mut rand::rng(), 16)
                     });

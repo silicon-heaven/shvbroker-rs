@@ -14,7 +14,7 @@ use crate::peer::server_peer_loop;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
     info!("Opening serial port: {port_name}");
-    let port = serialport::new(port_name, 115200)
+    let port = serialport::new(port_name, 115_200)
         .data_bits(serialport::DataBits::Eight)
         .stop_bits(serialport::StopBits::One)
         .parity(serialport::Parity::None)
