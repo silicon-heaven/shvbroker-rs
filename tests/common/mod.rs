@@ -50,8 +50,8 @@ pub fn bytes_from_output(output: Output) -> shvrpc::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 pub fn text_from_output(output: Output) -> shvrpc::Result<String> {
-    bytes_from_output(output)
-        .and_then(|bytes| String::from_utf8(bytes).map_err(Into::into))
+    let bytes = bytes_from_output(output)?;
+    String::from_utf8(bytes).map_err(Into::into)
 }
 pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
     text_from_output(output)
