@@ -1800,10 +1800,8 @@ impl BrokerImpl {
                     if policy.can_mount_via_device_id {
                         return true;
                     }
-                } else {
-                    if policy.allowed_mounts.iter().any(|allowed_mount| starts_with_path(mount_point, allowed_mount)) {
-                        return true;
-                    }
+                } else if policy.allowed_mounts.iter().any(|allowed_mount| starts_with_path(mount_point, allowed_mount)) {
+                    return true;
                 }
             }
         }
