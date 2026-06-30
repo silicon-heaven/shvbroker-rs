@@ -287,7 +287,7 @@ impl AccessRule {
     fn try_parse(&self) -> shvrpc::Result<ParsedAccessRule> {
         Ok(ParsedAccessRule {
             glob: self.shv_ri.to_glob()?,
-            access: self.grant.to_string(),
+            access: self.grant.clone(),
             access_level: self.grant
                 .split(',')
                 .find_map(AccessLevel::from_str)

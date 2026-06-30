@@ -810,8 +810,8 @@ pub(crate) fn login_params_from_client_config(client_config: &ClientConfig) -> L
     LoginParams {
         user,
         password,
-        mount_point: client_config.mount.clone().unwrap_or_default().to_owned(),
-        device_id: client_config.device_id.clone().unwrap_or_default().to_owned(),
+        mount_point: client_config.mount.clone().unwrap_or_default(),
+        device_id: client_config.device_id.clone().unwrap_or_default(),
         heartbeat_interval: client_config.heartbeat_interval,
         ..Default::default()
     }
