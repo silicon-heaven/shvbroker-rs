@@ -431,8 +431,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 let base_host = mconn
                     .server
                     .as_ref()
-                    .map(|s| s.host.clone())
-                    .unwrap_or_else(|| "tcp://127.0.0.1".to_string());
+                    .map_or_else(|| "tcp://127.0.0.1".to_string(), |s| s.host.clone());
 
                 // Ensure the base_host has a scheme
                 let normalized_host = if base_host.contains("://") {
@@ -460,8 +459,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                     .rpc
                     .as_ref()
                     .and_then(|r| r.heartbeat_interval)
-                    .map(Duration::from_secs)
-                    .unwrap_or_else(|| Duration::from_mins(1));
+                    .map_or_else(|| Duration::from_mins(1), Duration::from_secs);
 
                 let reconnect_interval = mconn
                     .rpc

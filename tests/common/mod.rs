@@ -92,9 +92,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
 
     //.arg("--output-format").arg(output_format.as_str())
     chld.wait_with_output()
-        .map(rpcmsg_from_output)
-        .unwrap_or_else(|e| panic!("{shvcall_binary} exec error: {e}"))
-
+        .map_or_else(|e| panic!("{shvcall_binary} exec error: {e}"), rpcmsg_from_output)
 }
 
 #[derive(Debug)]

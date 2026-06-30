@@ -235,10 +235,10 @@ pub(crate) async fn server_peer_loop(
                 "login" => {
                     peer_log!(debug, "login received");
                     let params = rpcmsg.param().ok_or("No login params")?.as_map();
-                    let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map(RpcValue::as_str).unwrap_or("<no user agent>");
+                    let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map_or("<no user agent>", RpcValue::as_str);
                     peer_log!(info, "User agent: '{user_agent}'");
                     let login = params.get("login").ok_or("Invalid login params")?.as_map();
-                    let login_type = login.get("type").map(RpcValue::as_str).unwrap_or("");
+                    let login_type = login.get("type").map_or("", RpcValue::as_str);
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
                     const GOOGLE_AUTH_TOKEN_PREFIX: &str = "oauth2-google:";
@@ -504,8 +504,7 @@ pub(crate) async fn server_peer_loop(
             .and_then(|options| options.get("idleWatchDogTimeOut"))
             .map(RpcValue::as_u64)
             .filter(|idle_timeout| *idle_timeout > 0)
-            .map(Duration::from_secs)
-            .unwrap_or(Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT));
+            .map_or(Duration::from_secs(IDLE_WATCHDOG_TIMEOUT_DEFAULT), Duration::from_secs);
 
         let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
         let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
