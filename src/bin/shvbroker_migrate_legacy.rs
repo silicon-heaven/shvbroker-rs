@@ -1,3 +1,4 @@
+#![expect(clippy::panic, clippy::print_stdout, clippy::print_stderr, reason = "Fine for a binary")]
 use async_sqlite::ClientBuilder;
 use clap::Parser;
 use async_sqlite::rusqlite::{params, Connection, OpenFlags, Result};

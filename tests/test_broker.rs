@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, reason = "Fine for a test")]
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::Arc;
