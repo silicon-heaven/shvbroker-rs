@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, reason = "Fine for a binary")]
 use std::path::Path;
 use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
