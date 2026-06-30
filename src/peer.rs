@@ -851,7 +851,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 
     fn run_broker_client_peer_task(
         connection_config: &CanConnectionConfig,
-        tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
+        tasks: &FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
         broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
@@ -888,7 +888,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         peer_local_addr: PeerLocalAddr,
         init_frame: ShvCanDataFrame,
         broker_config: SharedBrokerConfig,
-        tasks: &mut FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
+        tasks: &FuturesUnordered<Task<(PeerId, PeerLocalAddr, shvrpc::Result<()>)>>,
         channels: &mut HashMap::<PeerLocalAddr, PeerChannels>,
         broker_sender: UnboundedSender<BrokerCommand>,
         writer_frames_tx: UnboundedSender<ShvCanDataFrame>,
@@ -944,7 +944,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
     for connection_config in &can_interface_config.connections {
         run_broker_client_peer_task(
             connection_config,
-            &mut client_peer_tasks,
+            &client_peer_tasks,
             &mut peers_channels,
             broker_sender.clone(),
             writer_frames_tx.clone(),
@@ -1023,7 +1023,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                                             PeerLocalAddr { peer_addr, local_addr },
                                             data_frame,
                                             broker_config.clone(),
-                                            &mut server_peer_tasks,
+                                            &server_peer_tasks,
                                             &mut peers_channels,
                                             broker_sender.clone(),
                                             writer_frames_tx.clone(),
@@ -1157,7 +1157,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 connection_cfg = reconnect_rx.select_next_some() => {
                     run_broker_client_peer_task(
                         &connection_cfg,
-                        &mut client_peer_tasks,
+                        &client_peer_tasks,
                         &mut peers_channels,
                         broker_sender.clone(),
                         writer_frames_tx.clone(),

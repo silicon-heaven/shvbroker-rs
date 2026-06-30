@@ -827,7 +827,7 @@ async fn forward_subscriptions_task(
         peer_id: PeerId,
         subscribe_api: SubscribeApi,
         subscription: SubscriptionParam,
-        broker_command_sender: &mut UnboundedSender<BrokerCommand>,
+        broker_command_sender: &UnboundedSender<BrokerCommand>,
         timeout: Duration,
     ) -> Result<(), ()> {
         let method = action.method_name();
@@ -893,11 +893,11 @@ async fn forward_subscriptions_task(
                 match action {
                     SubscriptionAction::Unsubscribe => {
                         scheduled_retries.remove(&key);
-                        call_subscribe_action_with_timeout(action, peer_id, api, param, &mut broker_command_sender, TIMEOUT).await.ok();
+                        call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await.ok();
                     }
 
                     SubscriptionAction::Subscribe => {
-                        let result = call_subscribe_action_with_timeout(action, peer_id, api, param, &mut broker_command_sender, TIMEOUT).await;
+                        let result = call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await;
 
                         if result.is_err() {
                             scheduled_retries.insert(key, Instant::now() + RETRY_DELAY);
@@ -917,7 +917,7 @@ async fn forward_subscriptions_task(
                         let (peer_id, api, param) = (*peer_id, *api, param.clone());
                         let mut broker_command_sender = broker_command_sender.clone();
                         async move {
-                            let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &mut broker_command_sender, TIMEOUT).await;
+                            let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &broker_command_sender, TIMEOUT).await;
                             ((peer_id, api, SubscriptionParamWrapper(param)), res)
                         }
                     })
