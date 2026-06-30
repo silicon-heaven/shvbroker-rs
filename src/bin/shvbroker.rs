@@ -48,6 +48,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
         && let Ok(num_threads) = std::thread::available_parallelism() {
         unsafe {
+            // Safety: the program is still single-threaded by this point.
             std::env::set_var(SMOL_THREADS, num_threads.to_string());
         }
     }
