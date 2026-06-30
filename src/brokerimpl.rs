@@ -122,7 +122,7 @@ pub(crate) enum SubscribeApi {
 }
 
 impl SubscribeApi {
-    pub(crate) fn path(&self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             SubscribeApi::V2 => SUBSCRIBE_PATH_API_V2,
             SubscribeApi::V3 => SUBSCRIBE_PATH_API_V3,
@@ -253,7 +253,7 @@ enum SubscriptionAction {
 }
 
 impl SubscriptionAction {
-    fn method_name(&self) -> &'static str {
+    fn method_name(self) -> &'static str {
         match self {
             SubscriptionAction::Subscribe => METH_SUBSCRIBE,
             SubscriptionAction::Unsubscribe => METH_UNSUBSCRIBE,
