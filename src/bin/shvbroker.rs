@@ -103,7 +103,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         info!("Running in SHV2 compatibility mode");
     }
     let (access, policies, last_login, sql_connection) = if config.use_access_db {
-        let data_dir = config.data_directory.clone().unwrap_or("/tmp/shvbroker/data".to_owned());
+        let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
         info!("Data directory: {data_dir}");
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
         let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies))?;
