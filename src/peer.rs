@@ -617,7 +617,7 @@ pub(crate) async fn server_peer_loop(
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
                                 if let Some(reason) = reason {
-                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().unwrap())?
+                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().unwrap())?;
                                 }
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
@@ -625,7 +625,7 @@ pub(crate) async fn server_peer_loop(
                                 break 'session_loop;
                             }
                             BrokerToPeerMessage::SendFrame(frame) => {
-                                frames_tx.unbounded_send(frame)?
+                                frames_tx.unbounded_send(frame)?;
                             }
                         }
                         fut_receive_broker_event = Box::pin(peer_reader.recv()).fuse();

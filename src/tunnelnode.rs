@@ -338,7 +338,7 @@ impl ShvNode for TunnelNode {
                     let active_tunnels = self.active_tunnels.clone();
                     smol::spawn(async move {
                         if let Err(e) = tunnel_task(tunid, rq_meta, host, receiver, peers.clone(), active_tunnels.clone()).await {
-                            error!("{e}")
+                            error!("{e}");
                         }
                         tunnel_close_handler(active_tunnels, peers, tunid);
                     }).detach();

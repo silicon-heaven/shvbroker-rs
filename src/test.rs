@@ -66,7 +66,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
 
 #[test]
 fn test_broker_loop_as_user() {
-    smol::block_on(test_broker_loop_as_user_async())
+    smol::block_on(test_broker_loop_as_user_async());
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
@@ -152,7 +152,7 @@ async fn test_broker_loop_as_user_async() {
 
 #[test]
 fn test_broker_loop_as_admin() {
-    smol::block_on(test_broker_loop_as_admin_async())
+    smol::block_on(test_broker_loop_as_admin_async());
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };

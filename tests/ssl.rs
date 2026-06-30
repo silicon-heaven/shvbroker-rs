@@ -37,7 +37,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
         let (broker_sender, broker_receiver) = unbounded();
         run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
             .await
-            .expect("broker accept_loop failed")
+            .expect("broker accept_loop failed");
     }).detach();
     // Wait for the broker
     let start = std::time::Instant::now();
@@ -68,7 +68,7 @@ async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
                     .unwrap_or_else(|(commands_tx, _)| {
                         warn!("Client channels dropped before handed to the caller. Terminating the client");
                         commands_tx.terminate_client();
-                    })
+                    });
             })
             .await
             .unwrap_or_else(|e| error!("Client finished with error: {e}"));

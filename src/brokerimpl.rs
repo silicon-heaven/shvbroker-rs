@@ -1549,8 +1549,7 @@ impl BrokerImpl {
                         response_sender,
                         started: Instant::now(),
                     },
-                )
-                .await?
+                ).await?;
             }
         }
         Ok(())

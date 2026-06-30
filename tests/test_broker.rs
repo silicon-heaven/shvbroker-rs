@@ -317,7 +317,7 @@ fn check_subscription_along_property_path(property_path: &str, port: i32) -> shv
     let dirs = property_path.split('/').collect::<Vec<_>>();
     for i in 1 .. dirs.len() - 1 {
         let subscribe_path = dirs[.. i].join("/") + "/**";
-        check_subscription(property_path, &subscribe_path, port)?
+        check_subscription(property_path, &subscribe_path, port)?;
     }
     Ok(())
 }
