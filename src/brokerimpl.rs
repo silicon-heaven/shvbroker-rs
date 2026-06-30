@@ -361,7 +361,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                                         modified_user.deactivated = true;
                                         modified_user.deactivated_reason = Some("auto_inactivity".to_string());
                                         if let Err(e) = access.set_access_user(user_id, Some(modified_user), sql_conn).await {
-                                            error!("Failed to deactivate user {}: {}", user_id, e);
+                                            error!("Failed to deactivate user {user_id}: {e}");
                                         }
                                     }
                                 }
@@ -1685,7 +1685,7 @@ impl BrokerImpl {
                 ..
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point {
-                    info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
+                    info!("Peer id: {peer_id} mounted on path: '{mount_point}'");
                     break 'find_mount (Some(mount_point.clone()), false, false);
                 }
 
@@ -1700,10 +1700,7 @@ impl BrokerImpl {
                         }
                         Some(mount) => {
                             let mount_point = mount.mount_point.clone();
-                            info!(
-                                "Peer id: {}, device id: {} mounted on path: '{}'",
-                                peer_id, device_id, mount_point
-                            );
+                            info!("Peer id: {peer_id}, device id: {device_id} mounted on path: '{mount_point}'");
                             break 'find_mount (Some(mount_point), true, false);
                         }
                     }

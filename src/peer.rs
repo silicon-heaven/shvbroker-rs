@@ -346,7 +346,7 @@ pub(crate) async fn server_peer_loop(
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
                                 Err(e) => {
-                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {}", e)).or(frame_write_timeout()).await?;
+                                    frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {e}")).or(frame_write_timeout()).await?;
                                     continue 'login_loop;
                                 }
                             }
@@ -725,7 +725,7 @@ async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_
     } else if frame.is_signal() || frame.is_response() {
         broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
     } else {
-        warn!("Invalid frame type received: {}", frame);
+        warn!("Invalid frame type received: {frame}");
     }
     Ok(())
 }
@@ -1187,7 +1187,7 @@ async fn broker_as_client_peer_loop(
 ) -> shvrpc::Result<()>
 {
     let heartbeat_interval = login_params.heartbeat_interval;
-    info!("Heartbeat interval set to: {:?}", heartbeat_interval);
+    info!("Heartbeat interval set to: {heartbeat_interval:?}");
 
     let login_timeout = async move {
         const LOGIN_TIMEOUT: u64 = 10;
@@ -1222,7 +1222,7 @@ async fn broker_as_client_peer_loop(
     smol::spawn(async move {
         while let Some(frame) = frames_rx.next().await {
             if let Err(e) = frame_writer.send_frame(frame).await {
-                log::debug!("frame send failed: {}", e);
+                log::debug!("frame send failed: {e}");
                 return Err((e, frame_writer));
             }
         }

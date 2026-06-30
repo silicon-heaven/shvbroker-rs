@@ -438,7 +438,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 let normalized_host = if base_host.contains("://") {
                     base_host
                 } else {
-                    format!("tcp://{}", base_host)
+                    format!("tcp://{base_host}")
                 };
 
                 let mut url = Url::parse(&normalized_host)

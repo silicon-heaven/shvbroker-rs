@@ -395,10 +395,10 @@ pub(crate) fn tunnel_close_handler(active_tunnels: Arc<RwLock<BTreeMap<TunnelId,
             match msg.to_frame() {
                 Ok(frame) => {
                     if let Err(e) = crate::brokerimpl::BrokerImpl::emit_rpc_signal_frame(&peers, 0, &frame).await {
-                        log::error!("Failed to emit tunnel closed signal: {}", e);
+                        log::error!("Failed to emit tunnel closed signal: {e}");
                     }
                 }
-                Err(e) => log::error!("Failed to create tunnel closed signal frame: {}", e),
+                Err(e) => log::error!("Failed to create tunnel closed signal frame: {e}"),
             }
         }
     }).detach();
