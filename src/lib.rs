@@ -26,7 +26,9 @@ pub mod spawn {
 }
 
 fn cut_prefix(shv_path: &str, prefix: &str) -> Option<String> {
+    #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
     if shv_path.starts_with(prefix) && (shv_path.len() == prefix.len() || shv_path[prefix.len() ..].starts_with('/')) {
+        #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
         let shv_path = &shv_path[prefix.len() ..];
         shv_path.strip_prefix('/')
             .or(Some(shv_path))

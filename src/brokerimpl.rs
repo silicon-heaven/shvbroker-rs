@@ -747,7 +747,9 @@ pub struct BrokerImpl {
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
     mount_point.rfind('/').map_or(("", mount_point), |ix| {
+        #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
         let dir = &mount_point[ix + 1..];
+        #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
         let prefix = &mount_point[..ix];
         (prefix, dir)
     })
