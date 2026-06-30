@@ -20,7 +20,7 @@ fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn 
         .parity(serialport::Parity::None)
         // serial port should never timeout,
         // timeout on serial breaks reader loop
-        .timeout(Duration::from_secs(60 * 60 *24 * 365 * 100))
+        .timeout(Duration::from_hours(24 * 365 * 100))
         .open()?;
 
     // Clone the port

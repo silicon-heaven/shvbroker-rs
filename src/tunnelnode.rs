@@ -151,7 +151,7 @@ pub(crate) async fn tunnel_task(
         let active_tunnels = active_tunnels.clone();
         let peers = peers.clone();
         smol::spawn(async move {
-            const TIMEOUT: Duration = Duration::from_secs(60 * 60);
+            const TIMEOUT: Duration = Duration::from_hours(1);
             loop {
                 smol::Timer::after(TIMEOUT / 60).await;
                 let last_activity = last_tunnel_activity(&active_tunnels, tunnel_id).await;

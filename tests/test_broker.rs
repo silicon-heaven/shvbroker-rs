@@ -292,7 +292,7 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
     let calls: Vec<ShvCallCommand> = vec![
         ShvCallCommand::Call(format!(r#".broker/currentClient:subscribe ["{subscribe_path}:*:chng"]"#)),
         ShvCallCommand::Call(format!(r#"{property_path}:set 42"#)),
-        ShvCallCommand::Wait(std::time::Duration::from_millis(1000)),
+        ShvCallCommand::Wait(std::time::Duration::from_secs(1)),
         ShvCallCommand::Call(format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#)),
         ShvCallCommand::Call(format!(r#"{property_path}:set 123"#)),
     ];

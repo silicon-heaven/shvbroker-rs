@@ -972,7 +972,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         }));
 
         let time_broadcast_interval: std::pin::Pin<Box<dyn futures::Stream<Item = ()> + Send>>  = if broker_config.time_broadcast {
-            Box::pin(futures::StreamExt::map(Timer::interval(Duration::from_secs(60)), |_| ()))
+            Box::pin(futures::StreamExt::map(Timer::interval(Duration::from_mins(1)), |_| ()))
         } else {
             Box::pin(futures::stream::empty())
         };

@@ -461,7 +461,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                     .as_ref()
                     .and_then(|r| r.heartbeat_interval)
                     .map(Duration::from_secs)
-                    .unwrap_or_else(|| Duration::from_secs(60));
+                    .unwrap_or_else(|| Duration::from_mins(1));
 
                 let reconnect_interval = mconn
                     .rpc

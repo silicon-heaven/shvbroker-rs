@@ -59,7 +59,7 @@ async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
             url: Url::parse(PARENT_BROKER_CONNNECT_URL).unwrap(),
             device_id: None,
             mount: None,
-            heartbeat_interval: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_mins(1),
             reconnect_interval: None,
         };
         shvclient::client::Client::new_plain()
@@ -184,7 +184,7 @@ fn ssl() {
         // We need to wait at least 1 second, because the parent broker waits 1 second, before
         // accepting another connection. Then wait a little bit more (here, 1 second), so that the
         // child broker has enough time, to make the connection to the parent broker.
-        smol::Timer::after(std::time::Duration::from_millis(2000)).await;
+        smol::Timer::after(std::time::Duration::from_secs(2)).await;
 
         let (client_cmd, mut client_events) = start_client().await.expect("Client start");
         match client_events.wait_for_event().timeout(Duration::from_secs(5)).await {
