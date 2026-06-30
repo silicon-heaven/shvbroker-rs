@@ -183,11 +183,11 @@ pub(crate) async fn tunnel_task(
                     trace!(target: "Tunnel", "write_task_receiver read {} bytes to write.", data.len());
                     if data.is_empty() {
                         break;
-                    } else {
-                        trace!(target: "Tunnel", "Write {} bytes to client socket.", data.len());
-                        socket_writer.write_all(&data).await?;
-                        socket_writer.flush().await?;
                     }
+
+                    trace!(target: "Tunnel", "Write {} bytes to client socket.", data.len());
+                    socket_writer.write_all(&data).await?;
+                    socket_writer.flush().await?;
                 }
                 Err(e) => {
                     error!("write broker channel error: {e}");
@@ -208,14 +208,14 @@ pub(crate) async fn tunnel_task(
                     if bytes_read == 0 {
                         trace!(target: "Tunnel", "Client socket closed.");
                         break;
-                    } else {
-                        let mut data = read_buff[.. bytes_read].to_vec();
-                        response_buff.append(&mut data);
-                        let mut response_meta = response_meta.clone();
-                        response_meta.set_seqno(read_seqno);
-                        read_seqno += 1;
-                        BrokerImpl::send_response(&peers, peer_id, response_meta, Ok(std::mem::take(&mut response_buff).into())).await?;
                     }
+
+                    let mut data = read_buff[.. bytes_read].to_vec();
+                    response_buff.append(&mut data);
+                    let mut response_meta = response_meta.clone();
+                    response_meta.set_seqno(read_seqno);
+                    read_seqno += 1;
+                    BrokerImpl::send_response(&peers, peer_id, response_meta, Ok(std::mem::take(&mut response_buff).into())).await?;
                 },
                 Err(e) => {
                     error!("tunnel socket error: {e}");

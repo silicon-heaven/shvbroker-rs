@@ -106,18 +106,18 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let dir = dir(PUBLIC_DIR_LS_METHODS.iter(), rpcmsg.param().into());
             return Some(Ok(dir))
-        } else {
-            return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
         }
+
+        return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
     }
     if method == METH_LS && !is_tree_leaf && !is_remote_dir  {
         // ls on not-leaf node must be resolved locally
         if let Ok(rpcmsg) = frame.to_rpcmesage() {
             let ls = ls_children_to_result(children, rpcmsg.param().into());
             return Some(ls)
-        } else {
-            return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
         }
+
+        return Some(Err(RpcError::new(RpcErrorCode::InvalidRequest, "Cannot convert RPC frame to Rpc message")))
     }
     None
 }

@@ -362,11 +362,11 @@ pub(crate) async fn server_peer_loop(
                         if let Some((user, session_token)) = receiver.await? {
                             peer_log!(debug, "token OK");
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
-                        } else {
-                            peer_log!(warn, "invalid token");
-                            frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                            continue 'login_loop;
                         }
+
+                        peer_log!(warn, "invalid token");
+                        frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
+                        continue 'login_loop;
                     }
 
                     if login_type == "TOKEN" || login_type == "AZURE" {
@@ -476,10 +476,10 @@ pub(crate) async fn server_peer_loop(
                     if let Some(session_token) = receiver.await? {
                         peer_log!(debug, "password OK");
                         break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
-                    } else {
-                        peer_log!(warn, "invalid login credentials, user: {user}");
-                        frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                     }
+
+                    peer_log!(warn, "invalid login credentials, user: {user}");
+                    frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                 },
                 _ => {
                     frame_writer.send_error(resp_meta, "Invalid login message.").or(frame_write_timeout()).await?;
