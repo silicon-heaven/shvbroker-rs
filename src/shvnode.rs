@@ -851,8 +851,8 @@ impl ShvNode for BrokerCurrentClientNode {
                 let access = self.access.read().await;
                 let merged_profile = access.flatten_roles(user_roles.as_slice())
                     .iter()
-                    .flat_map(|role| access.access_role(role))
-                    .flat_map(|role| role.profile.clone())
+                    .filter_map(|role| access.access_role(role))
+                    .filter_map(|role| role.profile.clone())
                     .fold(None, |mut res: Option<crate::config::ProfileValue>, profile| {
                         match &mut res {
                             Some(res) => res.merge(profile),
