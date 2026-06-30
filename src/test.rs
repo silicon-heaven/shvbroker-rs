@@ -22,7 +22,7 @@ struct CallCtx {
 }
 async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut CallCtx, resp_rq_id: Option<RqId>) -> Result<(RqId, RpcValue), RpcError> {
     let rq = RpcMessage::new_request(shv_path, method).with_param(param);
-    let rqid = if let Some(resp_rq_id) = resp_rq_id { Some(resp_rq_id) } else { rq.request_id() };
+    let rqid = resp_rq_id.map_or_else(|| rq.request_id(), |resp_rq_id| Some(resp_rq_id));
     let frame = RpcFrame::from_rpcmessage(&rq).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
     ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.peer_id, frame }).unwrap();

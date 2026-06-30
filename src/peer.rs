@@ -292,11 +292,7 @@ pub(crate) async fn server_peer_loop(
                                         let key = DecodingKey::from_rsa_components(n, e)?;
                                         *GOOGLE_KEY_CACHE.write().await = Some(key);
                                     }
-                                    if let Some(key) = GOOGLE_KEY_CACHE.read().await.clone() {
-                                        Ok(key)
-                                    } else {
-                                        Err("Internal error - Google key should be cached already".into())
-                                    }
+                                    GOOGLE_KEY_CACHE.read().await.clone().map_or_else(|| Err("Internal error - Google key should be cached already".into()), Ok)
                                 }
 
                                 // Set up validation (check audience and issuer)

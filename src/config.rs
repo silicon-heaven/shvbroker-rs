@@ -172,10 +172,7 @@ impl TryFrom<&RpcValue> for User {
         match serde_json::from_str(&cpon) {
             Ok(user) => { Ok(user) }
             Err(e) => {
-                match UserV2::try_from(cpon.as_str()) {
-                    Ok(user) => { User::from_v2(user) }
-                    Err(_) => { Err(e.to_string()) }
-                }
+                UserV2::try_from(cpon.as_str()).map_or_else(|_| Err(e.to_string()), User::from_v2)
             }
         }
     }

@@ -96,12 +96,10 @@ impl TunnelNode {
     }
 
     pub(crate) async fn write_tunnel(&self, tunid: TunnelId, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
-        if let Some(tun) = self.active_tunnels.write().await.get(&tunid) {
+        self.active_tunnels.write().await.get(&tunid).map_or_else(|| Err(format!("Invalid tunnel ID: {tunid}").into()), |tun| {
             let _ = tun.sender.unbounded_send(ToRemoteMsg::WriteData(rqid, data));
             Ok(())
-        } else {
-            Err(format!("Invalid tunnel ID: {tunid}").into())
-        }
+        })
     }
 
     pub(crate) async fn create_tunnel(&self, request: &shvrpc::RpcMessage) -> shvrpc::Result<(TunnelId, UnboundedReceiver<ToRemoteMsg>)> {

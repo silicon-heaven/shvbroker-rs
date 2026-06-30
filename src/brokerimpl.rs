@@ -1498,14 +1498,14 @@ impl BrokerImpl {
                             client_shapass == shapwd
                         },
                         "SHA1" => {
-                            if let Some(nonce) = &nonce {
+                            nonce.as_ref().map_or_else(|| {
+                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
+                                false
+                            }, |nonce| {
                                 let mut data = nonce.as_bytes().to_vec();
                                 data.extend_from_slice(shapwd.as_bytes());
                                 password == sha1_hash(&data)
-                            } else {
-                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
-                                false
-                            }
+                            })
                         },
                         _ => {
                             debug!("peer_id({peer_id}): unknown login type '{login_type}'");
@@ -1763,13 +1763,9 @@ impl BrokerImpl {
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
 
-        let user_roles = if let Some(roles) = oauth2_user_groups.get(&peer_id) {
-            roles.clone()
-        } else {
-            access.access_user(user)
-                .map(|u| u.roles.clone())
-                .unwrap_or_default()
-        };
+        let user_roles = oauth2_user_groups.get(&peer_id).map_or_else(|| access.access_user(user)
+            .map(|u| u.roles.clone())
+            .unwrap_or_default(), |roles| roles.clone());
         let flatten_roles = access.flatten_roles(&user_roles);
 
         let mut any_role_has_ip_policy = false;
