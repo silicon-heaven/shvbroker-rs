@@ -91,6 +91,7 @@ pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection
         acc
     });
 
+    #[expect(clippy::cast_possible_wrap, reason = "We hope the usize doesn't wrap around")]
     sql_connection.conn(move |sql_connection| {
         sql_connection.execute(&query, ())
     }).await

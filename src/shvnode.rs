@@ -683,8 +683,8 @@ fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
             }
             Some(ttl) => {
                 let key = subscr.glob.as_str().to_string();
-                let ttl = Instant::now() + Duration::from_secs(ttl as u64) - subscr.subscribed;
-                (key, (ttl.as_secs() as i64).into())
+                let ttl = Instant::now() + Duration::from_secs(u64::from(ttl)) - subscr.subscribed;
+                (key, ttl.as_secs().cast_signed().into())
             }
         })
         .collect()

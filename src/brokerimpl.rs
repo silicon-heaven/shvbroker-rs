@@ -335,7 +335,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                         if deactivate_after_days == 0 {
                             continue;
                         }
-                        let threshold = shvproto::DateTime::now().add_days(-(deactivate_after_days as i64));
+                        let threshold = shvproto::DateTime::now().add_days(-i64::from(deactivate_after_days));
                         let last_login_map = last_login.read().await.get().clone();
                         let mut access = access.write().await;
                         let users_to_deactivate: Vec<_> = access.users().iter()
