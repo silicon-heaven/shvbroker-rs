@@ -308,17 +308,15 @@ pub(crate) async fn server_peer_loop(
 
                                 // Try with cached key first
                                 let decoding_key = get_google_decoding_key(&kid, false).await?;
-                                let token_data = {
-                                    // Try to verify with cached key
-                                    match decode::<GoogleClaims>(token, &decoding_key, &validation) {
-                                        Ok(data) => data,
-                                        Err(_) => {
-                                            // Cached key failed, fetch new key and retry
-                                            let decoding_key = get_google_decoding_key(&kid, true).await?;
-                                            // Retry verification with new key
-                                            decode::<GoogleClaims>(token, &decoding_key, &validation)?
-                                        }
-                                    }
+
+                                // Try to verify with cached key
+                                let token_data = if let Ok(data) = decode::<GoogleClaims>(token, &decoding_key, &validation) {
+                                    data
+                                } else {
+                                    // Cached key failed, fetch new key and retry
+                                    let decoding_key = get_google_decoding_key(&kid, true).await?;
+                                    // Retry verification with new key
+                                    decode::<GoogleClaims>(token, &decoding_key, &validation)?
                                 };
                                 Ok(token_data.claims)
                             }
