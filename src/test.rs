@@ -256,9 +256,9 @@ async fn test_broker_loop_as_admin_async() {
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(users.clone()).as_list());
                 let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let user1 = User::try_from(&resp).unwrap();
-                let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
-                assert_eq!(user1, user2);
+                let user = User::try_from(&resp).unwrap();
+                let expected = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
+                assert_eq!(user, expected);
             }
             {
                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false, expires: None, deactivated_reason: None };
@@ -282,9 +282,9 @@ async fn test_broker_loop_as_admin_async() {
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let role1 = Role::try_from(&resp).unwrap();
-                let role2 = config.access.access_role("tester").unwrap();
-                assert_eq!(&role1, role2);
+                let role = Role::try_from(&resp).unwrap();
+                let expected = config.access.access_role("tester").unwrap();
+                assert_eq!(&role, expected);
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };

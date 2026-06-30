@@ -998,16 +998,16 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
 
                                     if let std::collections::hash_map::Entry::Occupied(entry) = peers_channels.entry(peer_local_addr) {
                                         debug!(target: "shvcan", "{can_iface} RECV: {frame}", frame = shvcan_frame.to_brief_string());
-                                        let peer_channels = entry.get();
+                                        let channel = entry.get();
                                         match shvcan_frame {
                                             ShvCanFrame::Data(data_frame) => {
-                                                peer_channels
+                                                channel
                                                     .reader_frames_tx
                                                     .unbounded_send(data_frame)
                                                     .unwrap_or_else(|e| warn!("Cannot send a Data frame to peer task 0x{peer_addr:x}->0x{local_addr:x}: {e}"));
                                                 }
                                             ShvCanFrame::Ack(ack_frame) => {
-                                                peer_channels
+                                                channel
                                                     .writer_ack_tx
                                                     .unbounded_send(ack_frame)
                                                     .unwrap_or_else(|e| warn!("Cannot send an ACK frame to peer task 0x{peer_addr:x}->0x{local_addr:x}: {e}"));
