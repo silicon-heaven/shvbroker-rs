@@ -1,3 +1,4 @@
+#![expect(clippy::panic, reason = "Fine for a test")]
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::LazyLock;
