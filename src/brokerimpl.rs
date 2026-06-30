@@ -1763,9 +1763,7 @@ impl BrokerImpl {
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
 
-        let user_roles = oauth2_user_groups.get(&peer_id).map_or_else(|| access.access_user(user)
-            .map(|u| u.roles.clone())
-            .unwrap_or_default(), |roles| roles.clone());
+        let user_roles = oauth2_user_groups.get(&peer_id).cloned().unwrap_or_else(|| access.access_user(user).map(|u| u.roles.clone()).unwrap_or_default());
         let flatten_roles = access.flatten_roles(&user_roles);
 
         let mut any_role_has_ip_policy = false;
