@@ -83,7 +83,7 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         .arg("--method").arg(format!("{path}:{method}"));
     if !param.is_empty() {
         cmd.arg("--param-file").arg("-");
-    };
+    }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut chld = cmd.spawn().unwrap();
     let mut stdin = chld.stdin.take().unwrap();

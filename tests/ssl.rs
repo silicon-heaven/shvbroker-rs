@@ -191,7 +191,7 @@ fn ssl() {
             Some(Ok(ClientEvent::Connected(..))) => { },
             Some(_evt) => panic!("Client connection to broker error"),
             None => panic!("Client connection to broker timed out"),
-        };
+        }
 
         let res = RpcCallDirList::new("test/child-broker/.app")
             .timeout(Duration::from_secs(3))

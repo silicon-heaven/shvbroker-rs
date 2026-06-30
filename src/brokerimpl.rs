@@ -1383,7 +1383,7 @@ impl BrokerImpl {
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
                     return Err(msg.into());
-                };
+                }
 
                 let mount_point = Self::mount_point(&self.peers, new_peer_id).await;
                 if let Some(mount_point) = mount_point {

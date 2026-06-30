@@ -291,7 +291,7 @@ pub(crate) async fn server_peer_loop(
                                         // Create a decoding key from RSA components (n, e)
                                         let key = DecodingKey::from_rsa_components(n, e)?;
                                         *GOOGLE_KEY_CACHE.write().await = Some(key);
-                                    };
+                                    }
                                     if let Some(key) = GOOGLE_KEY_CACHE.read().await.clone() {
                                         Ok(key)
                                     } else {

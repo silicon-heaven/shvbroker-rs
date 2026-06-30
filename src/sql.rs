@@ -87,7 +87,7 @@ pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection
             UpdateSqlOperation::Delete { table, id } => {
                 acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
             }
-        };
+        }
         acc
     });
 
