@@ -359,7 +359,7 @@ pub(crate) async fn touch_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, Acti
 }
 
 pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<Instant> {
-    active_tunnels.read().await.get(&tunid).map_or(None, |tun| tun.last_activity)
+    active_tunnels.read().await.get(&tunid).and_then(|tun| tun.last_activity)
 }
 
 pub(crate) async fn close_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<bool> {
