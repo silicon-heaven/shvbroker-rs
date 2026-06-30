@@ -464,7 +464,7 @@ async fn server_accept_loop(
         let peer_addr = stream.peer_addr().as_ref().map(core::net::SocketAddr::ip).ok();
         info!("Accepted TCP connection from peer: {peer_addr:?}, peer_id: {peer_id}");
 
-        let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.as_ref().cloned() {
+        let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.clone() {
             match tls_acceptor.accept(stream).await {
                 Ok(stream) => {
                     info!("TLS handshake OK, peer: {peer_addr:?}, peer_id: {peer_id}");
