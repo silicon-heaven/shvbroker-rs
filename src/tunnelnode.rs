@@ -63,11 +63,7 @@ impl TunnelNode {
     }
 
     pub(crate) async fn last_tunnel_activity(&self, tunid: TunnelId) -> Option<Instant> {
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
-            tun.last_activity
-        } else {
-            None
-        }
+        self.active_tunnels.read().await.get(&tunid).and_then(|tun| tun.last_activity)
     }
 
     pub(crate) async fn active_tunnel_ids(&self) -> Vec<TunnelId> {
@@ -84,15 +80,13 @@ impl TunnelNode {
         let Ok(tunid) = tunid.parse::<TunnelId>() else {
             return false;
         };
-        if let Some(tun) = self.active_tunnels.read().await.get(&tunid) {
+        self.active_tunnels.read().await.get(&tunid).is_some_and(|tun| {
             let cids = frame.caller_ids();
             cids == tun.caller_ids
                 || AccessLevel::try_from(frame.access_level().unwrap_or(0))
-                    .unwrap_or(AccessLevel::Browse)
-                    == AccessLevel::Superuser
-        } else {
-            false
-        }
+                .unwrap_or(AccessLevel::Browse)
+                == AccessLevel::Superuser
+        })
     }
 
     pub(crate) async fn write_tunnel(&self, tunid: TunnelId, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
@@ -365,11 +359,7 @@ pub(crate) async fn touch_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, Acti
 }
 
 pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<Instant> {
-    if let Some(tun) = active_tunnels.read().await.get(&tunid) {
-        tun.last_activity
-    } else {
-        None
-    }
+    active_tunnels.read().await.get(&tunid).map_or(None, |tun| tun.last_activity)
 }
 
 pub(crate) async fn close_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>>, tunid: TunnelId) -> Option<bool> {

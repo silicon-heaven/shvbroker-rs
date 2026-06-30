@@ -746,13 +746,11 @@ pub struct BrokerImpl {
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
-    if let Some(ix) = mount_point.rfind('/') {
+    mount_point.rfind('/').map_or(("", mount_point), |ix| {
         let dir = &mount_point[ix + 1..];
         let prefix = &mount_point[..ix];
         (prefix, dir)
-    } else {
-        ("", mount_point)
-    }
+    })
 }
 
 async fn forward_subscriptions_task(

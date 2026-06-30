@@ -80,21 +80,17 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
             .collect();
 
         // Parse profile JSON if not empty
-        let profile = if let Some(s) = profile_str {
-            if !s.trim().is_empty() {
-                match serde_json::from_str::<ProfileValue>(&s) {
-                    Ok(p) => Some(p),
-                    Err(e) => {
-                        eprintln!("Failed to parse profile JSON for {name}: {e}");
-                        Some(ProfileValue::Null)
-                    }
+        let profile = profile_str.and_then(|s| if !s.trim().is_empty() {
+            match serde_json::from_str::<ProfileValue>(&s) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("Failed to parse profile JSON for {name}: {e}");
+                    Some(ProfileValue::Null)
                 }
-            } else {
-                None
             }
         } else {
             None
-        };
+        });
 
         Ok((name, Role {
             roles: role_list,
