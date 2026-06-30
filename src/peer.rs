@@ -710,7 +710,7 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     false
 }
 
-fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: &UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     if frame.is_request() {
         let mut frame = frame;
         let shv_path = frame.shv_path().unwrap_or_default();
@@ -1247,7 +1247,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone())?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, &broker_writer)?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1270,7 +1270,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone())?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, &broker_writer)?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
@@ -1316,7 +1316,7 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Re
         if let Some(method) = frame.method() && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE) {
             // prepend exported root to subscribed path
             let is_subscribe = method == METH_SUBSCRIBE;
-            frame = fix_subscribe_param(frame, shv_root, is_subscribe)?;
+            frame = fix_subscribe_param(&frame, shv_root, is_subscribe)?;
         }
         shv_path
     } else if is_dot_local_request(&frame) {
@@ -1330,7 +1330,7 @@ fn fix_request_frame_shv_root(mut frame: RpcFrame, shv_root: &str) -> shvrpc::Re
     Ok(frame)
 }
 
-fn fix_subscribe_param(frame: RpcFrame, exported_root: &str, is_subscribe: bool) -> shvrpc::Result<RpcFrame> {
+fn fix_subscribe_param(frame: &RpcFrame, exported_root: &str, is_subscribe: bool) -> shvrpc::Result<RpcFrame> {
     let mut msg = frame.to_rpcmesage()?;
     let param = msg.param().unwrap_or_default();
     let mut subpar = SubscriptionParam::from_rpcvalue(param)?;

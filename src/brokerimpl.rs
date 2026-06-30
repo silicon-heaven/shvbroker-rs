@@ -1059,7 +1059,7 @@ impl BrokerImpl {
             nodes,
             pending_rpc_calls: vec![],
             command_sender,
-            config: config.clone(),
+            config,
             peers,
             mounts,
             access,
