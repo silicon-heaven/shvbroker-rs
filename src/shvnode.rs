@@ -96,9 +96,9 @@ pub fn process_local_dir_ls<V>(mounts: &BTreeMap<String, V>, frame: &RpcFrame) -
         // path doesn't exist
         return Some(Err(RpcError::new(RpcErrorCode::MethodNotFound, format!("Invalid shv path: {shv_path}"))))
     }
-    let is_mount_point = mount_pair.is_some() && mount_pair.unwrap().1.is_empty();
+    let is_mount_point = mount_pair.is_some_and(|mount_pair| mount_pair.1.is_empty());
     let is_remote_dir = mount_pair.is_some() && children.is_none();
-    let is_tree_leaf = mount_pair.is_some() && children.is_some() && children.as_ref().unwrap().is_empty();
+    let is_tree_leaf = mount_pair.is_some() && children.as_ref().is_some_and(Vec::is_empty);
     //println!("shv path: {shv_path}, method: {method}, mount pair: {:?}", mount_pair);
     //println!("is_mount_point: {is_mount_point}, is_tree_leaf: {is_tree_leaf}");
     if method == METH_DIR && !is_mount_point && !is_remote_dir && !is_tree_leaf {

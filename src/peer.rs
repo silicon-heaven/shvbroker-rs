@@ -609,7 +609,7 @@ pub(crate) async fn server_peer_loop(
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
                                 peer_log!(info, "disconnected by broker");
                                 if let Some(reason) = reason {
-                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().unwrap())?;
+                                    frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().expect("Frame must be constructed"))?;
                                 }
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();

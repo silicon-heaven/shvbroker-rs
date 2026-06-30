@@ -69,7 +69,7 @@ pub(crate) fn main() -> shvrpc::Result<()> {
             }
         }
     }
-    logger.init().unwrap();
+    logger.init().expect("Logger must work");
 
     info!("=====================================================");
     info!("{} ver. {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));

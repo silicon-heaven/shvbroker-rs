@@ -56,7 +56,7 @@ async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
     let (tx, rx) = futures::channel::oneshot::channel();
     smol::spawn(async {
         let client_config = shvclient::shvrpc::client::ClientConfig {
-            url: Url::parse(PARENT_BROKER_CONNNECT_URL).unwrap(),
+            url: Url::parse(PARENT_BROKER_CONNNECT_URL).expect("URL must be valid"),
             device_id: None,
             mount: None,
             heartbeat_interval: Duration::from_mins(1),
@@ -128,8 +128,8 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let parent_broker_config = BrokerConfig {
         listen: vec![
-            Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).unwrap() },
-            Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).unwrap() },
+            Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).expect("URL must be valid") },
+            Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).expect("URL must be valid") },
         ],
         policies: Policies::new(BTreeMap::from([
             ("su".to_string(), Policy {
@@ -148,7 +148,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let child_broker_config = BrokerConfig {
         listen: vec![
-            Listen { url: Url::parse(CHILD_BROKER_LISTEN_URL).unwrap() },
+            Listen { url: Url::parse(CHILD_BROKER_LISTEN_URL).expect("URL must be valid") },
         ],
         connections: vec![
             BrokerConnectionConfig {
@@ -160,7 +160,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
                     mount: None,
                     heartbeat_interval: duration_str::parse("1m").expect("ClientConfig parse heartbeat interval should succeed"),
                     reconnect_interval: None,
-                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}?ca={ca}", ca = ca_crt_path.to_string_lossy())).unwrap(),
+                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}?ca={ca}", ca = ca_crt_path.to_string_lossy())).expect("URL must be valid"),
                 }
             }
         ],

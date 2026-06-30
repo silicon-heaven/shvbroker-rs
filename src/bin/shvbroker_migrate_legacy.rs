@@ -442,7 +442,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 };
 
                 let mut url = Url::parse(&normalized_host)
-                    .unwrap_or_else(|_| Url::parse("tcp://127.0.0.1").unwrap());
+                    .unwrap_or_else(|_| Url::parse("tcp://127.0.0.1").expect("URL must be valid"));
 
                 // Inject user and password
                 if let Some(login) = &mconn.login {

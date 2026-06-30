@@ -613,14 +613,14 @@ impl Default for BrokerConfig {
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "su,dot_local".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().expect("RI must be valid"), grant: "su,dot_local".to_string() },
                         ],
                         profile: None,
                     }),
                     ("client".to_string(), Role {
                         roles: vec!["ping".to_string(), "subscribe".to_string(), "browse".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:*".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:*".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
@@ -642,32 +642,32 @@ impl Default for BrokerConfig {
                     ("tester".to_string(), Role {
                         roles: vec!["client".to_string()],
                         access: vec![
-                            AccessRule { shv_ri: ".app/tunnel:create".try_into().unwrap(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:ls".try_into().unwrap(), grant: "su".to_string() },
-                            AccessRule { shv_ri: ".app/tunnel:dir".try_into().unwrap(), grant: "su".to_string() },
-                            AccessRule { shv_ri: "test/**:*".try_into().unwrap(), grant: "cfg".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:create".try_into().expect("RI must be valid"), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:ls".try_into().expect("RI must be valid"), grant: "su".to_string() },
+                            AccessRule { shv_ri: ".app/tunnel:dir".try_into().expect("RI must be valid"), grant: "su".to_string() },
+                            AccessRule { shv_ri: "test/**:*".try_into().expect("RI must be valid"), grant: "cfg".to_string() },
                         ],
                         profile: None,
                     }),
                     ("ping".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".app:ping".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".app:ping".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("subscribe".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: ".broker/currentClient:subscribe".try_into().unwrap(), grant: "wr".to_string() },
-                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".try_into().unwrap(), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:subscribe".try_into().expect("RI must be valid"), grant: "wr".to_string() },
+                            AccessRule { shv_ri: ".broker/currentClient:unsubscribe".try_into().expect("RI must be valid"), grant: "wr".to_string() },
                         ],
                         profile: None,
                     }),
                     ("browse".to_string(), Role {
                         roles: vec![],
                         access: vec![
-                            AccessRule { shv_ri: "**:*".try_into().unwrap(), grant: "bws".to_string() },
+                            AccessRule { shv_ri: "**:*".try_into().expect("RI must be valid"), grant: "bws".to_string() },
                         ],
                         profile: None,
                     }),

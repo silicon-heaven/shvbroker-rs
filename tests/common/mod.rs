@@ -17,7 +17,7 @@ impl KillProcessGuard {
     }
 
     pub fn is_running(&mut self) -> bool {
-        let status = self.child.try_wait().unwrap();
+        let status = self.child.try_wait().expect("Process must work");
         //println!("shvbroker is_running status: {:?}", status);
         status.is_none()
     }
@@ -64,12 +64,12 @@ pub fn string_list_from_output(output: Output) -> shvrpc::Result<Vec<String>> {
 
 static SHVCALL_BINARY: LazyLock<String> = LazyLock::new(|| {
     let shvcall_package = cargo_run_bin::metadata::get_binary_packages()
-        .unwrap()
+        .expect("get_binary_packages must work")
         .iter()
         .find(|p| p.package == "shvcall")
-        .unwrap()
+        .expect("get_binary_packages must include shvcall")
         .to_owned();
-    cargo_run_bin::binary::install(shvcall_package).unwrap()
+    cargo_run_bin::binary::install(shvcall_package).expect("shvcall must be installable")
 });
 
 pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shvrpc::Result<RpcMessage> {
@@ -85,9 +85,9 @@ pub fn shv_call(path: &str, method: &str, param: &str, port: Option<i32>) -> shv
         cmd.arg("--param-file").arg("-");
     }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
-    let mut chld = cmd.spawn().unwrap();
-    let mut stdin = chld.stdin.take().unwrap();
-    stdin.write_all(param.as_bytes()).unwrap();
+    let mut chld = cmd.spawn().expect("Child must be spawned");
+    let mut stdin = chld.stdin.take().expect("Child must have a stdin");
+    stdin.write_all(param.as_bytes()).expect("Stdin must be writeable");
     drop(stdin);
 
     //.arg("--output-format").arg(output_format.as_str())
