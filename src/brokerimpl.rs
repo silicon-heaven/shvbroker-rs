@@ -1853,7 +1853,7 @@ mod test {
     smol_macros::test! {
         async fn test_broker() {
             let config = BrokerConfig::default();
-            let access = config.access.clone();
+            let access = config.access;
             let roles = access.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice());
             assert_eq!(
                 roles,

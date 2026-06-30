@@ -783,7 +783,7 @@ mod tests {
         fn merge_non_map_not_replaced_by_map() {
             let mut a = ProfileValue::Int(5);
             let b = map([("key", ProfileValue::Bool(true))]);
-            a.merge(b.clone());
+            a.merge(b);
             assert_eq!(a, ProfileValue::Int(5));
         }
 
@@ -809,7 +809,7 @@ mod tests {
         fn merge_list_concats() {
             let mut a = ProfileValue::List(vec![ProfileValue::Int(1)]);
             let b = ProfileValue::List(vec![ProfileValue::Int(2), ProfileValue::Int(3)]);
-            a.merge(b.clone());
+            a.merge(b);
             assert_eq!(a, ProfileValue::List(vec![ProfileValue::Int(1), ProfileValue::Int(2), ProfileValue::Int(3)]));
         }
 
