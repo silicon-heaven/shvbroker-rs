@@ -387,7 +387,7 @@ pub(crate) async fn close_tunnel(active_tunnels: &RwLock<BTreeMap<TunnelId, Acti
 pub(crate) fn tunnel_close_handler(active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, tunid: TunnelId) {
     smol::spawn(async move {
         let closed = close_tunnel(&active_tunnels, tunid).await;
-        if let Some(true) = closed {
+        if closed == Some(true) {
             let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunid}"), SIG_LSMOD, METH_LS)
                 .with_param(Map::from([(format!("{tunid}"), false.into())]));
             match msg.to_frame() {
