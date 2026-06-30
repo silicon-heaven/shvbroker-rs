@@ -198,7 +198,7 @@ impl Peer {
             param: subscr_param,
             action: SubscriptionAction::Subscribe,
         })
-        .map(|_| true)?)
+        .map(|()| true)?)
     }
 
     pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
@@ -840,7 +840,7 @@ async fn forward_subscriptions_task(
         .await;
 
         match res {
-            Some(Ok(_)) => {
+            Some(Ok(())) => {
                 debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {subscription:?}");
                 Ok(())
             }
@@ -906,7 +906,7 @@ async fn forward_subscriptions_task(
                 }
             }
 
-            _ = sleep_fut => {
+            () = sleep_fut => {
                 let now = Instant::now();
                 let results = scheduled_retries
                     .iter()

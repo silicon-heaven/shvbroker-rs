@@ -74,7 +74,7 @@ pub(crate) async fn try_server_peer_loop(
         }
     };
     match res {
-        Ok(_) => {
+        Ok(()) => {
             info!("Client loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
@@ -686,7 +686,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
             broker_writer.clone(),
             tls.clone(),
         ).await {
-            Ok(_) => info!("Peer broker loop finished without error"),
+            Ok(()) => info!("Peer broker loop finished without error"),
             Err(err) => error!("Peer broker loop finished with error: {err}"),
         }
 
@@ -1057,7 +1057,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                         }
                     }
                 }
-                _ = time_broadcast_interval.select_next_some() => {
+                () = time_broadcast_interval.select_next_some() => {
                     static CAN_ID_UTC_TIME: std::sync::LazyLock<socketcan::CanId> = std::sync::LazyLock::new(|| socketcan::CanId::standard(0x04).expect("Time broadcast CAN ID should be valid"));
 
                     fn to_string<E: std::fmt::Display>(e: E) -> String {
@@ -1124,7 +1124,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = server_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
                         Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
@@ -1139,7 +1139,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = client_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(_) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
                         Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has

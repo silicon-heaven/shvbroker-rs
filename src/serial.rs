@@ -37,7 +37,7 @@ pub(crate) async fn try_serial_peer_loop(
 ) -> shvrpc::Result<()> {
     info!("Entering serial peer loop peer ID: {peer_id}, port: {port_name}.");
     match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config).await {
-        Ok(_) => {
+        Ok(()) => {
             info!("Serial peer loop exit OK, peer id: {peer_id}");
         }
         Err(e) => {
