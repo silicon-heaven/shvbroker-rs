@@ -1665,11 +1665,9 @@ impl BrokerImpl {
     }
 
     async fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
-        if self.peers.read().await.contains_key(&peer_id) {
-            // this might happen when connection to parent broker is restored
-            // after parent broker reset
-            panic!("Peer ID: {peer_id} exists already!");
-        }
+        // this might happen when connection to parent broker is restored
+        // after parent broker reset
+        assert!(!self.peers.read().await.contains_key(&peer_id), "Peer ID: {peer_id} exists already!");
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
         let (effective_mount_point, via_device_id, is_broker_as_client_mount) = match &peer_kind {
             PeerKind::Client { .. } => (None, false, false),
