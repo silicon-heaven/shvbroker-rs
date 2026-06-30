@@ -155,8 +155,8 @@ impl PeerKind {
 
 #[derive(Debug)]
 pub(crate) struct Peer {
-    pub(crate) peer_id: PeerId,
-    pub(crate) peer_kind: PeerKind,
+    pub(crate) id: PeerId,
+    pub(crate) kind: PeerKind,
     pub(crate) sender: UnboundedSender<BrokerToPeerMessage>,
     pub(crate) mount_point: Option<String>,
     pub(crate) subscribe_api: Option<SubscribeApi>,
@@ -170,7 +170,7 @@ impl Peer {
     }
 
     pub(crate) fn add_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
         let Some((subscribe_path, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -193,7 +193,7 @@ impl Peer {
         });
 
         Ok(subscr_tx.unbounded_send(SubscriptionCommand {
-            peer_id: self.peer_id,
+            peer_id: self.id,
             api: subscribe_path,
             param: subscr_param,
             action: SubscriptionAction::Subscribe,
@@ -202,7 +202,7 @@ impl Peer {
     }
 
     pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
         let Some((subscribe_api, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -220,7 +220,7 @@ impl Peer {
         let subscr = self.forwarded_subscriptions.remove(subscr_idx);
 
         subscr_tx.unbounded_send(SubscriptionCommand {
-            peer_id: self.peer_id,
+            peer_id: self.id,
             api: subscribe_api,
             param: subscr.param,
             action: SubscriptionAction::Unsubscribe,
@@ -660,12 +660,12 @@ struct DisconnectPeerReason {
 
 // Fetches base defined roles for a user.
 pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>, access_config: &AccessConfig, peer: &Peer) -> Vec<String> {
-    if let Some(roles) = oauth2_user_groups.get(&peer.peer_id) {
+    if let Some(roles) = oauth2_user_groups.get(&peer.id) {
         return roles.clone()
     }
 
     access_config
-        .access_user(peer.peer_kind.user())
+        .access_user(peer.kind.user())
         .map(|user| user.roles.clone())
         .unwrap_or_default()
 }
@@ -1079,7 +1079,7 @@ impl BrokerImpl {
                 let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
-                let user = peer.peer_kind.user();
+                let user = peer.kind.user();
 
                 // We only trust user_id chains from peers with the trusted_user_ids_role.
                 if !flatten_roles.contains(&self.config.trusted_user_ids_role) {
@@ -1238,7 +1238,7 @@ impl BrokerImpl {
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
             if let Some(peer) = peers.read().await.get(&originating_peer_id) {
-                if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
+                if let PeerKind::Broker(connection_settings) = &peer.kind {
                     // remove imported_shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
                         shv_path = new_path;
@@ -1614,7 +1614,7 @@ impl BrokerImpl {
                 None => Err(
                     RpcError::new(
                         RpcErrorCode::PermissionDenied,
-                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.peer_kind.user()),
+                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.kind.user()),
                     )
                 ),
             }
@@ -1625,7 +1625,7 @@ impl BrokerImpl {
         // request from logged-in user,
         // it can be client, device, child broker or parent broker as client
         let flatten_roles = access_config.flatten_roles(user_roles.as_slice());
-        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.peer_kind.user());
+        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.kind.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
         let mut max_level = access_level_from_flatten_roles(flatten_roles).await;
@@ -1709,8 +1709,8 @@ impl BrokerImpl {
         };
 
         let peer = Peer {
-            peer_id,
-            peer_kind,
+            id: peer_id,
+            kind: peer_kind,
             sender,
             mount_point: effective_mount_point.clone(),
             subscribe_api: None,
@@ -1729,7 +1729,7 @@ impl BrokerImpl {
                 });
             }
 
-            let user = peer.peer_kind.user();
+            let user = peer.kind.user();
 
             if !is_broker_as_client_mount && !self.mount_allowed_for_user(&peer, mount_point, via_device_id).await {
                 return Err(DisconnectPeerReason {
@@ -1915,8 +1915,8 @@ mod test {
                 let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), policies.clone(), command_sender, None);
 
                 let peer = Peer {
-                    peer_id: 0,
-                    peer_kind: PeerKind::Client {
+                    id: 0,
+                    kind: PeerKind::Client {
                         user: user.to_string(),
                     },
                     sender: unbounded().0,

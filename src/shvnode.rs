@@ -489,7 +489,7 @@ impl ShvNode for BrokerNode {
                 };
                 let Some(peer_id) = self.peers.read().await
                     .iter()
-                    .find_map(|(peer_id, peer)| match &peer.peer_kind {
+                    .find_map(|(peer_id, peer)| match &peer.kind {
                         crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
                         _ => None,
                     }) else {
@@ -692,13 +692,13 @@ fn subscriptions_to_map(subscriptions: &[Subscription]) -> Map {
 
 fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
     let subs = subscriptions_to_map(&peer.subscriptions);
-    let device_id = match &peer.peer_kind {
+    let device_id = match &peer.kind {
         PeerKind::Device { device_id: Some(device_id), .. } => device_id.as_str(),
         _ => "",
     };
     shvproto::make_map!{
-        "clientId" => peer.peer_id,
-        "userName" => peer.peer_kind.user(),
+        "clientId" => peer.id,
+        "userName" => peer.kind.user(),
         "deviceId" => device_id,
         "mountPoint" => peer.mount_point.clone().unwrap_or_default(),
         "subscriptions" => subs,
@@ -778,7 +778,7 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Both old and new password mustn't be empty.".into());
                 }
 
-                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(|peer| peer.peer_kind.user()).map(ToOwned::to_owned) else {
+                let Some(user_name) = self.peers.read().await.get(&ctx.peer_id).map(|peer| peer.kind.user()).map(ToOwned::to_owned) else {
                     return Err("Undefined user".into());
                 };
                 if user_name.starts_with("ldap:") {
