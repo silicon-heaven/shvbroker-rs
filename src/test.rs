@@ -403,11 +403,11 @@ smol_macros::test! {
         let res = call(".app/tunnel", "ls", Some(tunid.into()), &mut call_ctx).await.unwrap();
         assert!(res.as_bool());
 
-        let data = "hello".as_bytes();
+        let data: &[u8] = b"hello";
         let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, None).await.unwrap();
         assert_eq!(res.as_blob(), data);
 
-        let data = "tunnel".as_bytes();
+        let data: &[u8] = b"tunnel";
         let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, Some(tun_rq_id)).await.unwrap();
         assert_eq!(res.as_blob(), data);
 

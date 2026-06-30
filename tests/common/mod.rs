@@ -120,7 +120,7 @@ pub fn shv_call_many(commands: Vec<ShvCallCommand>, port: Option<i32>) -> shvrpc
             match command {
                 ShvCallCommand::Call(call) => {
                     stdin.write_all(call.as_bytes()).expect("Failed to write to stdin");
-                    stdin.write_all("\n".as_bytes()).expect("Failed to write to stdin");
+                    stdin.write_all(b"\n").expect("Failed to write to stdin");
                 },
                 ShvCallCommand::Wait(duration) => {
                     std::thread::sleep(duration);
