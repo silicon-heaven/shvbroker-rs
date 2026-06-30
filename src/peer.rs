@@ -238,7 +238,7 @@ pub(crate) async fn server_peer_loop(
                     let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map(RpcValue::as_str).unwrap_or("<no user agent>");
                     peer_log!(info, "User agent: '{user_agent}'");
                     let login = params.get("login").ok_or("Invalid login params")?.as_map();
-                    let login_type = login.get("type").map(|v| v.as_str()).unwrap_or("");
+                    let login_type = login.get("type").map(RpcValue::as_str).unwrap_or("");
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
 
                     const GOOGLE_AUTH_TOKEN_PREFIX: &str = "oauth2-google:";

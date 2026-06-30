@@ -224,8 +224,8 @@ async fn test_broker_loop_as_admin_async() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
 
     let config = BrokerConfig::default();
-    let users: Vec<_> = config.access.users().keys().map(|k| k.to_string()).collect();
-    let roles: Vec<_> = config.access.roles().keys().map(|k| k.to_string()).collect();
+    let users: Vec<_> = config.access.users().keys().map(ToString::to_string).collect();
+    let roles: Vec<_> = config.access.roles().keys().map(ToString::to_string).collect();
     // access/mounts
     {
         let path = ".broker/access/mounts";

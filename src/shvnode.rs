@@ -324,7 +324,7 @@ impl ShvNode for AppDeviceNode {
                 Ok(ProcessRequestRetval::Retval(self.version.into()))
             }
             METH_SERIAL_NUMBER => {
-                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(|s| s.to_string()).unwrap_or_default().into()))
+                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(ToString::to_string).unwrap_or_default().into()))
             }
             METH_PING => {
                 Ok(ProcessRequestRetval::Retval(().into()))
@@ -926,7 +926,7 @@ impl ShvNode for BrokerAccessMountsNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.mounts().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.mounts().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -993,7 +993,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.users().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.users().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1114,7 +1114,7 @@ impl ShvNode for BrokerAccessRolesNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.access.read().await.roles().keys().map(|m| m.to_string()).collect())
+            Some(self.access.read().await.roles().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1181,7 +1181,7 @@ impl ShvNode for BrokerAccessPoliciesNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.policies.read().await.get().keys().map(|m| m.to_string()).collect())
+            Some(self.policies.read().await.get().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }
@@ -1246,7 +1246,7 @@ impl ShvNode for BrokerAccessLastLoginNode {
 
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
         if shv_path.is_empty() {
-            Some(self.last_login.read().await.get().keys().map(|m| m.to_string()).collect())
+            Some(self.last_login.read().await.get().keys().map(ToString::to_string).collect())
         } else {
             Some(vec![])
         }

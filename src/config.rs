@@ -401,7 +401,7 @@ pub(crate) enum UpdateSqlOperation<'a> {
 pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
     role.access
         .iter()
-        .map(|rule| rule.try_parse())
+        .map(AccessRule::try_parse)
         .collect::<Result<Vec<_>,_>>()
 }
 
@@ -608,7 +608,7 @@ impl Default for BrokerConfig {
                     ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("test".to_string(), User { password: Password::Plain("test".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
-                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(|s| s.to_string()).collect(), deactivated: false, expires: None, deactivated_reason: None }),
+                    ("viewer".to_string(), User { password: Password::Plain("viewer".into()), roles: ["subscribe", "browse"].iter().map(ToString::to_string).collect(), deactivated: false, expires: None, deactivated_reason: None }),
                     ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                 ]),

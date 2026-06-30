@@ -501,7 +501,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 token_url: az.token_url,
                 scopes: az
                     .scopes
-                    .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
+                    .map(|s| s.split_whitespace().map(ToString::to_string).collect())
                     .unwrap_or_default(),
             }
         });
@@ -558,7 +558,7 @@ fn main() -> shvrpc::Result<()> {
     let mut broker_config: BrokerConfig = legacy_config.into();
 
     let config_dir = Path::new(&args.legacy_config).parent().unwrap_or_else(|| Path::new("."));
-    let result_config = args.result_config.map_or_else(|| Path::new(config_dir).join("shvbroker.yml"), |path| path.into());
+    let result_config = args.result_config.map_or_else(|| Path::new(config_dir).join("shvbroker.yml"), Into::into);
 
     println!("Migrating config file from: {from} to: {to}", from = args.legacy_config, to = result_config.to_str().unwrap_or_default());
     std::fs::write(result_config, serde_yaml::to_string(&broker_config)?)?;
