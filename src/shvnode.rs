@@ -706,7 +706,7 @@ fn peer_to_info(peer: &Peer) -> rpcvalue::Map {
 }
 
 async fn mounted_client_info(peers: &RwLock<BTreeMap<PeerId, Peer>>, wanted_mount_point: &str) -> Option<rpcvalue::Map> {
-    peers.read().await.values().find(|peer| peer.mount_point.as_ref().filter(|mount_point| *mount_point == wanted_mount_point).is_some())
+    peers.read().await.values().find(|peer| peer.mount_point.as_ref().is_some_and(|mount_point| *mount_point == wanted_mount_point))
         .map(peer_to_info)
 }
 
