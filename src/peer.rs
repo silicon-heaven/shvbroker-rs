@@ -479,7 +479,6 @@ pub(crate) async fn server_peer_loop(
                     } else {
                         peer_log!(warn, "invalid login credentials, user: {user}");
                         frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
-                        continue 'login_loop;
                     }
                 },
                 _ => {
