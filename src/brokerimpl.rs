@@ -1222,7 +1222,7 @@ impl BrokerImpl {
                     warn!("Cannot find peer for response peer-id: {fwd_peer_id}");
                 }
             } else {
-                self.process_pending_broker_rpc_call(peer_id, frame).await?;
+                self.process_pending_broker_rpc_call(peer_id, frame)?;
             }
         } else if frame.is_signal() {
             Self::emit_rpc_signal_frame(&self.peers, peer_id, &frame).await?;
@@ -1289,7 +1289,8 @@ impl BrokerImpl {
         sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
         Ok(())
     }
-    async fn process_pending_broker_rpc_call(
+
+    fn process_pending_broker_rpc_call(
         &mut self,
         peer_id: PeerId,
         response_frame: RpcFrame,
@@ -1307,10 +1308,11 @@ impl BrokerImpl {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.unbounded_send(response_frame)?;
         }
-        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls).await?;
+        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls)?;
         Ok(())
     }
-    async fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
+
+    fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
         let now = Instant::now();
         const TIMEOUT: Duration = Duration::from_mins(1);
         let timed_out = pending_rpc_calls

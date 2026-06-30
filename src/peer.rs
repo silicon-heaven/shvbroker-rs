@@ -712,7 +712,8 @@ fn is_dot_local_request(frame: &RpcFrame) -> bool {
     }
     false
 }
-async fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
+
+fn process_broker_client_peer_frame(peer_id: PeerId, frame: RpcFrame, shv_root: &str, broker_writer: UnboundedSender<BrokerCommand>) -> shvrpc::Result<()> {
     if frame.is_request() {
         let mut frame = frame;
         let shv_path = frame.shv_path().unwrap_or_default();
@@ -1249,7 +1250,7 @@ async fn broker_as_client_peer_loop(
                         // the peer side and we need to reset the session on ours.
                         return Err("The peer sent 'Login required' error message".into());
                     }
-                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
+                    process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, broker_writer.clone())?;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1272,7 +1273,7 @@ async fn broker_as_client_peer_loop(
                         // Forward the error response to the request caller
                         let mut msg = RpcMessage::from_meta(meta.clone());
                         msg.set_error(rpc_error);
-                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone()).await?;
+                        process_broker_client_peer_frame(peer_id, msg.to_frame()?, &connection_settings.exported_shv_root, broker_writer.clone())?;
                     } else {
                         return Err(format!("Receive frame error: {err}").into());
                     }
