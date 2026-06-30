@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::brokerimpl::ParsedAccessRule;
 use crate::sql::{TBL_MOUNTS, TBL_POLICIES, TBL_ROLES, TBL_USERS};
 use crate::sql::update_sql;
-use log::error;
+use log::{error, info};
 use serde::{Serialize, Deserialize};
 use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
@@ -116,7 +116,7 @@ pub struct Listen {
     pub url: Url,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
     pub password: Password,
     pub roles: Vec<String>,
@@ -126,6 +126,27 @@ pub struct User {
     pub expires: Option<shvproto::DateTime>,
     #[serde(default)]
     pub deactivated_reason: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct DisplayUser<'a> {
+    pub password: &'static str,
+    pub roles: &'a Vec<String>,
+    pub deactivated: bool,
+    pub expires: Option<shvproto::DateTime>,
+    pub deactivated_reason: &'a Option<String>,
+}
+
+impl std::fmt::Debug for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", DisplayUser {
+            password: "<redacted>",
+            deactivated_reason: &self.deactivated_reason,
+            roles: &self.roles,
+            deactivated: self.deactivated,
+            expires: self.expires,
+        })
+    }
 }
 
 impl User {
@@ -424,8 +445,10 @@ impl AccessConfig {
         let res = update_sql(sqlop, sql_connection).await?;
 
         if let Some(user) = user {
+            info!(target: "Access", "set_access_user: '{id}' -> {user:?}");
             self.users.insert(id.to_string(), user);
         } else {
+            info!(target: "Access", "set_access_user: '{id}' -> removed");
             self.users.remove(id);
         }
 
@@ -458,10 +481,13 @@ impl AccessConfig {
         let res = update_sql(vec![sqlop], sql_connection).await?;
 
         if let Some(mount) = mount {
+            info!(target: "Access", "set_access_mount: '{id}' -> {mount:?}");
             self.mounts.insert(id.to_string(), mount);
         } else {
+            info!(target: "Access", "set_access_mount: '{id}' -> removed");
             self.mounts.remove(id);
         }
+
 
         Ok(res)
     }
@@ -514,9 +540,11 @@ impl AccessConfig {
 
         if let Some(role) = role {
             let parsed_access_rules = parse_role_access_rules(&role)?;
+            info!(target: "Access", "set_access_role: '{role_name}' -> {role:?}");
             self.roles.insert(role_name.to_string(), role);
             role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
         } else {
+            info!(target: "Access", "set_access_role: '{role_name}' -> removed");
             self.roles.remove(role_name);
         }
 
