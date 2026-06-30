@@ -989,12 +989,12 @@ impl BrokerImpl {
     ) -> Self {
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
-        let mut mounts: BTreeMap<String, Mount> = Default::default();
+        let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = BTreeMap::default();
+        let mut mounts: BTreeMap<String, Mount> = BTreeMap::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
         let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
         let access = Arc::new(RwLock::new(access));
-        let oauth2_user_groups = Arc::new(RwLock::new(Default::default()));
+        let oauth2_user_groups = Arc::new(RwLock::new(BTreeMap::default()));
         let last_login = Arc::new(RwLock::new(last_login));
         let policies = Arc::new(RwLock::new(policies));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
@@ -1882,7 +1882,7 @@ mod test {
             let mut users = access.users().clone();
             users.insert("deactivated_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
-                roles: Default::default(),
+                roles: Vec::default(),
                 deactivated: true,
                 expires: None,
                 deactivated_reason: Some("manual".to_string()),

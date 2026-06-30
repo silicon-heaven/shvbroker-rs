@@ -351,17 +351,17 @@ impl Default for Policies {
     fn default() -> Self {
         Self(BTreeMap::from([
             ("device".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: true,
-                allowed_mounts: Default::default(),
+                allowed_mounts: Vec::default(),
             }),
             ("client".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: false,
                 allowed_mounts: ["test".to_string()].into(),
             }),
             ("su".into(), Policy {
-                allowed_ip: Default::default(),
+                allowed_ip: None,
                 can_mount_via_device_id: true,
                 allowed_mounts: ["test".to_string()].into(),
             }),
@@ -681,9 +681,9 @@ impl Default for BrokerConfig {
                 ]),
             },
             policies: Policies::default(),
-            tunnelling: Default::default(),
-            azure: Default::default(),
-            google_auth: Default::default(),
+            tunnelling: TunnellingConfig::default(),
+            azure: None,
+            google_auth: None,
             trusted_user_ids_role: default_exported_root_user(),
         }
     }
