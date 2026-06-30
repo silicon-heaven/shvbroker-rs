@@ -1283,7 +1283,7 @@ impl BrokerImpl {
             .read()
             .await
             .get(&pending_call.peer_id)
-            .ok_or(format!("Invalid peer ID: {}", pending_call.peer_id))?
+            .ok_or_else(|| format!("Invalid peer ID: {}", pending_call.peer_id))?
             .sender
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
