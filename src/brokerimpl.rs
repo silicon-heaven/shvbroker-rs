@@ -209,7 +209,7 @@ impl Peer {
         let Some(subscr_idx) = self.forwarded_subscriptions.iter().position(|subscr| subscr.param.ri == forwarded_ri) else {
             return Ok(false)
         };
-        let subscr = &mut self.forwarded_subscriptions[subscr_idx];
+        let subscr = self.forwarded_subscriptions.get_mut(subscr_idx).expect("We got the index from position()");
         if subscr.count > 1 {
             subscr.count -= 1;
             debug!(target: "Subscr", "  refcount decreased to: {refcount}", refcount = subscr.count);

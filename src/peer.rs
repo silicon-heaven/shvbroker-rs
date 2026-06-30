@@ -279,12 +279,12 @@ pub(crate) async fn server_peer_loop(
                                         let jwks_url = "https://www.googleapis.com/oauth2/v3/certs";
                                         let response: serde_json::Value = reqwest::get(jwks_url).compat().await?.json().await?;
                                         // Find the specific key matching the 'kid'
-                                        let n = response["keys"].as_array()
+                                        let n = response.get("keys").expect("\"keys\" must be present").as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
                                             .and_then(|k| k["n"].as_str())
                                             .ok_or_else(|| "Key not found".to_string())?;
 
-                                        let e = response["keys"].as_array()
+                                        let e = response.get("keys").expect("\"keys\" must be present").as_array()
                                             .and_then(|keys| keys.iter().find(|k| k["kid"] == kid))
                                             .and_then(|k| k["e"].as_str())
                                             .ok_or_else(|| "Exponent not found".to_string())?;

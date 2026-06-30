@@ -309,9 +309,7 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
         "RES true".into(), // response to unsubscribe
         "RES null".into(), // response to SET
     ];
-    for (no, val) in values.iter().enumerate() {
-        assert_eq!(&expected[no], val);
-    }
+    assert_eq!(values, expected);
     Ok(())
 }
 fn check_subscription_along_property_path(property_path: &str, port: i32) -> shvrpc::Result<()> {
