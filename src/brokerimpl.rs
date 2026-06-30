@@ -757,7 +757,7 @@ fn split_last_fragment(mount_point: &str) -> (&str, &str) {
 
 async fn forward_subscriptions_task(
     mut subscr_cmd_receiver: UnboundedReceiver<SubscriptionCommand>,
-    mut broker_command_sender: UnboundedSender<BrokerCommand>,
+    broker_command_sender: UnboundedSender<BrokerCommand>,
 ) -> shvrpc::Result<()>
 {
     const TIMEOUT: Duration = Duration::from_secs(10);
@@ -915,7 +915,7 @@ async fn forward_subscriptions_task(
                     .filter_map(|(key, time)| (*time <= now).then_some(key))
                     .map(|(peer_id, api, SubscriptionParamWrapper(param))| {
                         let (peer_id, api, param) = (*peer_id, *api, param.clone());
-                        let mut broker_command_sender = broker_command_sender.clone();
+                        let broker_command_sender = broker_command_sender.clone();
                         async move {
                             let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &broker_command_sender, TIMEOUT).await;
                             ((peer_id, api, SubscriptionParamWrapper(param)), res)
