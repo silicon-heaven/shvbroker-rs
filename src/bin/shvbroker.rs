@@ -1,5 +1,5 @@
 use std::path::Path;
-use log::*;
+use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
