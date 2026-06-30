@@ -30,7 +30,7 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut 
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {
             BrokerToPeerMessage::SendFrame(frame) => { frame.to_rpcmesage().unwrap() }
-            _ => {
+            BrokerToPeerMessage::DisconnectByBroker { .. } => {
                 panic!("unexpected message: {msg:?}");
             }
         };
