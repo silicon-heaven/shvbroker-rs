@@ -1201,12 +1201,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "fn_name"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "528a0eb35b41b895aef1afed5ab28659084118e730edc72f033e76fb71666dbb"
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2646,9 +2640,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
+checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -3217,7 +3211,7 @@ dependencies = [
  "ipnet",
  "jsonwebtoken",
  "log",
- "rand 0.10.1",
+ "rand 0.10.2",
  "rcgen",
  "reqwest",
  "rustls-pemfile",
@@ -3264,13 +3258,12 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d5fbca932a8bcf91220f92348f8e085f9654625ac65899650526464be8f471"
+checksum = "d4952bd85956c4f176e32f8a2d55d11dd7d8993af07f10368b6ef36b6f782d3b"
 dependencies = [
  "chrono",
  "clap",
- "fn_name",
  "hex",
  "libshvproto-macros",
  "log",
