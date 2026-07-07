@@ -295,9 +295,16 @@ impl AccessRule {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Policy {
+    // None values are treated as "allow all"
     pub allowed_ip: Option<Vec<ipnet::IpNet>>,
+
     #[serde(default)]
     pub can_mount_via_device_id: bool,
+
+    // empty vec means "deny all"
+    // ["foo/bar"] allows only mounts under "foo/bar" and all subdirectories
+    // when device is mounted using device-id, than allowed_mounts are ignored
+    #[serde(default)]
     pub allowed_mounts: Vec<String>,
 }
 
