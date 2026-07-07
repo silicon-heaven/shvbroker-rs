@@ -1,3 +1,4 @@
+#![expect(clippy::panic, clippy::print_stdout, clippy::print_stderr, reason = "Fine for a binary")]
 use async_sqlite::ClientBuilder;
 use clap::Parser;
 use async_sqlite::rusqlite::{params, Connection, OpenFlags, Result};
@@ -67,7 +68,7 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
     // --- Load roles from acl_roles table ---
     let mut stmt = conn.prepare("SELECT name, roles, profile FROM acl_roles")?;
     let mut roles = stmt.query_map([], |row| {
-        let name: String = fix_azure_role_prefix(row.get(0)?);
+        let name = fix_azure_role_prefix(row.get(0)?);
         let roles_str: String = row.get(1)?;
         let profile_str: Option<String> = row.get(2).ok();
 
@@ -79,21 +80,17 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
             .collect();
 
         // Parse profile JSON if not empty
-        let profile = if let Some(s) = profile_str {
-            if !s.trim().is_empty() {
-                match serde_json::from_str::<ProfileValue>(&s) {
-                    Ok(p) => Some(p),
-                    Err(e) => {
-                        eprintln!("Failed to parse profile JSON for {name}: {e}");
-                        Some(ProfileValue::Null)
-                    }
+        let profile = profile_str.and_then(|s| if !s.trim().is_empty() {
+            match serde_json::from_str::<ProfileValue>(&s) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("Failed to parse profile JSON for {name}: {e}");
+                    Some(ProfileValue::Null)
                 }
-            } else {
-                None
             }
         } else {
             None
-        };
+        });
 
         Ok((name, Role {
             roles: role_list,
@@ -111,7 +108,7 @@ fn load_roles(conn: &Connection) -> Result<BTreeMap<String, Role>> {
     )?;
 
     let access_rows = stmt.query_map([], |row| {
-        let role: String = fix_azure_role_prefix(row.get(0)?);
+        let role = fix_azure_role_prefix(row.get(0)?);
         let path = row.get(1).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
         let method = row.get(2).map(|s: Option<String>| s.unwrap_or_default().trim().to_string())?;
         let grant: String = row.get(3)?;
@@ -431,18 +428,17 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 let base_host = mconn
                     .server
                     .as_ref()
-                    .map(|s| s.host.clone())
-                    .unwrap_or_else(|| "tcp://127.0.0.1".to_string());
+                    .map_or_else(|| "tcp://127.0.0.1".to_string(), |s| s.host.clone());
 
                 // Ensure the base_host has a scheme
                 let normalized_host = if base_host.contains("://") {
                     base_host
                 } else {
-                    format!("tcp://{}", base_host)
+                    format!("tcp://{base_host}")
                 };
 
                 let mut url = Url::parse(&normalized_host)
-                    .unwrap_or_else(|_| Url::parse("tcp://127.0.0.1").unwrap());
+                    .unwrap_or_else(|_| Url::parse("tcp://127.0.0.1").expect("URL must be valid"));
 
                 // Inject user and password
                 if let Some(login) = &mconn.login {
@@ -460,8 +456,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                     .rpc
                     .as_ref()
                     .and_then(|r| r.heartbeat_interval)
-                    .map(Duration::from_secs)
-                    .unwrap_or_else(|| Duration::from_secs(60));
+                    .map_or_else(|| Duration::from_mins(1), Duration::from_secs);
 
                 let reconnect_interval = mconn
                     .rpc
@@ -501,7 +496,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 token_url: az.token_url,
                 scopes: az
                     .scopes
-                    .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
+                    .map(|s| s.split_whitespace().map(ToString::to_string).collect())
                     .unwrap_or_default(),
             }
         });
@@ -558,7 +553,7 @@ fn main() -> shvrpc::Result<()> {
     let mut broker_config: BrokerConfig = legacy_config.into();
 
     let config_dir = Path::new(&args.legacy_config).parent().unwrap_or_else(|| Path::new("."));
-    let result_config = args.result_config.map_or_else(|| Path::new(config_dir).join("shvbroker.yml"), |path| path.into());
+    let result_config = args.result_config.map_or_else(|| Path::new(config_dir).join("shvbroker.yml"), Into::into);
 
     println!("Migrating config file from: {from} to: {to}", from = args.legacy_config, to = result_config.to_str().unwrap_or_default());
     std::fs::write(result_config, serde_yaml::to_string(&broker_config)?)?;
@@ -571,7 +566,7 @@ fn main() -> shvrpc::Result<()> {
         } else {
             data_dir
         };
-        println!("data dir: {data_dir:?}");
+        println!("data dir: {}", data_dir.display());
         broker_config.data_directory = Some(data_dir.to_string_lossy().into());
 
         let legacy_db_file_name = if let Some(legacy_sql_config) = legacy_sql_config

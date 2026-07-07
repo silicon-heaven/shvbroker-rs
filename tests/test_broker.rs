@@ -1,3 +1,4 @@
+#![expect(clippy::print_stdout, reason = "Fine for a test")]
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::Arc;
@@ -227,7 +228,7 @@ shvclient::impl_static_node!{
             if self.state.number.load(Ordering::SeqCst) != param {
                 self.state.number.store(param, Ordering::SeqCst);
                 let sigchng = shvclient::shvrpc::RpcMessage::new_signal(NUMBER_MOUNT, SIG_CHNG).with_param(param);
-                let _ = client_cmd_tx.send_message(sigchng);
+                client_cmd_tx.send_message(sigchng).ok();
             }
             Some(Ok(().into()))
         }
@@ -248,7 +249,7 @@ shvclient::impl_static_node!{
             if *self.state.text.read().await != param {
                 *self.state.text.write().await = param.clone();
                 let sigchng = shvclient::shvrpc::RpcMessage::new_signal(TEXT_MOUNT, SIG_CHNG).with_param(param);
-                let _ = client_cmd_tx.send_message(sigchng);
+                client_cmd_tx.send_message(sigchng).ok();
             }
             Some(Ok(().into()))
         }
@@ -292,7 +293,7 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
     let calls: Vec<ShvCallCommand> = vec![
         ShvCallCommand::Call(format!(r#".broker/currentClient:subscribe ["{subscribe_path}:*:chng"]"#)),
         ShvCallCommand::Call(format!(r#"{property_path}:set 42"#)),
-        ShvCallCommand::Wait(std::time::Duration::from_millis(1000)),
+        ShvCallCommand::Wait(std::time::Duration::from_secs(1)),
         ShvCallCommand::Call(format!(r#".broker/currentClient:unsubscribe ["{subscribe_path}:*:chng"]"#)),
         ShvCallCommand::Call(format!(r#"{property_path}:set 123"#)),
     ];
@@ -308,16 +309,14 @@ fn check_subscription(property_path: &str, subscribe_path: &str, port: i32) -> s
         "RES true".into(), // response to unsubscribe
         "RES null".into(), // response to SET
     ];
-    for (no, val) in values.iter().enumerate() {
-        assert_eq!(&expected[no], val);
-    }
+    assert_eq!(values, expected);
     Ok(())
 }
 fn check_subscription_along_property_path(property_path: &str, port: i32) -> shvrpc::Result<()> {
     let dirs = property_path.split('/').collect::<Vec<_>>();
     for i in 1 .. dirs.len() - 1 {
-        let subscribe_path = dirs[.. i].join("/") + "/**";
-        check_subscription(property_path, &subscribe_path, port)?
+        let subscribe_path = dirs.get(.. i).expect("We iterate over all subsets").join("/") + "/**";
+        check_subscription(property_path, &subscribe_path, port)?;
     }
     Ok(())
 }

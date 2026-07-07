@@ -1,3 +1,4 @@
+#![expect(clippy::panic, reason = "Fine for a test")]
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
@@ -37,7 +38,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
         let (broker_sender, broker_receiver) = unbounded();
         run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
             .await
-            .expect("broker accept_loop failed")
+            .expect("broker accept_loop failed");
     }).detach();
     // Wait for the broker
     let start = std::time::Instant::now();
@@ -56,10 +57,10 @@ async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
     let (tx, rx) = futures::channel::oneshot::channel();
     smol::spawn(async {
         let client_config = shvclient::shvrpc::client::ClientConfig {
-            url: Url::parse(PARENT_BROKER_CONNNECT_URL).unwrap(),
+            url: Url::parse(PARENT_BROKER_CONNNECT_URL).expect("URL must be valid"),
             device_id: None,
             mount: None,
-            heartbeat_interval: Duration::from_secs(60),
+            heartbeat_interval: Duration::from_mins(1),
             reconnect_interval: None,
         };
         shvclient::client::Client::new_plain()
@@ -68,7 +69,7 @@ async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
                     .unwrap_or_else(|(commands_tx, _)| {
                         warn!("Client channels dropped before handed to the caller. Terminating the client");
                         commands_tx.terminate_client();
-                    })
+                    });
             })
             .await
             .unwrap_or_else(|e| error!("Client finished with error: {e}"));
@@ -128,8 +129,8 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let parent_broker_config = BrokerConfig {
         listen: vec![
-            Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).unwrap() },
-            Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).unwrap() },
+            Listen { url: Url::parse(PARENT_BROKER_LISTEN_URL).expect("URL must be valid") },
+            Listen { url: Url::parse(&format!("ssl://{PARENT_BROKER_ADDRESS_SSL}?cert={cert}&key={key}", cert = server_crt_path.to_string_lossy(), key = server_key_path.to_string_lossy())).expect("URL must be valid") },
         ],
         policies: Policies::new(BTreeMap::from([
             ("su".to_string(), Policy {
@@ -148,7 +149,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
     let child_broker_config = BrokerConfig {
         listen: vec![
-            Listen { url: Url::parse(CHILD_BROKER_LISTEN_URL).unwrap() },
+            Listen { url: Url::parse(CHILD_BROKER_LISTEN_URL).expect("URL must be valid") },
         ],
         connections: vec![
             BrokerConnectionConfig {
@@ -160,7 +161,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
                     mount: None,
                     heartbeat_interval: duration_str::parse("1m").expect("ClientConfig parse heartbeat interval should succeed"),
                     reconnect_interval: None,
-                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}?ca={ca}", ca = ca_crt_path.to_string_lossy())).unwrap(),
+                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}?ca={ca}", ca = ca_crt_path.to_string_lossy())).expect("URL must be valid"),
                 }
             }
         ],
@@ -184,14 +185,14 @@ fn ssl() {
         // We need to wait at least 1 second, because the parent broker waits 1 second, before
         // accepting another connection. Then wait a little bit more (here, 1 second), so that the
         // child broker has enough time, to make the connection to the parent broker.
-        smol::Timer::after(std::time::Duration::from_millis(2000)).await;
+        smol::Timer::after(std::time::Duration::from_secs(2)).await;
 
         let (client_cmd, mut client_events) = start_client().await.expect("Client start");
         match client_events.wait_for_event().timeout(Duration::from_secs(5)).await {
             Some(Ok(ClientEvent::Connected(..))) => { },
             Some(_evt) => panic!("Client connection to broker error"),
             None => panic!("Client connection to broker timed out"),
-        };
+        }
 
         let res = RpcCallDirList::new("test/child-broker/.app")
             .timeout(Duration::from_secs(3))

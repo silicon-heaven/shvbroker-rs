@@ -22,7 +22,7 @@ struct CallCtx {
 }
 async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut CallCtx, resp_rq_id: Option<RqId>) -> Result<(RqId, RpcValue), RpcError> {
     let rq = RpcMessage::new_request(shv_path, method).with_param(param);
-    let rqid = if let Some(resp_rq_id) = resp_rq_id { Some(resp_rq_id) } else { rq.request_id() };
+    let rqid = resp_rq_id.map_or_else(|| rq.request_id(), Some);
     let frame = RpcFrame::from_rpcmessage(&rq).expect("valid message");
     println!("request: {}", frame.to_rpcmesage().unwrap());
     ctx.writer.unbounded_send(BrokerCommand::FrameReceived { peer_id: ctx.peer_id, frame }).unwrap();
@@ -30,7 +30,7 @@ async fn call2(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut 
         let msg = ctx.reader.recv().await.unwrap();
         let msg = match msg {
             BrokerToPeerMessage::SendFrame(frame) => { frame.to_rpcmesage().unwrap() }
-            _ => {
+            BrokerToPeerMessage::DisconnectByBroker { .. } => {
                 panic!("unexpected message: {msg:?}");
             }
         };
@@ -66,7 +66,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
 
 #[test]
 fn test_broker_loop_as_user() {
-    smol::block_on(test_broker_loop_as_user_async())
+    smol::block_on(test_broker_loop_as_user_async());
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
@@ -152,7 +152,7 @@ async fn test_broker_loop_as_user_async() {
 
 #[test]
 fn test_broker_loop_as_admin() {
-    smol::block_on(test_broker_loop_as_admin_async())
+    smol::block_on(test_broker_loop_as_admin_async());
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
@@ -224,8 +224,8 @@ async fn test_broker_loop_as_admin_async() {
     assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
 
     let config = BrokerConfig::default();
-    let users: Vec<_> = config.access.users().keys().map(|k| k.to_string()).collect();
-    let roles: Vec<_> = config.access.roles().keys().map(|k| k.to_string()).collect();
+    let users: Vec<_> = config.access.users().keys().map(ToString::to_string).collect();
+    let roles: Vec<_> = config.access.roles().keys().map(ToString::to_string).collect();
     // access/mounts
     {
         let path = ".broker/access/mounts";
@@ -256,9 +256,9 @@ async fn test_broker_loop_as_admin_async() {
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(users.clone()).as_list());
                 let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let user1 = User::try_from(&resp).unwrap();
-                let user2 = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
-                assert_eq!(user1, user2);
+                let user = User::try_from(&resp).unwrap();
+                let expected = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
+                assert_eq!(user, expected);
             }
             {
                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false, expires: None, deactivated_reason: None };
@@ -282,9 +282,9 @@ async fn test_broker_loop_as_admin_async() {
                 let list = resp.as_list();
                 assert_eq!(list, RpcValue::from(roles.clone()).as_list());
                 let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let role1 = Role::try_from(&resp).unwrap();
-                let role2 = config.access.access_role("tester").unwrap();
-                assert_eq!(&role1, role2);
+                let role = Role::try_from(&resp).unwrap();
+                let expected = config.access.access_role("tester").unwrap();
+                assert_eq!(&role, expected);
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
@@ -403,11 +403,11 @@ smol_macros::test! {
         let res = call(".app/tunnel", "ls", Some(tunid.into()), &mut call_ctx).await.unwrap();
         assert!(res.as_bool());
 
-        let data = "hello".as_bytes();
+        let data: &[u8] = b"hello";
         let (tun_rq_id, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, None).await.unwrap();
         assert_eq!(res.as_blob(), data);
 
-        let data = "tunnel".as_bytes();
+        let data: &[u8] = b"tunnel";
         let (_, res) = call2(&format!(".app/tunnel/{tunid}"), "write", Some(data.into()), &mut call_ctx, Some(tun_rq_id)).await.unwrap();
         assert_eq!(res.as_blob(), data);
 

@@ -122,7 +122,7 @@ pub(crate) enum SubscribeApi {
 }
 
 impl SubscribeApi {
-    pub(crate) fn path(&self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             SubscribeApi::V2 => SUBSCRIBE_PATH_API_V2,
             SubscribeApi::V3 => SUBSCRIBE_PATH_API_V3,
@@ -146,17 +146,16 @@ pub enum PeerKind {
 impl PeerKind {
     pub fn user(&self) -> &str {
         match self {
-            PeerKind::Client { user, .. } => user,
+            PeerKind::Client { user, .. } | PeerKind::Device { user, .. } => user,
             PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
-            PeerKind::Device { user, .. } => user,
         }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct Peer {
-    pub(crate) peer_id: PeerId,
-    pub(crate) peer_kind: PeerKind,
+    pub(crate) id: PeerId,
+    pub(crate) kind: PeerKind,
     pub(crate) sender: UnboundedSender<BrokerToPeerMessage>,
     pub(crate) mount_point: Option<String>,
     pub(crate) subscribe_api: Option<SubscribeApi>,
@@ -170,7 +169,7 @@ impl Peer {
     }
 
     pub(crate) fn add_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
         let Some((subscribe_path, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -193,16 +192,16 @@ impl Peer {
         });
 
         Ok(subscr_tx.unbounded_send(SubscriptionCommand {
-            peer_id: self.peer_id,
+            peer_id: self.id,
             api: subscribe_path,
             param: subscr_param,
             action: SubscriptionAction::Subscribe,
         })
-        .map(|_| true)?)
+        .map(|()| true)?)
     }
 
     pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.peer_id);
+        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
         let Some((subscribe_api, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -210,7 +209,7 @@ impl Peer {
         let Some(subscr_idx) = self.forwarded_subscriptions.iter().position(|subscr| subscr.param.ri == forwarded_ri) else {
             return Ok(false)
         };
-        let subscr = &mut self.forwarded_subscriptions[subscr_idx];
+        let subscr = self.forwarded_subscriptions.get_mut(subscr_idx).expect("We got the index from position()");
         if subscr.count > 1 {
             subscr.count -= 1;
             debug!(target: "Subscr", "  refcount decreased to: {refcount}", refcount = subscr.count);
@@ -220,7 +219,7 @@ impl Peer {
         let subscr = self.forwarded_subscriptions.remove(subscr_idx);
 
         subscr_tx.unbounded_send(SubscriptionCommand {
-            peer_id: self.peer_id,
+            peer_id: self.id,
             api: subscribe_api,
             param: subscr.param,
             action: SubscriptionAction::Unsubscribe,
@@ -254,7 +253,7 @@ enum SubscriptionAction {
 }
 
 impl SubscriptionAction {
-    fn method_name(&self) -> &'static str {
+    fn method_name(self) -> &'static str {
         match self {
             SubscriptionAction::Subscribe => METH_SUBSCRIBE,
             SubscriptionAction::Unsubscribe => METH_UNSUBSCRIBE,
@@ -335,7 +334,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                         if deactivate_after_days == 0 {
                             continue;
                         }
-                        let threshold = shvproto::DateTime::now().add_days(-(deactivate_after_days as i64));
+                        let threshold = shvproto::DateTime::now().add_days(-i64::from(deactivate_after_days));
                         let last_login_map = last_login.read().await.get().clone();
                         let mut access = access.write().await;
                         let users_to_deactivate: Vec<_> = access.users().iter()
@@ -361,7 +360,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                                         modified_user.deactivated = true;
                                         modified_user.deactivated_reason = Some("auto_inactivity".to_string());
                                         if let Err(e) = access.set_access_user(user_id, Some(modified_user), sql_conn).await {
-                                            error!("Failed to deactivate user {}: {}", user_id, e);
+                                            error!("Failed to deactivate user {user_id}: {e}");
                                         }
                                     }
                                 }
@@ -464,7 +463,7 @@ async fn server_accept_loop(
         let peer_addr = stream.peer_addr().as_ref().map(core::net::SocketAddr::ip).ok();
         info!("Accepted TCP connection from peer: {peer_addr:?}, peer_id: {peer_id}");
 
-        let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.as_ref().cloned() {
+        let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.clone() {
             match tls_acceptor.accept(stream).await {
                 Ok(stream) => {
                     info!("TLS handshake OK, peer: {peer_addr:?}, peer_id: {peer_id}");
@@ -499,7 +498,10 @@ pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedRece
                         "ssl" => 3756,
                         "ws" => 8755,
                         "wss" => 8766,
-                        _ => 3755,
+                        scheme => {
+                            info!("Unknown scheme: '{scheme}', assuming tcp");
+                            3755
+                        },
                     })
             )
         };
@@ -660,12 +662,12 @@ struct DisconnectPeerReason {
 
 // Fetches base defined roles for a user.
 pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>, access_config: &AccessConfig, peer: &Peer) -> Vec<String> {
-    if let Some(roles) = oauth2_user_groups.get(&peer.peer_id) {
+    if let Some(roles) = oauth2_user_groups.get(&peer.id) {
         return roles.clone()
     }
 
     access_config
-        .access_user(peer.peer_kind.user())
+        .access_user(peer.kind.user())
         .map(|user| user.roles.clone())
         .unwrap_or_default()
 }
@@ -744,18 +746,18 @@ pub struct BrokerImpl {
 }
 
 fn split_last_fragment(mount_point: &str) -> (&str, &str) {
-    if let Some(ix) = mount_point.rfind('/') {
+    mount_point.rfind('/').map_or(("", mount_point), |ix| {
+        #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
         let dir = &mount_point[ix + 1..];
+        #[expect(clippy::string_slice, reason = "We expect ASCII strings")]
         let prefix = &mount_point[..ix];
         (prefix, dir)
-    } else {
-        ("", mount_point)
-    }
+    })
 }
 
 async fn forward_subscriptions_task(
     mut subscr_cmd_receiver: UnboundedReceiver<SubscriptionCommand>,
-    mut broker_command_sender: UnboundedSender<BrokerCommand>,
+    broker_command_sender: UnboundedSender<BrokerCommand>,
 ) -> shvrpc::Result<()>
 {
     const TIMEOUT: Duration = Duration::from_secs(10);
@@ -825,7 +827,7 @@ async fn forward_subscriptions_task(
         peer_id: PeerId,
         subscribe_api: SubscribeApi,
         subscription: SubscriptionParam,
-        broker_command_sender: &mut UnboundedSender<BrokerCommand>,
+        broker_command_sender: &UnboundedSender<BrokerCommand>,
         timeout: Duration,
     ) -> Result<(), ()> {
         let method = action.method_name();
@@ -840,7 +842,7 @@ async fn forward_subscriptions_task(
         .await;
 
         match res {
-            Some(Ok(_)) => {
+            Some(Ok(())) => {
                 debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {subscription:?}");
                 Ok(())
             }
@@ -891,11 +893,11 @@ async fn forward_subscriptions_task(
                 match action {
                     SubscriptionAction::Unsubscribe => {
                         scheduled_retries.remove(&key);
-                        call_subscribe_action_with_timeout(action, peer_id, api, param, &mut broker_command_sender, TIMEOUT).await.ok();
+                        call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await.ok();
                     }
 
                     SubscriptionAction::Subscribe => {
-                        let result = call_subscribe_action_with_timeout(action, peer_id, api, param, &mut broker_command_sender, TIMEOUT).await;
+                        let result = call_subscribe_action_with_timeout(action, peer_id, api, param, &broker_command_sender, TIMEOUT).await;
 
                         if result.is_err() {
                             scheduled_retries.insert(key, Instant::now() + RETRY_DELAY);
@@ -906,16 +908,16 @@ async fn forward_subscriptions_task(
                 }
             }
 
-            _ = sleep_fut => {
+            () = sleep_fut => {
                 let now = Instant::now();
                 let results = scheduled_retries
                     .iter()
                     .filter_map(|(key, time)| (*time <= now).then_some(key))
                     .map(|(peer_id, api, SubscriptionParamWrapper(param))| {
                         let (peer_id, api, param) = (*peer_id, *api, param.clone());
-                        let mut broker_command_sender = broker_command_sender.clone();
+                        let broker_command_sender = broker_command_sender.clone();
                         async move {
-                            let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &mut broker_command_sender, TIMEOUT).await;
+                            let res = call_subscribe_action_with_timeout(SubscriptionAction::Subscribe, peer_id, api, param.clone(), &broker_command_sender, TIMEOUT).await;
                             ((peer_id, api, SubscriptionParamWrapper(param)), res)
                         }
                     })
@@ -989,12 +991,12 @@ impl BrokerImpl {
     ) -> Self {
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
         spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
-        let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = Default::default();
-        let mut mounts: BTreeMap<String, Mount> = Default::default();
+        let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = BTreeMap::default();
+        let mut mounts: BTreeMap<String, Mount> = BTreeMap::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
         let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
         let access = Arc::new(RwLock::new(access));
-        let oauth2_user_groups = Arc::new(RwLock::new(Default::default()));
+        let oauth2_user_groups = Arc::new(RwLock::new(BTreeMap::default()));
         let last_login = Arc::new(RwLock::new(last_login));
         let policies = Arc::new(RwLock::new(policies));
         let mut add_node = |path: &str, node: Box<dyn ShvNode>| {
@@ -1057,7 +1059,7 @@ impl BrokerImpl {
             nodes,
             pending_rpc_calls: vec![],
             command_sender,
-            config: config.clone(),
+            config,
             peers,
             mounts,
             access,
@@ -1079,7 +1081,7 @@ impl BrokerImpl {
                 let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
-                let user = peer.peer_kind.user();
+                let user = peer.kind.user();
 
                 // We only trust user_id chains from peers with the trusted_user_ids_role.
                 if !flatten_roles.contains(&self.config.trusted_user_ids_role) {
@@ -1222,7 +1224,7 @@ impl BrokerImpl {
                     warn!("Cannot find peer for response peer-id: {fwd_peer_id}");
                 }
             } else {
-                self.process_pending_broker_rpc_call(peer_id, frame).await?;
+                self.process_pending_broker_rpc_call(peer_id, frame)?;
             }
         } else if frame.is_signal() {
             Self::emit_rpc_signal_frame(&self.peers, peer_id, &frame).await?;
@@ -1238,7 +1240,7 @@ impl BrokerImpl {
         let frames: Vec<_> = {
             let mut shv_path = signal_frame.shv_path().unwrap_or_default().to_string();
             if let Some(peer) = peers.read().await.get(&originating_peer_id) {
-                if let PeerKind::Broker(connection_settings) = &peer.peer_kind {
+                if let PeerKind::Broker(connection_settings) = &peer.kind {
                     // remove imported_shv_root in notifications coming from broker
                     if let Some(new_path) = cut_prefix(&shv_path, &connection_settings.imported_shv_root) {
                         shv_path = new_path;
@@ -1281,7 +1283,7 @@ impl BrokerImpl {
             .read()
             .await
             .get(&pending_call.peer_id)
-            .ok_or(format!("Invalid peer ID: {}", pending_call.peer_id))?
+            .ok_or_else(|| format!("Invalid peer ID: {}", pending_call.peer_id))?
             .sender
             .clone();
         // let rqid = data.request.request_id().ok_or("Missing request ID")?;
@@ -1289,7 +1291,8 @@ impl BrokerImpl {
         sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
         Ok(())
     }
-    async fn process_pending_broker_rpc_call(
+
+    fn process_pending_broker_rpc_call(
         &mut self,
         peer_id: PeerId,
         response_frame: RpcFrame,
@@ -1307,12 +1310,13 @@ impl BrokerImpl {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.unbounded_send(response_frame)?;
         }
-        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls).await?;
+        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls)?;
         Ok(())
     }
-    async fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
+
+    fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
         let now = Instant::now();
-        const TIMEOUT: Duration = Duration::from_secs(60);
+        const TIMEOUT: Duration = Duration::from_mins(1);
         let timed_out = pending_rpc_calls
             .extract_if(.., |pending_call| now.duration_since(pending_call.started) > TIMEOUT);
         for timed_out_pending_call in timed_out {
@@ -1383,7 +1387,7 @@ impl BrokerImpl {
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
                     return Err(msg.into());
-                };
+                }
 
                 let mount_point = Self::mount_point(&self.peers, new_peer_id).await;
                 if let Some(mount_point) = mount_point {
@@ -1494,14 +1498,14 @@ impl BrokerImpl {
                             client_shapass == shapwd
                         },
                         "SHA1" => {
-                            if let Some(nonce) = &nonce {
+                            nonce.as_ref().map_or_else(|| {
+                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
+                                false
+                            }, |nonce| {
                                 let mut data = nonce.as_bytes().to_vec();
                                 data.extend_from_slice(shapwd.as_bytes());
                                 password == sha1_hash(&data)
-                            } else {
-                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
-                                false
-                            }
+                            })
                         },
                         _ => {
                             debug!("peer_id({peer_id}): unknown login type '{login_type}'");
@@ -1549,8 +1553,7 @@ impl BrokerImpl {
                         response_sender,
                         started: Instant::now(),
                     },
-                )
-                .await?
+                ).await?;
             }
         }
         Ok(())
@@ -1613,7 +1616,7 @@ impl BrokerImpl {
                 None => Err(
                     RpcError::new(
                         RpcErrorCode::PermissionDenied,
-                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.peer_kind.user()),
+                        format!("Access denied for client: {peer_id}, user: '{user}'", user = peer.kind.user()),
                     )
                 ),
             }
@@ -1624,7 +1627,7 @@ impl BrokerImpl {
         // request from logged-in user,
         // it can be client, device, child broker or parent broker as client
         let flatten_roles = access_config.flatten_roles(user_roles.as_slice());
-        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.peer_kind.user());
+        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.kind.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
         let mut max_level = access_level_from_flatten_roles(flatten_roles).await;
@@ -1664,11 +1667,9 @@ impl BrokerImpl {
     }
 
     async fn add_peer(&mut self, peer_id: PeerId, peer_kind: PeerKind, sender: UnboundedSender<BrokerToPeerMessage>) -> Result<(), DisconnectPeerReason> {
-        if self.peers.read().await.contains_key(&peer_id) {
-            // this might happen when connection to parent broker is restored
-            // after parent broker reset
-            panic!("Peer ID: {peer_id} exists already!");
-        }
+        // this might happen when connection to parent broker is restored
+        // after parent broker reset
+        assert!(!self.peers.read().await.contains_key(&peer_id), "Peer ID: {peer_id} exists already!");
         let client_path = join_path(DIR_BROKER, format!("client/{peer_id}"));
         let (effective_mount_point, via_device_id, is_broker_as_client_mount) = match &peer_kind {
             PeerKind::Client { .. } => (None, false, false),
@@ -1685,7 +1686,7 @@ impl BrokerImpl {
                 ..
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point {
-                    info!("Peer id: {} mounted on path: '{}'", peer_id, mount_point);
+                    info!("Peer id: {peer_id} mounted on path: '{mount_point}'");
                     break 'find_mount (Some(mount_point.clone()), false, false);
                 }
 
@@ -1700,10 +1701,7 @@ impl BrokerImpl {
                         }
                         Some(mount) => {
                             let mount_point = mount.mount_point.clone();
-                            info!(
-                                "Peer id: {}, device id: {} mounted on path: '{}'",
-                                peer_id, device_id, mount_point
-                            );
+                            info!("Peer id: {peer_id}, device id: {device_id} mounted on path: '{mount_point}'");
                             break 'find_mount (Some(mount_point), true, false);
                         }
                     }
@@ -1713,8 +1711,8 @@ impl BrokerImpl {
         };
 
         let peer = Peer {
-            peer_id,
-            peer_kind,
+            id: peer_id,
+            kind: peer_kind,
             sender,
             mount_point: effective_mount_point.clone(),
             subscribe_api: None,
@@ -1733,7 +1731,7 @@ impl BrokerImpl {
                 });
             }
 
-            let user = peer.peer_kind.user();
+            let user = peer.kind.user();
 
             if !is_broker_as_client_mount && !self.mount_allowed_for_user(&peer, mount_point, via_device_id).await {
                 return Err(DisconnectPeerReason {
@@ -1765,13 +1763,7 @@ impl BrokerImpl {
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
 
-        let user_roles = if let Some(roles) = oauth2_user_groups.get(&peer_id) {
-            roles.clone()
-        } else {
-            access.access_user(user)
-                .map(|u| u.roles.clone())
-                .unwrap_or_default()
-        };
+        let user_roles = oauth2_user_groups.get(&peer_id).cloned().unwrap_or_else(|| access.access_user(user).map(|u| u.roles.clone()).unwrap_or_default());
         let flatten_roles = access.flatten_roles(&user_roles);
 
         let mut any_role_has_ip_policy = false;
@@ -1802,10 +1794,8 @@ impl BrokerImpl {
                     if policy.can_mount_via_device_id {
                         return true;
                     }
-                } else {
-                    if policy.allowed_mounts.iter().any(|allowed_mount| starts_with_path(mount_point, allowed_mount)) {
-                        return true;
-                    }
+                } else if policy.allowed_mounts.iter().any(|allowed_mount| starts_with_path(mount_point, allowed_mount)) {
+                    return true;
                 }
             }
         }
@@ -1861,7 +1851,7 @@ mod test {
     smol_macros::test! {
         async fn test_broker() {
             let config = BrokerConfig::default();
-            let access = config.access.clone();
+            let access = config.access;
             let roles = access.flatten_roles(access.access_user("child-broker").unwrap().roles.as_slice());
             assert_eq!(
                 roles,
@@ -1884,7 +1874,7 @@ mod test {
             let mut users = access.users().clone();
             users.insert("deactivated_user".to_string(), crate::config::User {
                 password: Password::Plain("some_pw".to_string()),
-                roles: Default::default(),
+                roles: Vec::default(),
                 deactivated: true,
                 expires: None,
                 deactivated_reason: Some("manual".to_string()),
@@ -1921,8 +1911,8 @@ mod test {
                 let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), policies.clone(), command_sender, None);
 
                 let peer = Peer {
-                    peer_id: 0,
-                    peer_kind: PeerKind::Client {
+                    id: 0,
+                    kind: PeerKind::Client {
                         user: user.to_string(),
                     },
                     sender: unbounded().0,
