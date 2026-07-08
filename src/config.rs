@@ -150,10 +150,6 @@ impl std::fmt::Debug for User {
 }
 
 impl User {
-    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
-        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
-        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
-    }
     fn from_v2(user: UserV2) -> Result<Self, String> {
         Ok(Self {
             password: Password::from_v2(user.password)?,
@@ -168,11 +164,11 @@ impl User {
 impl TryFrom<&RpcValue> for User {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
-        let cpon = value.to_cpon();
-        match serde_json::from_str(&cpon) {
+
+        match shvproto::from_rpcvalue::<User>(value) {
             Ok(user) => { Ok(user) }
             Err(e) => {
-                UserV2::try_from(cpon.as_str()).map_or_else(|_| Err(e.to_string()), User::from_v2)
+                shvproto::from_rpcvalue::<UserV2>(value).map_or_else(|_| Err(e.to_string()), User::from_v2)
             }
         }
     }
@@ -199,13 +195,6 @@ impl Password {
 pub struct UserV2 {
     pub password: PasswordV2,
     pub roles: Vec<String>,
-}
-
-impl TryFrom<&str> for UserV2 {
-    type Error = String;
-    fn try_from(cpon: &str) -> Result<Self, Self::Error> {
-        serde_json::from_str(cpon).map_err(|e| e.to_string())
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -258,18 +247,10 @@ pub struct Role {
     pub profile: Option<ProfileValue>,
 }
 
-impl Role {
-    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
-        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
-        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
-    }
-}
-
 impl TryFrom<&RpcValue> for Role {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
-        let cpon = value.to_cpon();
-        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+        shvproto::from_rpcvalue(value).map_err(|e| e.to_string())
     }
 }
 
@@ -381,18 +362,10 @@ pub struct Mount {
     pub description: String,
 }
 
-impl Mount {
-    pub(crate) fn to_rpcvalue(&self) -> Result<RpcValue, String> {
-        let cpon = serde_json::to_string(self).map_err(|e| e.to_string())?;
-        RpcValue::from_cpon(&cpon).map_err(|e| e.to_string())
-    }
-}
-
 impl TryFrom<&RpcValue> for Mount {
     type Error = String;
     fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
-        let cpon = value.to_cpon();
-        serde_json::from_str(&cpon).map_err(|e| e.to_string())
+        shvproto::from_rpcvalue(value).map_err(|e| e.to_string())
     }
 }
 
