@@ -909,7 +909,7 @@ impl ShvNode for BrokerAccessMountsNode {
                         Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(mount) => {
-                        Ok(ProcessRequestRetval::Retval(mount.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(mount)?))
                     }
                 }
             }
@@ -999,7 +999,7 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                         Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(user) => {
-                        Ok(ProcessRequestRetval::Retval(user.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(user)?))
                     }
                 }
             }
@@ -1097,7 +1097,7 @@ impl ShvNode for BrokerAccessRolesNode {
                         Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(role) => {
-                        Ok(ProcessRequestRetval::Retval(role.to_rpcvalue()?))
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(role)?))
                     }
                 }
             }
@@ -1164,7 +1164,7 @@ impl ShvNode for BrokerAccessPoliciesNode {
                         Err(format!("Invalid node key: {}", ctx.node_path).into())
                     }
                     Some(policy) => {
-                        Ok(ProcessRequestRetval::Retval(serde_json::to_string(&policy)?.into()))
+                        Ok(ProcessRequestRetval::Retval(shvproto::to_rpcvalue(&policy)?))
                     }
                 }
             }
@@ -1178,8 +1178,7 @@ impl ShvNode for BrokerAccessPoliciesNode {
                 let policy = param.get(1).filter(|&m| !m.is_null());
                 let policy: Option<Result<Policy,_>> = policy
                     .map(|val| {
-                        let json = val.to_cpon();
-                        serde_json::from_str(&json).map_err(|e| e.to_string())
+                        shvproto::from_rpcvalue(val).map_err(|e| e.to_string())
                     });
                 let policy  = match policy {
                     None => None,

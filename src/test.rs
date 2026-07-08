@@ -240,7 +240,7 @@ async fn test_broker_loop_as_admin_async() {
         }
         {
             let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["baz".into(), mount.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+            call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&mount).unwrap()].into()), &mut call_ctx).await.unwrap();
             let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
             let list = resp.as_list();
             assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
@@ -262,7 +262,7 @@ async fn test_broker_loop_as_admin_async() {
             }
             {
                 let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false, expires: None, deactivated_reason: None };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), user.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&user).unwrap()].into()), &mut call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 let mut users = users;
@@ -288,7 +288,7 @@ async fn test_broker_loop_as_admin_async() {
             }
             {
                 let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), role.to_rpcvalue().unwrap()].into()), &mut call_ctx).await.unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&role).unwrap()].into()), &mut call_ctx).await.unwrap();
                 let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                 let list = resp.as_list();
                 let mut roles = roles;
