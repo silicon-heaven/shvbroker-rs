@@ -1003,7 +1003,7 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
             Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),

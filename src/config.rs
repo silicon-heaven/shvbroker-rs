@@ -331,6 +331,26 @@ impl Policies {
     }
 }
 
+pub(crate) async fn upsert_config(dest_access: &mut AccessConfig, source_access: &AccessConfig, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, dest_policies: &mut Policies, source_policies: &Policies, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue>{
+    for (user_id, user) in source_access.users() {
+        dest_access.set_access_user(user_id, Some(user.clone()), sql_connection).await?;
+    }
+
+    for (role_name, role) in source_access.roles() {
+        dest_access.set_access_role(role_name, Some(role.clone()), role_access_rules, sql_connection).await?;
+    }
+
+    for (mount_id, mount) in source_access.mounts() {
+        dest_access.set_access_mount(mount_id, Some(mount.clone()), sql_connection).await?;
+    }
+
+    for (role_name, policy) in source_policies.get() {
+        dest_policies.set_policy(role_name, Some(policy.clone()), sql_connection).await?;
+    }
+
+    Ok(true.into())
+}
+
 impl Default for Policies {
     fn default() -> Self {
         Self(BTreeMap::from([
@@ -519,7 +539,6 @@ impl AccessConfig {
 
         Ok(res)
     }
-
 }
 
 pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
