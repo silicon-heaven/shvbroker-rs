@@ -139,12 +139,22 @@ pub(crate) enum ProcessRequestRetval {
     RetvalDeferred,
     Retval(RpcValue),
 }
+
+pub enum RequestedGranted {
+    Granted,
+    Denied {
+        required: AccessLevel,
+        granted: i32,
+    },
+    NotFound,
+}
+
 pub(crate) type ProcessRequestResult = Result<ProcessRequestRetval, shvrpc::Error>;
 #[async_trait::async_trait]
 pub(crate) trait ShvNode : Send + Sync {
     fn methods(&self, shv_path: &str) -> &'static[&'static MetaMethod];
     async fn children(&self, shv_path: &str) -> Option<Vec<String>>;
-    async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
+    async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> RequestedGranted {
         let shv_path = rq.shv_path().unwrap_or_default();
         let methods = self.methods(shv_path);
         is_request_granted_methods(methods, rq)
@@ -181,16 +191,24 @@ impl dyn ShvNode {
         }
     }
 }
-pub fn is_request_granted_methods(methods: &'static[&'static MetaMethod], rq: &RpcFrame) -> bool {
+pub fn is_request_granted_methods(methods: &'static[&'static MetaMethod], rq: &RpcFrame) -> RequestedGranted {
     if let Some(rq_access) = rq.access_level() {
         let method = rq.method().unwrap_or_default();
         for mm in methods {
             if mm.name == method {
-                return rq_access >= mm.access as i32
+                return if rq_access >= mm.access as i32 {
+                    RequestedGranted::Granted
+                } else {
+                    RequestedGranted::Denied {
+                        required: mm.access,
+                        granted: rq_access,
+                    }
+
+                }
             }
         }
     }
-    false
+    RequestedGranted::NotFound
 }
 
 pub const METH_SHV_VERSION_MAJOR: &str = "shvVersionMajor";
