@@ -1,7 +1,7 @@
 use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
 pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
-    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_ROLES, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
+    AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_ROLES, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, RequestedGranted, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
 };
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
@@ -1167,35 +1167,55 @@ impl BrokerImpl {
                     }
                     Action::NodeRequest { node_id, frame, ctx, } => {
                         let node = self.nodes.get(&node_id).expect("Should be mounted");
-                        if node.is_request_granted(&frame, &ctx).await {
-                            let result = match node.process_request_and_dir_ls(&frame, &ctx).await {
-                                Err(e) => Err(RpcError::new(
-                                    RpcErrorCode::MethodCallException,
-                                    e.to_string(),
-                                )),
-                                Ok(ProcessRequestRetval::MethodNotFound) => Err(RpcError::new(
+                        match node.is_request_granted(&frame, &ctx).await {
+                            RequestedGranted::Granted => {
+                                let result = match node.process_request_and_dir_ls(&frame, &ctx).await {
+                                    Err(e) => Err(RpcError::new(
+                                        RpcErrorCode::MethodCallException,
+                                        e.to_string(),
+                                    )),
+                                    Ok(ProcessRequestRetval::MethodNotFound) => Err(RpcError::new(
+                                        RpcErrorCode::MethodNotFound,
+                                        format!(
+                                            "Method {}:{} not found.",
+                                            shv_path,
+                                            frame.method().unwrap_or_default()
+                                        ),
+                                    )),
+                                    Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
+                                    Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
+                                };
+                                Self::send_response(&self.peers, peer_id, response_meta, result).await?;
+                            },
+                            RequestedGranted::Denied {required, granted} => {
+                                let err = RpcError::new(
+                                    RpcErrorCode::PermissionDenied,
+                                    format!("Insufficient permissions. \
+                                        Method '{}:{}()' \
+                                        called with access level {:?}, required {} ({:?})",
+                                        shv_path,
+                                        frame.method().unwrap_or_default(),
+                                        granted,
+                                        required as i32,
+                                        required,
+                                    ),
+                                );
+                                Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
+                            },
+                            RequestedGranted::NotFound => {
+                                let err = RpcError::new(
                                     RpcErrorCode::MethodNotFound,
                                     format!(
-                                        "Method {}:{} not found.",
+                                        "Unknown method on path '{}:{}()'",
                                         shv_path,
                                         frame.method().unwrap_or_default()
                                     ),
-                                )),
-                                Ok(ProcessRequestRetval::RetvalDeferred) => return Ok(()),
-                                Ok(ProcessRequestRetval::Retval(result)) => Ok(result),
-                            };
-                            Self::send_response(&self.peers, peer_id, response_meta, result).await?;
-                        } else {
-                            let err = RpcError::new(
-                                RpcErrorCode::PermissionDenied,
-                                format!(
-                                    "Method doesn't exist or request to call {}:{} is not granted.",
-                                    shv_path,
-                                    frame.method().unwrap_or_default()
-                                ),
-                            );
-                            Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
+                                );
+                                Self::send_response(&self.peers, peer_id, response_meta, Err(err)).await?;
+
+                            },
                         }
+                        // } else {
                     }
                 }
             } else {

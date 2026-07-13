@@ -8,7 +8,7 @@ pub type TunnelId = u64;
 use crate::brokerimpl::{
     BrokerImpl, NodeRequestContext, Peer
 };
-use crate::shvnode::{self, SIG_LSMOD};
+use crate::shvnode::{self, RequestedGranted, SIG_LSMOD};
 use crate::shvnode::{
     is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR,
     METH_LS,
@@ -76,17 +76,21 @@ impl TunnelNode {
             .collect()
     }
 
-    pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> bool {
+    pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> RequestedGranted {
         let Ok(tunid) = tunid.parse::<TunnelId>() else {
-            return false;
+            return RequestedGranted::NotFound;
         };
-        self.active_tunnels.read().await.get(&tunid).is_some_and(|tun| {
-            let cids = frame.caller_ids();
-            cids == tun.caller_ids
-                || AccessLevel::try_from(frame.access_level().unwrap_or(0))
-                .unwrap_or(AccessLevel::Browse)
-                == AccessLevel::Superuser
-        })
+        let active_tunnels = self.active_tunnels.read().await;
+        let Some(tun) = active_tunnels.get(&tunid) else {
+            return RequestedGranted::NotFound;
+        };
+        let cids = frame.caller_ids();
+        let granted = AccessLevel::try_from(frame.access_level().unwrap_or(0)).unwrap_or(AccessLevel::Browse);
+        if cids == tun.caller_ids || granted == AccessLevel::Superuser {
+            RequestedGranted::Granted
+        } else {
+            RequestedGranted::Denied {granted: granted as i32, required: AccessLevel::Superuser}
+        }
     }
 
     pub(crate) async fn write_tunnel(&self, tunid: TunnelId, rqid: RqId, data: Vec<u8>) -> shvrpc::Result<()> {
@@ -278,7 +282,7 @@ impl ShvNode for TunnelNode {
         }
     }
 
-    async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> bool {
+    async fn is_request_granted(&self, rq: &RpcFrame, _ctx: &NodeRequestContext) -> RequestedGranted {
         let shv_path = rq.shv_path().unwrap_or_default();
         if shv_path.is_empty() {
             let methods = self.methods(shv_path);
