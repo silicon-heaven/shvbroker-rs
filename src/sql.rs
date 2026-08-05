@@ -4,7 +4,7 @@ use log::{debug, info};
 use async_sqlite::{ClientBuilder, Client};
 use shvproto::RpcValue;
 
-use crate::{brokerimpl::{LastLogin, ParsedAccessRules, parse_config_roles}, config::{AccessConfig, Policies, UpdateSqlOperation}};
+use crate::{brokerimpl::{LastLogin, ParsedAccessRules}, config::{AccessConfig, Policies, UpdateSqlOperation, parse_config_roles}};
 
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";

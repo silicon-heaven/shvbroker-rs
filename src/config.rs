@@ -374,13 +374,6 @@ pub(crate) enum UpdateSqlOperation<'a> {
     Delete { table: &'a str, id: &'a str },
 }
 
-pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
-    role.access
-        .iter()
-        .map(AccessRule::try_parse)
-        .collect::<Result<Vec<_>,_>>()
-}
-
 impl AccessConfig {
     pub fn new(
         users: BTreeMap<String, User>,
@@ -528,6 +521,23 @@ impl AccessConfig {
     }
 
 }
+
+pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
+    role.access
+        .iter()
+        .map(AccessRule::try_parse)
+        .collect::<Result<Vec<_>,_>>()
+}
+
+pub fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
+    roles.
+        iter()
+        .map(|(name, role)| {
+            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
+        })
+        .collect()
+}
+
 
 impl BrokerConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {

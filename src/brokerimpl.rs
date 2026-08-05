@@ -1,4 +1,4 @@
-use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
+use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, SharedBrokerConfig, UpdateSqlOperation};
 pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
     AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_ROLES, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, RequestedGranted, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
@@ -670,16 +670,6 @@ pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>
         .access_user(peer.kind.user())
         .map(|user| user.roles.clone())
         .unwrap_or_default()
-}
-
-pub fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
-    roles.
-        iter()
-        .map(|(name, role)| {
-            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
-        })
-        .collect()
-
 }
 
 #[derive(Debug)]
@@ -1864,12 +1854,11 @@ mod test {
     use crate::brokerimpl::PeerKind;
     use crate::brokerimpl::Policies;
     use crate::brokerimpl::Policy;
-    use crate::brokerimpl::parse_config_roles;
     use crate::brokerimpl::shv_path_glob_to_prefix;
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
     use crate::config::Password;
-    use crate::config::{BrokerConfig, SharedBrokerConfig};
+    use crate::config::{BrokerConfig, SharedBrokerConfig, parse_config_roles};
 
     smol_macros::test! {
         async fn test_broker() {

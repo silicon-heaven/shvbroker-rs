@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy, parse_config_roles};
+use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy};
 use crate::sql;
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -12,7 +12,7 @@ use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
+use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User, parse_config_roles};
 use crate::shvnode::{METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx {

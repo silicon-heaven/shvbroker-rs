@@ -4,7 +4,7 @@ use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
-use shvbroker::{brokerimpl::{BrokerImpl, LastLogin, parse_config_roles}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
+use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig, parse_config_roles}, sql::{self}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
