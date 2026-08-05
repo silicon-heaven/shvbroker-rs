@@ -1133,7 +1133,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = self.access.write().await.set_access_role(key.as_str(), role, &self.role_access_rules, sql_connection).await?;
+                let res = self.access.write().await.set_access_role(key.as_str(), role, &mut *self.role_access_rules.write().await, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

@@ -10,7 +10,6 @@ use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::ShvRI;
-use smol::lock::RwLock;
 use url::Url;
 
 pub type SharedBrokerConfig = Arc<BrokerConfig>;
@@ -501,7 +500,7 @@ impl AccessConfig {
         flatten_roles
     }
 
-    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(role) = &role {
             let json = serde_json::to_string(&role).expect("JSON should be generated");
             if self.roles.contains_key(role_name) {
@@ -519,7 +518,7 @@ impl AccessConfig {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             info!(target: "Access", "set_access_role: '{role_name}' -> {role:?}");
             self.roles.insert(role_name.to_string(), role);
-            role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
+            role_access_rules.insert(role_name.to_string(), parsed_access_rules);
         } else {
             info!(target: "Access", "set_access_role: '{role_name}' -> removed");
             self.roles.remove(role_name);
