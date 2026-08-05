@@ -66,7 +66,7 @@ macro_rules! peer_log {
 
     // Delegates to base implementation using module_path!() as default target
     ($peer_id:expr, $level:ident, $($arg:tt)+) => {
-        $crate::peer_log!(
+        $crate::peer::peer_log!(
             $peer_id,
             $level,
             target: ::core::module_path!(),
@@ -89,20 +89,20 @@ pub(crate) async fn try_server_peer_loop(
 ) -> shvrpc::Result<()> {
     let res = match server_mode {
         ServerMode::Tcp => {
-            info!("Entering TCP peer loop, peer: {peer_id}.");
+            peer_log!(peer_id, info, "Entering TCP peer loop");
             server_tcp_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
         ServerMode::WebSocket => {
-            info!("Entering WebSocket peer loop, peer: {peer_id}.");
+            peer_log!(peer_id, info, "Entering WebSocket peer loop");
             server_ws_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
     };
     match res {
         Ok(()) => {
-            info!("Client loop exit OK, peer id: {peer_id}");
+            peer_log!(peer_id, info, "Client loop exit OK");
         }
         Err(e) => {
-            warn!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            peer_log!(peer_id, warn, "Client loop exit ERROR, error: {e}");
         }
     }
     broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
@@ -677,7 +677,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
     };
 
     loop {
-        info!("Connecting to broker peer id: {peer_id} with url: {}", config.client.url);
+        peer_log!(peer_id, info, "Connecting to broker with url: {}", config.client.url);
         match broker_as_client_peer_loop_from_url(
             peer_id,
             config.clone(),
@@ -865,7 +865,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         let peer_id = next_peer_id();
         let peer_addr = connection_config.peer_address;
         let local_addr = connection_config.local_address;
-        info!("Connecting to CAN broker, peer id: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
+        peer_log!(peer_id, info, "Connecting to CAN broker, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
         let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
         let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
         let peer_local_addr = PeerLocalAddr { peer_addr, local_addr };
@@ -901,7 +901,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
     ) {
         let peer_id = next_peer_id();
         let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
-        info!("Starting CAN broker peer task, peer id: {peer_id} peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
+        peer_log!(peer_id, info, "Starting CAN broker peer task, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
         let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
         let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
         reader_frames_tx.unbounded_send(init_frame).ok();
@@ -1122,8 +1122,8 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = server_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
-                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
+                        Ok(()) => peer_log!(peer_id, info, "Broker CAN peer task finished OK, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Err(err) => peer_log!(peer_id, warn, "Broker CAN peer task finished with ERROR, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
                     // been terminated from within the broker
@@ -1137,8 +1137,8 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = client_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
-                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
+                        Ok(()) => peer_log!(peer_id, info, "Broker CAN peer task finished OK, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Err(err) => peer_log!(peer_id, warn, "Broker CAN peer task finished with ERROR, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
                     // been terminated from within the broker
@@ -1150,7 +1150,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                     broker_sender.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
                     if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.peer_address == peer_addr && cfg.local_address == local_addr) {
                         let reconnect_interval = connection_cfg.reconnect_interval;
-                        info!("Reconnecting to CAN broker, peer id: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x} after {reconnect_interval:?}");
+                        peer_log!(peer_id, info, "Reconnecting to CAN broker, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x} after {reconnect_interval:?}");
                         let reconnect_tx = reconnect_tx.clone();
                         let connection_cfg = connection_cfg.clone();
                         smol::spawn(async move {
@@ -1289,13 +1289,13 @@ async fn broker_as_client_peer_loop(
             },
             event = fut_receive_broker_event => match event {
                 Err(e) => {
-                    debug!("broker loop has closed peer channel, peer ID {peer_id}");
+                    peer_log!(peer_id, debug, "broker loop has closed peer channel");
                     return Err(e.into());
                 }
                 Ok(event) => {
                     match event {
                         BrokerToPeerMessage::DisconnectByBroker {reason} => {
-                            info!("Disconnected by parent broker, peer ID: {peer_id}, reason: {reason:?}");
+                            peer_log!(peer_id, info, "Disconnected by parent broker, reason: {reason:?}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {
