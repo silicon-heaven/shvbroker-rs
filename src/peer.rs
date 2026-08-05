@@ -54,23 +54,24 @@ use crate::serial::create_serial_frame_reader_writer;
 use async_compat::CompatExt;
 
 macro_rules! peer_log {
-    // level + target
-    ($peer_id:ident, $level:ident, target: $target:expr, $fmt:expr $(, $args:tt)* ) => {
-        let peer_id = &$peer_id;
+    // Base implementation (level + target)
+    ($peer_id:expr, $level:ident, target: $target:expr, $($arg:tt)+) => {
         $level!(
             target: $target,
-            "peer_id({peer_id}): {msg}",
-            msg = ::core::format_args!($fmt $(, $args)*)
-        );
+            "peer_id({peer_id}): {}",
+            ::core::format_args!($($arg)+),
+            peer_id = $peer_id,
+        )
     };
 
-    // level only
-    ($peer_id:ident, $level:ident, $fmt:expr $(, $args:tt)* ) => {
-        let peer_id = &$peer_id;
-        $level!(
-            "peer_id({peer_id}): {msg}",
-            msg = ::core::format_args!($fmt $(, $args)*)
-        );
+    // Delegates to base implementation using module_path!() as default target
+    ($peer_id:expr, $level:ident, $($arg:tt)+) => {
+        $crate::peer_log!(
+            $peer_id,
+            $level,
+            target: ::core::module_path!(),
+            $($arg)+
+        )
     };
 }
 
