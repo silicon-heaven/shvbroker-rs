@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy};
+use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy, parse_config_roles};
 use crate::sql;
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
@@ -70,10 +70,10 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, role_access_rules, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -156,7 +156,7 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, role_access_rules, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
 
     policies.set_policy("su", Some(Policy {
         allowed_ip: None,
@@ -166,7 +166,7 @@ async fn test_broker_loop_as_admin_async() {
 
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -309,8 +309,9 @@ smol_macros::test! {
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
+        let role_access_rules = parse_config_roles(access.roles());
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
+        let broker = BrokerImpl::new(config, access, role_access_rules, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();

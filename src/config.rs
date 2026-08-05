@@ -468,7 +468,7 @@ impl AccessConfig {
         Ok(res)
     }
 
-    pub(crate) fn roles(&self) -> &BTreeMap<String, Role> {
+    pub fn roles(&self) -> &BTreeMap<String, Role> {
         &self.roles
     }
 

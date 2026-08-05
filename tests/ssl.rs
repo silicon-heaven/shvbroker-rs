@@ -8,7 +8,7 @@ use const_format::formatcp;
 use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
-use shvbroker::brokerimpl::{BrokerImpl, LastLogin, Policies, run_broker};
+use shvbroker::brokerimpl::{BrokerImpl, LastLogin, Policies, parse_config_roles, run_broker};
 use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSettings, Listen, Policy};
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
@@ -32,11 +32,12 @@ const CHILD_BROKER_LISTEN_URL: &str = formatcp!("tcp://{CHILD_BROKER_ADDRESS}");
 
 async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let access_config = broker_config.access.clone();
+    let role_access_rules = parse_config_roles(access_config.roles());
     let policies = broker_config.policies.clone();
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
+        run_broker(BrokerImpl::new(broker_config, access_config, role_access_rules, LastLogin::default(), policies, broker_sender, None), broker_receiver)
             .await
             .expect("broker accept_loop failed");
     }).detach();

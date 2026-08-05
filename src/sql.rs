@@ -4,7 +4,7 @@ use log::{debug, info};
 use async_sqlite::{ClientBuilder, Client};
 use shvproto::RpcValue;
 
-use crate::{brokerimpl::LastLogin, config::{AccessConfig, Policies, UpdateSqlOperation}};
+use crate::{brokerimpl::{LastLogin, ParsedAccessRules, parse_config_roles}, config::{AccessConfig, Policies, UpdateSqlOperation}};
 
 pub const TBL_MOUNTS: &str = "mounts";
 pub const TBL_USERS: &str = "users";
@@ -12,7 +12,7 @@ pub const TBL_ROLES: &str = "roles";
 pub const TBL_POLICIES: &str = "policies";
 pub const TBL_LAST_LOGIN: &str = "last_login";
 
-pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig, policies: &Policies) -> shvrpc::Result<(Client, AccessConfig, Policies, LastLogin)> {
+pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig, policies: &Policies) -> shvrpc::Result<(Client, AccessConfig, ParsedAccessRules, Policies, LastLogin)> {
     info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
     let sql_connection = if sql_config_file == ":memory:" {
         // In memoty database is the default.
@@ -40,9 +40,9 @@ pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &Acces
 
         sql_connection
     };
-    let (access_config, policies, last_login) = load_access_sqlite(&sql_connection, access, policies, &LastLogin::default()).await?;
+    let (access_config, role_access_rules, policies, last_login) = load_access_sqlite(&sql_connection, access, policies, &LastLogin::default()).await?;
 
-    Ok((sql_connection, access_config, policies, last_login))
+    Ok((sql_connection, access_config, role_access_rules, policies, last_login))
 }
 
 async fn ensure_table_exists<TableElementType: serde::Serialize + Send + 'static>(sql_conn: &Client, tbl_name: &'static str, default_items: BTreeMap<String, TableElementType>) -> shvrpc::Result<()> {
@@ -99,7 +99,7 @@ pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection
         .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
 }
 
-async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, default_policies: &Policies, default_last_login: &LastLogin) -> shvrpc::Result<(AccessConfig, Policies, LastLogin)> {
+async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, default_policies: &Policies, default_last_login: &LastLogin) -> shvrpc::Result<(AccessConfig, ParsedAccessRules, Policies, LastLogin)> {
     async fn load_table<TableElementType: serde::Serialize + for <'a> serde::Deserialize<'a> + 'static + Send>(sql_conn: &Client, table_name: &'static str, default_items: BTreeMap<String, TableElementType>) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
         ensure_table_exists(sql_conn, table_name, default_items)
             .await
@@ -128,6 +128,7 @@ async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, de
         load_table(sql_conn, TBL_ROLES, default_access.roles().clone()).await?,
         load_table(sql_conn, TBL_MOUNTS, default_access.mounts().clone()).await?,
     );
+    let role_access_rules = parse_config_roles(access.roles());
 
     let policies = Policies::new(load_table(sql_conn, TBL_POLICIES, default_policies.get().clone()).await?);
 
@@ -138,5 +139,5 @@ async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, de
             date_time.map(|date_time| (key, date_time))
         }).collect();
 
-    Ok((access, policies, LastLogin::new(last_login)))
+    Ok((access, role_access_rules, policies, LastLogin::new(last_login)))
 }
