@@ -10,7 +10,6 @@ use shvproto::RpcValue;
 use shvrpc::client::ClientConfig;
 use shvrpc::metamethod::AccessLevel;
 use shvrpc::rpc::ShvRI;
-use smol::lock::RwLock;
 use url::Url;
 
 pub type SharedBrokerConfig = Arc<BrokerConfig>;
@@ -332,6 +331,26 @@ impl Policies {
     }
 }
 
+pub(crate) async fn upsert_config(dest_access: &mut AccessConfig, source_access: &AccessConfig, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, dest_policies: &mut Policies, source_policies: &Policies, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue>{
+    for (user_id, user) in source_access.users() {
+        dest_access.set_access_user(user_id, Some(user.clone()), sql_connection).await?;
+    }
+
+    for (role_name, role) in source_access.roles() {
+        dest_access.set_access_role(role_name, Some(role.clone()), role_access_rules, sql_connection).await?;
+    }
+
+    for (mount_id, mount) in source_access.mounts() {
+        dest_access.set_access_mount(mount_id, Some(mount.clone()), sql_connection).await?;
+    }
+
+    for (role_name, policy) in source_policies.get() {
+        dest_policies.set_policy(role_name, Some(policy.clone()), sql_connection).await?;
+    }
+
+    Ok(true.into())
+}
+
 impl Default for Policies {
     fn default() -> Self {
         Self(BTreeMap::from([
@@ -373,13 +392,6 @@ pub(crate) enum UpdateSqlOperation<'a> {
     Insert { table: &'a str, id: &'a str, json: String },
     Update { table: &'a str, id: &'a str, json: String },
     Delete { table: &'a str, id: &'a str },
-}
-
-pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
-    role.access
-        .iter()
-        .map(AccessRule::try_parse)
-        .collect::<Result<Vec<_>,_>>()
 }
 
 impl AccessConfig {
@@ -469,7 +481,7 @@ impl AccessConfig {
         Ok(res)
     }
 
-    pub(crate) fn roles(&self) -> &BTreeMap<String, Role> {
+    pub fn roles(&self) -> &BTreeMap<String, Role> {
         &self.roles
     }
 
@@ -501,7 +513,7 @@ impl AccessConfig {
         flatten_roles
     }
 
-    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(role) = &role {
             let json = serde_json::to_string(&role).expect("JSON should be generated");
             if self.roles.contains_key(role_name) {
@@ -519,7 +531,7 @@ impl AccessConfig {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             info!(target: "Access", "set_access_role: '{role_name}' -> {role:?}");
             self.roles.insert(role_name.to_string(), role);
-            role_access_rules.write().await.insert(role_name.to_string(), parsed_access_rules);
+            role_access_rules.insert(role_name.to_string(), parsed_access_rules);
         } else {
             info!(target: "Access", "set_access_role: '{role_name}' -> removed");
             self.roles.remove(role_name);
@@ -527,8 +539,24 @@ impl AccessConfig {
 
         Ok(res)
     }
-
 }
+
+pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedAccessRule>> {
+    role.access
+        .iter()
+        .map(AccessRule::try_parse)
+        .collect::<Result<Vec<_>,_>>()
+}
+
+pub fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
+    roles.
+        iter()
+        .map(|(name, role)| {
+            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
+        })
+        .collect()
+}
+
 
 impl BrokerConfig {
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {

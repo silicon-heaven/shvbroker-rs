@@ -13,7 +13,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use futures::channel::mpsc::UnboundedSender;
 use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
-use crate::config::{AccessConfig, Policy, Policies};
+use crate::config::{AccessConfig, Policies, Policy, SharedBrokerConfig, upsert_config};
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
 
@@ -356,6 +356,7 @@ pub const METH_CLIENTS: &str = "clients";
 pub const METH_MOUNTS: &str = "mounts";
 pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
 pub const METH_BROKER_ID: &str = "brokerId";
+pub const METH_APPLY_ACCESS_CONFIG_TO_DATABASE: &str = "applyAccessConfigToDatabase";
 
 const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "Int", "ClientInfo", &[], "");
 const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "String", "ClientInfo", &[], "");
@@ -373,6 +374,7 @@ const META_METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL: MetaMethod = MetaMethod::new_
 const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flags::empty(), AccessLevel::SuperService, "void", "List[String]", &[], "");
 const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flags::empty(), AccessLevel::SuperService, "Int", "void", &[], "");
 const META_METH_BROKER_ID: MetaMethod = MetaMethod::new_static(METH_BROKER_ID, Flags::IsGetter, AccessLevel::Service, "", "String", &[], "");
+const META_METH_APPLY_ACCESS_CONFIG_TO_DATABASE: MetaMethod = MetaMethod::new_static(METH_APPLY_ACCESS_CONFIG_TO_DATABASE, Flags::empty(), AccessLevel::Superuser, "void", "Bool", &[], "");
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
@@ -385,20 +387,24 @@ pub const METH_USER_ROLES: &str = "userRoles";
 
 pub(crate) struct BrokerNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
-    broker_name: Option<String>,
+    config: SharedBrokerConfig,
+    sql_connection: Option<async_sqlite::Client>,
     role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
     access: Arc<RwLock<AccessConfig>>,
+    policies: Arc<RwLock<Policies>>,
 }
 
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, broker_name: Option<String>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>,) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>) -> Self {
         Self {
             peers,
-            broker_name,
+            config,
+            sql_connection,
             role_access_rules,
             oauth2_user_groups,
             access,
+            policies,
         }
     }
 }
@@ -412,6 +418,7 @@ const BROKER_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_MOUNTS,
     &META_METH_DISCONNECT_CLIENT,
     &META_METH_BROKER_ID,
+    &META_METH_APPLY_ACCESS_CONFIG_TO_DATABASE,
 ];
 
 #[async_trait::async_trait]
@@ -465,7 +472,14 @@ impl ShvNode for BrokerNode {
                 })
             }
             METH_BROKER_ID => {
-                Ok(ProcessRequestRetval::Retval(self.broker_name.clone().into()))
+                Ok(ProcessRequestRetval::Retval(self.config.name.clone().into()))
+            }
+            METH_APPLY_ACCESS_CONFIG_TO_DATABASE => {
+                let Some(sql_connection) = &self.sql_connection else {
+                    return Err(make_access_ro_error().into());
+                };
+                upsert_config(&mut *self.access.write().await, &self.config.access, &mut *self.role_access_rules.write().await, &mut *self.policies.write().await, &self.config.policies, sql_connection).await?;
+                Ok(ProcessRequestRetval::Retval(true.into()))
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;
@@ -1133,7 +1147,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = self.access.write().await.set_access_role(key.as_str(), role, &self.role_access_rules, sql_connection).await?;
+                let res = self.access.write().await.set_access_role(key.as_str(), role, &mut *self.role_access_rules.write().await, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

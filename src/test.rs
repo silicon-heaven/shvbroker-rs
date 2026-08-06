@@ -12,8 +12,8 @@ use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
-use crate::shvnode::{METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
+use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User, parse_config_roles};
+use crate::shvnode::{METH_APPLY_ACCESS_CONFIG_TO_DATABASE, METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx {
     writer: UnboundedSender<BrokerCommand>,
@@ -70,10 +70,10 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, role_access_rules, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -156,7 +156,7 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, role_access_rules, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
 
     policies.set_policy("su", Some(Policy {
         allowed_ip: None,
@@ -166,7 +166,7 @@ async fn test_broker_loop_as_admin_async() {
 
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -299,7 +299,151 @@ async fn test_broker_loop_as_admin_async() {
                 assert_eq!(role, Role::try_from(&resp).unwrap());
             }
         }
+
+        {
+            let path = ".broker/access/users";
+            let updated_user = User { password: Password::Plain("updated-test-password".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
+            call(path, METH_SET_VALUE, Some(vec!["test".into(), shvproto::to_rpcvalue(&updated_user).unwrap()].into()), &mut call_ctx).await.unwrap();
+            call(path, METH_SET_VALUE, Some(vec!["viewer".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
+            let extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
+            call(path, METH_SET_VALUE, Some(vec!["extra-user".into(), shvproto::to_rpcvalue(&extra_user).unwrap()].into()), &mut call_ctx).await.unwrap();
+        }
+
+        {
+            let path = ".broker/access/roles";
+            let updated_role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "foo/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
+            call(path, METH_SET_VALUE, Some(vec!["tester".into(), shvproto::to_rpcvalue(&updated_role).unwrap()].into()), &mut call_ctx).await.unwrap();
+            let extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
+            call(path, METH_SET_VALUE, Some(vec!["extra-role".into(), shvproto::to_rpcvalue(&extra_role).unwrap()].into()), &mut call_ctx).await.unwrap();
+        }
+
+        {
+            let path = ".broker/access/mounts";
+            let updated_mount = Mount{ mount_point: "foo/updated-test-device".to_string(), description: "updated test mount".to_string() };
+            call(path, METH_SET_VALUE, Some(vec!["test-device".into(), shvproto::to_rpcvalue(&updated_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
+            let extra_mount = Mount{ mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
+            call(path, METH_SET_VALUE, Some(vec!["extra-mount".into(), shvproto::to_rpcvalue(&extra_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
+        }
+
+        {
+            let path = ".broker/access/policies";
+            call(path, METH_SET_VALUE, Some(vec!["client".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
+            let extra_policy = Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["extra/mount".to_string()],
+                can_mount_via_device_id: false,
+            };
+            let extra_policy_rv = shvproto::to_rpcvalue(&extra_policy).unwrap();
+            call(path, METH_SET_VALUE, Some(vec!["extra-policy".into(), extra_policy_rv].into()), &mut call_ctx).await.unwrap();
+        }
+
+        let updated_rows = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await.unwrap();
+        assert!(updated_rows.as_bool());
+
+        {
+            let path = ".broker/access/users";
+            let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let test_user = User::try_from(&resp).unwrap();
+            let expected_test_user = config.access.access_user("test").unwrap();
+            assert_eq!(&test_user, expected_test_user);
+
+            let resp = call(&join_path(path, "viewer"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let viewer_user = User::try_from(&resp).unwrap();
+            let expected_viewer_user = config.access.access_user("viewer").unwrap();
+            assert_eq!(&viewer_user, expected_viewer_user);
+
+            let resp = call(&join_path(path, "extra-user"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let extra_user = User::try_from(&resp).unwrap();
+            let expected_extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
+            assert_eq!(extra_user, expected_extra_user);
+        }
+
+        {
+            let path = ".broker/access/roles";
+            let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let tester_role = Role::try_from(&resp).unwrap();
+            let expected_tester_role = config.access.access_role("tester").unwrap();
+            assert_eq!(&tester_role, expected_tester_role);
+
+            let resp = call(&join_path(path, "extra-role"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let extra_role = Role::try_from(&resp).unwrap();
+            let expected_extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
+            assert_eq!(extra_role, expected_extra_role);
+        }
+
+        {
+            let path = ".broker/access/mounts";
+            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let test_mount = Mount::try_from(&resp).unwrap();
+            let expected_test_mount = config.access.access_mount("test-device").unwrap();
+            assert_eq!(&test_mount, expected_test_mount);
+
+            let resp = call(&join_path(path, "extra-mount"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let extra_mount = Mount::try_from(&resp).unwrap();
+            let expected_extra_mount = Mount { mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
+            assert_eq!(extra_mount, expected_extra_mount);
+        }
+
+        {
+            let path = ".broker/access/policies";
+            let resp = call(&join_path(path, "su"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let su_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+            let expected_su_policy = config.policies.access_policy("su").unwrap();
+            assert_eq!(&su_policy, expected_su_policy);
+
+            let resp = call(&join_path(path, "client"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let client_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+            let expected_client_policy = config.policies.access_policy("client").unwrap();
+            assert_eq!(&client_policy, expected_client_policy);
+
+            let resp = call(&join_path(path, "extra-policy"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+            let extra_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+            let expected_extra_policy = Policy {
+                allowed_ip: None,
+                allowed_mounts: vec!["extra/mount".to_string()],
+                can_mount_via_device_id: false,
+            };
+            assert_eq!(extra_policy, expected_extra_policy);
+        }
     }
+    broker_task.cancel().await;
+}
+
+#[test]
+fn test_update_access_database_from_config_file_without_access_db() {
+    smol::block_on(test_update_access_database_from_config_file_without_access_db_async());
+}
+
+async fn test_update_access_database_from_config_file_without_access_db_async() {
+    let config = BrokerConfig::default();
+    let access = config.access.clone();
+    let role_access_rules = parse_config_roles(access.roles());
+    let policies = config.policies.clone();
+    let config = SharedBrokerConfig::new(config);
+    let (broker_sender, broker_receiver) = unbounded();
+    let broker = BrokerImpl::new(config, access, role_access_rules, LastLogin::default(), policies, broker_sender.clone(), None);
+    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
+
+    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
+    let peer_id = 3;
+
+    let mut call_ctx = CallCtx {
+        writer: broker_sender.clone(),
+        reader: peer_reader,
+        peer_id,
+    };
+
+    broker_sender.unbounded_send(BrokerCommand::NewPeer {
+        peer_id,
+        peer_kind: PeerKind::Client{
+            user: "admin".to_string(),
+        },
+        sender: peer_writer.clone() })
+        .unwrap();
+
+    let resp = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await;
+    assert!(resp.is_err());
+
     broker_task.cancel().await;
 }
 
@@ -309,8 +453,9 @@ smol_macros::test! {
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
+        let role_access_rules = parse_config_roles(access.roles());
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
+        let broker = BrokerImpl::new(config, access, role_access_rules, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();

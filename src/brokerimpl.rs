@@ -1,4 +1,4 @@
-use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, Role, SharedBrokerConfig, UpdateSqlOperation, parse_role_access_rules};
+use crate::config::{AccessConfig, ConnectionMountSettings, Listen, Password, SharedBrokerConfig, UpdateSqlOperation};
 pub use crate::config::{Policy, Policies};
 use crate::shvnode::{
     AppNode, BrokerAccessLastLoginNode, BrokerAccessMountsNode, BrokerAccessPoliciesNode, BrokerAccessRolesNode, BrokerAccessUsersNode, BrokerCurrentClientNode, BrokerNode, DIR_APP, DIR_BROKER, DIR_BROKER_ACCESS_LAST_LOGIN, DIR_BROKER_ACCESS_MOUNTS, DIR_BROKER_ACCESS_POLICIES, DIR_BROKER_ACCESS_ROLES, DIR_BROKER_ACCESS_USERS, DIR_BROKER_CURRENT_CLIENT, DIR_SHV2_BROKER_APP, DIR_SHV2_BROKER_ETC_ACL_MOUNTS, DIR_SHV2_BROKER_ETC_ACL_ROLES, DIR_SHV2_BROKER_ETC_ACL_USERS, METH_LS, METH_SUBSCRIBE, METH_UNSUBSCRIBE, ProcessRequestRetval, RequestedGranted, SIG_LSMOD, SIG_MNTMOD, Shv2BrokerAppNode, ShvNode, process_local_dir_ls
@@ -672,16 +672,6 @@ pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>
         .unwrap_or_default()
 }
 
-fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
-    roles.
-        iter()
-        .map(|(name, role)| {
-            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
-        })
-        .collect()
-
-}
-
 #[derive(Debug)]
 pub(crate) struct Session {
     last_activity: DateTime,
@@ -719,6 +709,7 @@ impl LastLogin {
         Ok(self.0.insert(id.to_string(), timestamp))
     }
 }
+pub type ParsedAccessRules = HashMap<String, Vec<ParsedAccessRule>>;
 
 pub struct BrokerImpl {
     config: SharedBrokerConfig,
@@ -727,7 +718,7 @@ pub struct BrokerImpl {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: BTreeMap<String, Mount>,
     access: Arc<RwLock<AccessConfig>>,
-    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
+    role_access_rules: Arc<RwLock<ParsedAccessRules>>,
 
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
 
@@ -984,6 +975,7 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
+        role_access_rules: ParsedAccessRules,
         last_login: LastLogin,
         policies: Policies,
         command_sender: UnboundedSender<BrokerCommand>,
@@ -994,7 +986,7 @@ impl BrokerImpl {
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = BTreeMap::default();
         let mut mounts: BTreeMap<String, Mount> = BTreeMap::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
-        let role_access_rules = Arc::new(RwLock::new(parse_config_roles(access.roles())));
+        let role_access_rules = Arc::new(RwLock::new(role_access_rules));
         let access = Arc::new(RwLock::new(access));
         let oauth2_user_groups = Arc::new(RwLock::new(BTreeMap::default()));
         let last_login = Arc::new(RwLock::new(last_login));
@@ -1011,7 +1003,7 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.name.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
             Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),
@@ -1866,7 +1858,7 @@ mod test {
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
     use crate::config::Password;
-    use crate::config::{BrokerConfig, SharedBrokerConfig};
+    use crate::config::{BrokerConfig, SharedBrokerConfig, parse_config_roles};
 
     smol_macros::test! {
         async fn test_broker() {
@@ -1928,7 +1920,9 @@ mod test {
                 (("localhost_user", "some_pw", Some("10.0.0.1".parse().unwrap())), false),
             ] {
                 let (command_sender, _) = unbounded();
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access.clone(), LastLogin::default(), policies.clone(), command_sender, None);
+                let access = access.clone();
+                let role_access_rules = parse_config_roles(access.roles());
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, role_access_rules, LastLogin::default(), policies.clone(), command_sender, None);
 
                 let peer = Peer {
                     id: 0,

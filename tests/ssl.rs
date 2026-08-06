@@ -32,11 +32,12 @@ const CHILD_BROKER_LISTEN_URL: &str = formatcp!("tcp://{CHILD_BROKER_ADDRESS}");
 
 async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let access_config = broker_config.access.clone();
+    let role_access_rules = shvbroker::config::parse_config_roles(access_config.roles());
     let policies = broker_config.policies.clone();
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
+        run_broker(BrokerImpl::new(broker_config, access_config, role_access_rules, LastLogin::default(), policies, broker_sender, None), broker_receiver)
             .await
             .expect("broker accept_loop failed");
     }).detach();
