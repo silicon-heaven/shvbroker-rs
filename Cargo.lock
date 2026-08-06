@@ -3119,7 +3119,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shvbroker"
-version = "3.32.0"
+version = "3.32.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3183,9 +3183,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "6.3.0"
+version = "6.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e316ecbbe901706dc88a21813d382b2896f1223d5d3a1cd9e233b4e6e1d35f7"
+checksum = "b044c0d40df0f4ae5ede8b1c6d8044ebc758fc5fd96ba1c5e3de69dfd1c4d478"
 dependencies = [
  "chrono",
  "clap",
@@ -3197,9 +3197,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "19.0.0"
+version = "19.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5ccd17c3369abec8c4916d6f3679f31532066c2ce3540be1bb12af445dd4278"
+checksum = "fd2d5e11f140a759b347cf8e98c8a072bf66797244e8ba54250ad24ed28a068e"
 dependencies = [
  "anyhow",
  "async-trait",
