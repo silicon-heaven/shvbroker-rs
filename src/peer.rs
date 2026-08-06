@@ -53,6 +53,30 @@ use crate::serial::create_serial_frame_reader_writer;
 #[cfg(any(feature = "entra-id", feature = "google-auth"))]
 use async_compat::CompatExt;
 
+macro_rules! peer_log {
+    // Base implementation (level + target)
+    ($peer_id:expr, $level:ident, target: $target:expr, $($arg:tt)+) => {
+        $level!(
+            target: $target,
+            "peer_id({peer_id}): {}",
+            ::core::format_args!($($arg)+),
+            peer_id = $peer_id,
+        )
+    };
+
+    // Delegates to base implementation using module_path!() as default target
+    ($peer_id:expr, $level:ident, $($arg:tt)+) => {
+        $crate::peer::peer_log!(
+            $peer_id,
+            $level,
+            target: ::core::module_path!(),
+            $($arg)+
+        )
+    };
+}
+
+pub(super) use peer_log;
+
 pub(crate) const SESSION_TOKEN_PREFIX: &str = "session-token:";
 
 pub(crate) async fn try_server_peer_loop(
@@ -65,20 +89,20 @@ pub(crate) async fn try_server_peer_loop(
 ) -> shvrpc::Result<()> {
     let res = match server_mode {
         ServerMode::Tcp => {
-            info!("Entering TCP peer loop, peer: {peer_id}.");
+            peer_log!(peer_id, info, "Entering TCP peer loop");
             server_tcp_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
         ServerMode::WebSocket => {
-            info!("Entering WebSocket peer loop, peer: {peer_id}.");
+            peer_log!(peer_id, info, "Entering WebSocket peer loop");
             server_ws_peer_loop(peer_id, ip_addr, broker_writer.clone(), stream, broker_config).await
         }
     };
     match res {
         Ok(()) => {
-            info!("Client loop exit OK, peer id: {peer_id}");
+            peer_log!(peer_id, info, "Client loop exit OK");
         }
         Err(e) => {
-            warn!("Client loop exit ERROR, peer id: {peer_id}, error: {e}");
+            peer_log!(peer_id, warn, "Client loop exit ERROR, error: {e}");
         }
     }
     broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
@@ -139,26 +163,7 @@ pub(crate) async fn server_peer_loop(
     mut frame_writer: impl FrameWriter + Send + 'static,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    macro_rules! peer_log {
-        // level + target
-        ($level:ident, target: $target:expr, $fmt:expr $(, $args:tt)* ) => {
-            $level!(
-                target: $target,
-                "peer_id({peer_id}): {msg}",
-                msg = ::core::format_args!($fmt $(, $args)*)
-            );
-        };
-
-        // level only
-        ($level:ident, $fmt:expr $(, $args:tt)* ) => {
-            $level!(
-                "peer_id({peer_id}): {msg}",
-                msg = ::core::format_args!($fmt $(, $args)*)
-            );
-        };
-    }
-
-    peer_log!(debug, "entering peer loop");
+    peer_log!(peer_id, debug, "entering peer loop");
 
     'session_loop: loop {
         let (peer_writer, mut peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -197,7 +202,7 @@ pub(crate) async fn server_peer_loop(
             let method = rpcmsg.method().unwrap_or("");
             match method {
                 "hello" => {
-                    peer_log!(debug, "hello received");
+                    peer_log!(peer_id, debug, "hello received");
                     let shv2_compat = broker_config.shv2_compatibility;
                     let nonce: &String = nonce.get_or_insert_with(|| if shv2_compat {
                         format!("{}", rand::rng().random_range(0..=2_000_000_000))
@@ -209,7 +214,7 @@ pub(crate) async fn server_peer_loop(
                     frame_writer.send_result(resp_meta, result.into()).or(frame_write_timeout()).await?;
                 },
                 "workflows" => {
-                    peer_log!(debug, "workflows received");
+                    peer_log!(peer_id, debug, "workflows received");
                     #[cfg_attr(not(feature = "entra-id"), allow(unused_mut))]
                     let mut workflows = make_list!(
                         "PLAIN",
@@ -233,10 +238,10 @@ pub(crate) async fn server_peer_loop(
                     frame_writer.send_result(resp_meta, workflows.into()).or(frame_write_timeout()).await?;
                 },
                 "login" => {
-                    peer_log!(debug, "login received");
+                    peer_log!(peer_id, debug, "login received");
                     let params = rpcmsg.param().ok_or("No login params")?.as_map();
                     let user_agent = params.get("options").and_then(|options| options.get("userAgent")).map_or("<no user agent>", RpcValue::as_str);
-                    peer_log!(info, "User agent: '{user_agent}'");
+                    peer_log!(peer_id, info, "User agent: '{user_agent}'");
                     let login = params.get("login").ok_or("Invalid login params")?.as_map();
                     let login_type = login.get("type").map_or("", RpcValue::as_str);
                     let password = login.get(if login_type == "TOKEN" {"token"} else {"password"}).ok_or("Password login param is missing")?.as_str();
@@ -356,11 +361,11 @@ pub(crate) async fn server_peer_loop(
                             token: access_token.to_string(),
                         })?;
                         if let Some((user, session_token)) = receiver.await? {
-                            peer_log!(debug, "token OK");
+                            peer_log!(peer_id, debug, "token OK");
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         }
 
-                        peer_log!(warn, "invalid token");
+                        peer_log!(peer_id, warn, "invalid token");
                         frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                         continue 'login_loop;
                     }
@@ -441,12 +446,12 @@ pub(crate) async fn server_peer_loop(
 
 
                             if mapped_groups.is_empty() {
-                                peer_log!(warn, target: "Azure", "no relevant groups in Azure");
+                                peer_log!(peer_id, warn, target: "Azure", "no relevant groups in Azure");
                                 frame_writer.send_error(resp_meta, "No relevant Azure groups found.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
 
-                            peer_log!(debug, target: "Azure", "azure_groups: {mapped_groups:?}");
+                            peer_log!(peer_id, debug, target: "Azure", "azure_groups: {mapped_groups:?}");
                             let user = me_response.mail;
                             mapped_groups.insert(0, user.clone());
                             let (sender, receiver) = oneshot::channel();
@@ -470,11 +475,11 @@ pub(crate) async fn server_peer_loop(
                     })?;
 
                     if let Some(session_token) = receiver.await? {
-                        peer_log!(debug, "password OK");
+                        peer_log!(peer_id, debug, "password OK");
                         break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                     }
 
-                    peer_log!(warn, "invalid login credentials, user: {user}");
+                    peer_log!(peer_id, warn, "invalid login credentials, user: {user}");
                     frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                 },
                 _ => {
@@ -501,7 +506,7 @@ pub(crate) async fn server_peer_loop(
 
         let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
         let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
-        peer_log!(info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?})");
+        peer_log!(peer_id, info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?})");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),
@@ -522,7 +527,7 @@ pub(crate) async fn server_peer_loop(
         let frame_writer_task = smol::spawn(async move {
             while let Some(frame) = frames_rx.next().await {
                 if let Err(e) = frame_writer.send_frame(frame).or(frame_write_timeout()).await {
-                    peer_log!(error, "RpcFrame send failed: {e}");
+                    peer_log!(peer_id, error, "RpcFrame send failed: {e}");
                     return Err((e, frame_writer));
                 }
             }
@@ -550,7 +555,7 @@ pub(crate) async fn server_peer_loop(
                             }
 
                             if let Some(val) = frame.meta.remove(DOT_LOCAL_HACK) {
-                                peer_log!(warn, "Peer has sent our internal 'DOT_LOCAL_HACK: {val}', removing it from the frame");
+                                peer_log!(peer_id, warn, "Peer has sent our internal 'DOT_LOCAL_HACK: {val}', removing it from the frame");
                             }
 
                             broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame })?;
@@ -564,7 +569,7 @@ pub(crate) async fn server_peer_loop(
                                     Some((meta, RpcError::new(RpcErrorCode::MethodCallTimeout, "Response receive timeout")))
                                 }
                                 ReceiveFrameError::Timeout(None) => {
-                                    peer_log!(info, "Peer receive frame idle timeout expired after {idle_watchdog_timeout:?}");
+                                    peer_log!(peer_id, info, "Peer receive frame idle timeout expired after {idle_watchdog_timeout:?}");
                                     None
                                 }
                                 ReceiveFrameError::FrameTooLarge(reason, Some(meta)) => {
@@ -586,7 +591,7 @@ pub(crate) async fn server_peer_loop(
                                     broker_writer.unbounded_send(BrokerCommand::FrameReceived { peer_id, frame: rpc_msg.to_frame()? })?;
                                 }
                             } else {
-                                peer_log!(debug, "Peer receive frame error: {err}");
+                                peer_log!(peer_id, debug, "Peer receive frame error: {err}");
                                 drop(frames_tx);
                                 frame_writer_task.await.ok();
                                 break 'session_loop;
@@ -599,7 +604,7 @@ pub(crate) async fn server_peer_loop(
                 event = fut_receive_broker_event => match event {
                     Err(e) => {
                         // Broker should always disconnect us via DisconnectByBroker.
-                        peer_log!(error, "BrokerToPeer channel closed unexpectedly: {e}");
+                        peer_log!(peer_id, error, "BrokerToPeer channel closed unexpectedly: {e}");
                         drop(frames_tx);
                         frame_writer_task.await.ok();
                         break 'session_loop;
@@ -607,7 +612,7 @@ pub(crate) async fn server_peer_loop(
                     Ok(event) => {
                         match event {
                             BrokerToPeerMessage::DisconnectByBroker {reason} => {
-                                peer_log!(info, "disconnected by broker");
+                                peer_log!(peer_id, info, "disconnected by broker");
                                 if let Some(reason) = reason {
                                     frames_tx.unbounded_send(RpcMessage::new_signal("", "disconnectbybroker").with_param(reason).to_frame().expect("Frame must be constructed"))?;
                                 }
@@ -627,7 +632,7 @@ pub(crate) async fn server_peer_loop(
         }
     }
 
-    peer_log!(info, "peer gone");
+    peer_log!(peer_id, info, "peer gone");
     Ok(())
 }
 
@@ -672,7 +677,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
     };
 
     loop {
-        info!("Connecting to broker peer id: {peer_id} with url: {}", config.client.url);
+        peer_log!(peer_id, info, "Connecting to broker with url: {}", config.client.url);
         match broker_as_client_peer_loop_from_url(
             peer_id,
             config.clone(),
@@ -860,7 +865,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
         let peer_id = next_peer_id();
         let peer_addr = connection_config.peer_address;
         let local_addr = connection_config.local_address;
-        info!("Connecting to CAN broker, peer id: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
+        peer_log!(peer_id, info, "Connecting to CAN broker, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
         let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
         let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
         let peer_local_addr = PeerLocalAddr { peer_addr, local_addr };
@@ -896,7 +901,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
     ) {
         let peer_id = next_peer_id();
         let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
-        info!("Starting CAN broker peer task, peer id: {peer_id} peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
+        peer_log!(peer_id, info, "Starting CAN broker peer task, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}");
         let (writer_ack_tx, writer_ack_rx) = futures::channel::mpsc::unbounded();
         let (reader_frames_tx, reader_frames_rx) = futures::channel::mpsc::unbounded();
         reader_frames_tx.unbounded_send(init_frame).ok();
@@ -1117,8 +1122,8 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = server_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
-                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
+                        Ok(()) => peer_log!(peer_id, info, "Broker CAN peer task finished OK, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Err(err) => peer_log!(peer_id, warn, "Broker CAN peer task finished with ERROR, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
                     // been terminated from within the broker
@@ -1132,8 +1137,8 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                 (peer_id, peer_local_addr, result) = client_peer_tasks.select_next_some() => {
                     let PeerLocalAddr { peer_addr, local_addr } = peer_local_addr;
                     match result {
-                        Ok(()) => info!("Broker CAN peer task finished OK, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
-                        Err(err) => warn!("Broker CAN peer task finished with ERROR, peer ID: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
+                        Ok(()) => peer_log!(peer_id, info, "Broker CAN peer task finished OK, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}"),
+                        Err(err) => peer_log!(peer_id, warn, "Broker CAN peer task finished with ERROR, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x}, err: {err}"),
                     }
                     // Send the Terminate message to the peer if the task has
                     // been terminated from within the broker
@@ -1145,7 +1150,7 @@ pub(crate) async fn can_interface_task(can_interface_config: crate::brokerimpl::
                     broker_sender.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
                     if let Some(connection_cfg) = can_interface_config.connections.iter().find(|cfg| cfg.peer_address == peer_addr && cfg.local_address == local_addr) {
                         let reconnect_interval = connection_cfg.reconnect_interval;
-                        info!("Reconnecting to CAN broker, peer id: {peer_id}, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x} after {reconnect_interval:?}");
+                        peer_log!(peer_id, info, "Reconnecting to CAN broker, peer address: 0x{peer_addr:x}, local address: 0x{local_addr:x} after {reconnect_interval:?}");
                         let reconnect_tx = reconnect_tx.clone();
                         let connection_cfg = connection_cfg.clone();
                         smol::spawn(async move {
@@ -1274,13 +1279,13 @@ async fn broker_as_client_peer_loop(
             },
             event = fut_receive_broker_event => match event {
                 Err(e) => {
-                    debug!("broker loop has closed peer channel, peer ID {peer_id}");
+                    peer_log!(peer_id, debug, "broker loop has closed peer channel");
                     return Err(e.into());
                 }
                 Ok(event) => {
                     match event {
                         BrokerToPeerMessage::DisconnectByBroker {reason} => {
-                            info!("Disconnected by parent broker, peer ID: {peer_id}, reason: {reason:?}");
+                            peer_log!(peer_id, info, "Disconnected by parent broker, reason: {reason:?}");
                             break;
                         }
                         BrokerToPeerMessage::SendFrame(frame) => {

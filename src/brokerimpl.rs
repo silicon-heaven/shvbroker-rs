@@ -6,6 +6,7 @@ use crate::shvnode::{
 use crate::spawn::spawn_and_log_error;
 use crate::sql::{TBL_LAST_LOGIN, update_sql};
 use crate::tunnelnode::TunnelNode;
+use crate::peer::peer_log;
 use crate::{cut_prefix, peer, serial};
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::channel::oneshot;
@@ -169,7 +170,7 @@ impl Peer {
     }
 
     pub(crate) fn add_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "add_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
+        peer_log!(self.id, debug, target: "Subscr", "add_forwarded_subscription, ri: {ri}");
         let Some((subscribe_path, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -201,7 +202,7 @@ impl Peer {
     }
 
     pub(crate) fn remove_forwarded_subscription(&mut self, ri: &ShvRI, subscr_tx: &UnboundedSender<SubscriptionCommand>) -> shvrpc::Result<bool> {
-        debug!(target: "Subscr", "remove_forwarded_subscription, peer_id: {peer_id}, ri: {ri}", peer_id = self.id);
+        peer_log!(self.id, debug, target: "Subscr", "remove_forwarded_subscription, ri: {ri}");
         let Some((subscribe_api, forwarded_ri)) = self.forwarded_subscription_params(ri)? else {
             return Ok(false)
         };
@@ -461,12 +462,12 @@ async fn server_accept_loop(
 
         let peer_id = next_peer_id();
         let peer_addr = stream.peer_addr().as_ref().map(core::net::SocketAddr::ip).ok();
-        info!("Accepted TCP connection from peer: {peer_addr:?}, peer_id: {peer_id}");
+        peer_log!(peer_id, info, "Accepted TCP connection from peer: {peer_addr:?}");
 
         let stream: AsyncReadWriteBox = if let Some(tls_acceptor) = tls_acceptor.clone() {
             match tls_acceptor.accept(stream).await {
                 Ok(stream) => {
-                    info!("TLS handshake OK, peer: {peer_addr:?}, peer_id: {peer_id}");
+                    peer_log!(peer_id, info, "TLS handshake OK, peer: {peer_addr:?}");
                     Box::new(stream)
                 }
                 Err(err) => {
@@ -806,7 +807,7 @@ async fn forward_subscriptions_task(
                 SubscriptionAction::Unsubscribe => subscription.ri.to_string().into(),
             },
         };
-        debug!(target: "Subscr", "calling {method}, peer_id: {peer_id}, path: {path}, param: {param}");
+        peer_log!(peer_id, debug, target: "Subscr", "calling {method}, path: {path}, param: {param}");
         let (response_sender, mut response_receiver) = unbounded();
         let cmd = BrokerCommand::RpcCall {
             peer_id,
@@ -843,18 +844,18 @@ async fn forward_subscriptions_task(
 
         match res {
             Some(Ok(())) => {
-                debug!(target: "Subscr", "call {method} SUCCESS, peer_id: {peer_id}, subscription: {subscription:?}");
+                peer_log!(peer_id, debug, target: "Subscr", "call {method} SUCCESS, subscription: {subscription:?}");
                 Ok(())
             }
             Some(Err(e)) => {
-                error!(target: "Subscr", "call {method} error: {e}, peer_id: {peer_id}, subscription: {subscription:?}");
+                peer_log!(peer_id, error, target: "Subscr", "call {method} error: {e}, subscription: {subscription:?}");
                 // Do not retry the subscribe on an RpcError unless it's timeout.
                 // We assume that the call would end up with the same error, so
                 // we rather return Ok here and just log the error.
                 Ok(())
             }
             None => {
-                error!(target: "Subscr", "call {method} TIMEOUT after {timeout:?}, peer_id: {peer_id}, subscription: {subscription:?}");
+                peer_log!(peer_id, error, target: "Subscr", "call {method} TIMEOUT after {timeout:?}, subscription: {subscription:?}");
                 Err(())
             }
         }
@@ -947,7 +948,7 @@ async fn set_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, peer_id: Peer
 }
 
 async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sender: UnboundedSender<BrokerCommand>, peer_id: PeerId) -> shvrpc::Result<Option<SubscribeApi>> {
-    log!(target: "Subscr", Level::Debug, "check_subscribe_api, peer_id: {peer_id}");
+    peer_log!(peer_id, debug, target: "Subscr", "check_subscribe_api");
     let broker_command_sender = command_sender.clone();
     let subscribe_api = {
         let (response_sender, mut response_receiver) = unbounded();
@@ -975,7 +976,7 @@ async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sen
         }
     };
 
-    log!(target: "Subscr", Level::Debug, "Device subscribe API for peer_id {peer_id} detected: {subscribe_api:?}");
+    peer_log!(peer_id, debug, target: "Subscr", "Device subscribe API detected: {subscribe_api:?}");
     set_subscribe_api(peers, peer_id, subscribe_api).await?;
     Ok(subscribe_api)
 }
@@ -1352,7 +1353,7 @@ impl BrokerImpl {
 
     async fn user_is_allowed_to_login(&self, peer_id: PeerId, user: &str, ip_addr: Option<core::net::IpAddr>) -> bool {
         if let Some(ip_addr) = ip_addr && !self.login_allowed_from_ip(peer_id, user, ip_addr).await {
-            info!("peer_id({peer_id}): login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
+            peer_log!(peer_id, info, "login disallowed, because the peer's IP address ({ip_addr}) is not allowed");
             return false;
         }
 
@@ -1361,7 +1362,7 @@ impl BrokerImpl {
         }
 
         if self.user_expired(user).await {
-            info!("peer_id({peer_id}): login disallowed, because the user ({user}) has expired");
+            peer_log!(peer_id, info, "login disallowed, because the user ({user}) has expired");
             return false;
         }
 
@@ -1402,7 +1403,7 @@ impl BrokerImpl {
                     .await
                     .inspect_err(|err| log::error!("Unable to set last_login for {user}: {err}"))
                     .ok();
-                debug!("New peer, id: {new_peer_id}, user: {user:?}, last_login: {previous_login:?}");
+                peer_log!(new_peer_id, debug, "New peer, user: {user:?}, last_login: {previous_login:?}");
                 let peer_add_result = self.add_peer(new_peer_id, peer_kind, sender.clone()).await;
                 if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
                     sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
@@ -1440,7 +1441,7 @@ impl BrokerImpl {
                             for ri in forwarded_ris {
                                 new_peer
                                     .add_forwarded_subscription(&ri, &subscr_cmd_sender)
-                                    .inspect_err(|e| warn!("Cannot add forwarded subscription: {ri} to peer: {new_peer_id}, err: {e}"))
+                                    .inspect_err(|e| peer_log!(new_peer_id, warn, "Cannot add forwarded subscription: {ri}, err: {e}"))
                                     .ok();
                                 }
                         }
@@ -1449,7 +1450,7 @@ impl BrokerImpl {
                 }
             }
             BrokerCommand::PeerGone { peer_id } => {
-                debug!("Peer gone, id: {peer_id}.");
+                peer_log!(peer_id, debug, "Peer gone");
                 let mount_point = self.remove_peer(peer_id).await?;
                 if let Some(mount_point) = mount_point {
                     let mut lsmod_path = mount_point.as_ref();
@@ -1461,7 +1462,7 @@ impl BrokerImpl {
                         }
                     }
 
-                    debug!("Unmounting peer id: {peer_id} from: {mount_point}.");
+                    peer_log!(peer_id, debug, "Unmounting peer from: {mount_point}.");
                     let msg = RpcMessage::new_signal_with_source( lsmod_path, SIG_LSMOD, METH_LS)
                         .with_param(Map::from([(lsmod_value.to_string(), false.into())]));
                     Self::emit_rpc_signal_frame(&self.peers, 0, &msg.to_frame()?)
@@ -1519,7 +1520,7 @@ impl BrokerImpl {
                         },
                         "SHA1" => {
                             nonce.as_ref().map_or_else(|| {
-                                debug!("peer_id({peer_id}): user tried SHA1 login without using `:hello`");
+                                peer_log!(peer_id, debug, "user tried SHA1 login without using `:hello`");
                                 false
                             }, |nonce| {
                                 let mut data = nonce.as_bytes().to_vec();
@@ -1528,7 +1529,7 @@ impl BrokerImpl {
                             })
                         },
                         _ => {
-                            debug!("peer_id({peer_id}): unknown login type '{login_type}'");
+                            peer_log!(peer_id, debug, "unknown login type '{login_type}'");
                             false
                         }
                     }
@@ -1663,7 +1664,7 @@ impl BrokerImpl {
     async fn remove_peer(&mut self, peer_id: PeerId) -> shvrpc::Result<Option<String>> {
         let mount_point = Self::mount_point(&self.peers, peer_id).await;
         if let Some(mount_point) = mount_point.as_ref() {
-            info!("Unmounting peer: {peer_id} at: {mount_point}");
+            peer_log!(peer_id, info, "Unmounting peer at: {mount_point}");
         }
         let mut peers = self.peers.write().await;
         if let Some(removed_peer) = peers.remove(&peer_id) {
@@ -1671,7 +1672,7 @@ impl BrokerImpl {
                 let ri = subscr.param.ri;
                 for peer in peers.values_mut() {
                     peer.remove_forwarded_subscription(&ri, &self.subscr_cmd_sender)
-                        .inspect_err(|e| warn!("Cannot remove forwarded subscription: {ri} from peer: {peer_id}, err: {e}"))
+                        .inspect_err(|e| peer_log!(peer_id, warn, "Cannot remove forwarded subscription: {ri}, err: {e}"))
                         .ok();
                 }
             }
@@ -1706,7 +1707,7 @@ impl BrokerImpl {
                 ..
             } => 'find_mount: {
                 if let Some(mount_point) = mount_point {
-                    info!("Peer id: {peer_id} mounted on path: '{mount_point}'");
+                    peer_log!(peer_id, info, "mounted on path: '{mount_point}'");
                     break 'find_mount (Some(mount_point.clone()), false, false);
                 }
 
@@ -1721,7 +1722,7 @@ impl BrokerImpl {
                         }
                         Some(mount) => {
                             let mount_point = mount.mount_point.clone();
-                            info!("Peer id: {peer_id}, device id: {device_id} mounted on path: '{mount_point}'");
+                            peer_log!(peer_id, info, "device id: {device_id} mounted on path: '{mount_point}'");
                             break 'find_mount (Some(mount_point), true, false);
                         }
                     }
@@ -1759,7 +1760,7 @@ impl BrokerImpl {
                     msg_for_peer: Some(format!("Mount to '{mount_point}' is not allowed")),
                 });
             }
-            info!("Mounting peer: {peer_id} at: {mount_point}");
+            peer_log!(peer_id, info, "Mounting peer at: {mount_point}");
             self.mounts.insert(mount_point.clone(), Mount::Peer(peer_id));
         }
 
