@@ -104,10 +104,28 @@ pub struct BrokerConnectionConfig {
 type DeviceId = String;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[serde(try_from = "AccessConfigDe")]
 pub struct AccessConfig {
     users: BTreeMap<String, User>,
     roles: BTreeMap<String, Role>,
     mounts: BTreeMap<DeviceId, Mount>,
+    #[serde(skip)]
+    role_access_rules: HashMap<String, Vec<ParsedAccessRule>>,
+}
+
+#[derive(Deserialize)]
+struct AccessConfigDe {
+    users: BTreeMap<String, User>,
+    roles: BTreeMap<String, Role>,
+    mounts: BTreeMap<DeviceId, Mount>,
+}
+
+impl TryFrom<AccessConfigDe> for AccessConfig {
+    type Error = shvrpc::Error;
+
+    fn try_from(de: AccessConfigDe) -> Result<Self, Self::Error> {
+        AccessConfig::new(de.users, de.roles, de.mounts)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -331,13 +349,13 @@ impl Policies {
     }
 }
 
-pub(crate) async fn upsert_config(dest_access: &mut AccessConfig, source_access: &AccessConfig, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, dest_policies: &mut Policies, source_policies: &Policies, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue>{
+pub(crate) async fn upsert_config(dest_access: &mut AccessConfig, source_access: &AccessConfig, dest_policies: &mut Policies, source_policies: &Policies, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue>{
     for (user_id, user) in source_access.users() {
         dest_access.set_access_user(user_id, Some(user.clone()), sql_connection).await?;
     }
 
     for (role_name, role) in source_access.roles() {
-        dest_access.set_access_role(role_name, Some(role.clone()), role_access_rules, sql_connection).await?;
+        dest_access.set_access_role(role_name, Some(role.clone()), sql_connection).await?;
     }
 
     for (mount_id, mount) in source_access.mounts() {
@@ -399,8 +417,14 @@ impl AccessConfig {
         users: BTreeMap<String, User>,
         roles: BTreeMap<String, Role>,
         mounts: BTreeMap<DeviceId, Mount>,
-    ) -> Self {
-        AccessConfig { users, roles, mounts }
+    ) -> shvrpc::Result<Self> {
+        let role_access_rules = parse_config_roles(&roles)?;
+        Ok(AccessConfig {
+            users,
+            roles,
+            mounts,
+            role_access_rules,
+        })
     }
 
     pub fn from_file(file_name: &str) -> shvrpc::Result<Self> {
@@ -489,6 +513,10 @@ impl AccessConfig {
         self.roles.get(id)
     }
 
+    pub(crate) fn role_access_rules(&self) -> &HashMap<String, Vec<ParsedAccessRule>> {
+        &self.role_access_rules
+    }
+
     pub(crate) fn flatten_roles(&self, roles: &[String]) -> Vec<String> {
         let mut queue: VecDeque<String> = VecDeque::new();
         fn enqueue(queue: &mut VecDeque<String>, role: &str) {
@@ -513,7 +541,7 @@ impl AccessConfig {
         flatten_roles
     }
 
-    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, role_access_rules: &mut HashMap<String, Vec<ParsedAccessRule>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
+    pub(crate) async fn set_access_role(&mut self, role_name: &str, role: Option<Role>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
         let sqlop = if let Some(role) = &role {
             let json = serde_json::to_string(&role).expect("JSON should be generated");
             if self.roles.contains_key(role_name) {
@@ -531,10 +559,11 @@ impl AccessConfig {
             let parsed_access_rules = parse_role_access_rules(&role)?;
             info!(target: "Access", "set_access_role: '{role_name}' -> {role:?}");
             self.roles.insert(role_name.to_string(), role);
-            role_access_rules.insert(role_name.to_string(), parsed_access_rules);
+            self.role_access_rules.insert(role_name.to_string(), parsed_access_rules);
         } else {
             info!(target: "Access", "set_access_role: '{role_name}' -> removed");
             self.roles.remove(role_name);
+            self.role_access_rules.remove(role_name);
         }
 
         Ok(res)
@@ -548,11 +577,11 @@ pub(crate) fn parse_role_access_rules(role: &Role) -> shvrpc::Result<Vec<ParsedA
         .collect::<Result<Vec<_>,_>>()
 }
 
-pub fn parse_config_roles(roles: &BTreeMap<String, Role>) -> HashMap<String, Vec<ParsedAccessRule>> {
+fn parse_config_roles(roles: &BTreeMap<String, Role>) -> shvrpc::Result<HashMap<String, Vec<ParsedAccessRule>>> {
     roles.
         iter()
         .map(|(name, role)| {
-            (name.clone(), parse_role_access_rules(role).expect("Parse access rule error"))
+            parse_role_access_rules(role).map(|rules| (name.clone(), rules))
         })
         .collect()
 }
@@ -607,8 +636,8 @@ impl Default for BrokerConfig {
                 child_serial_broker_config,
                 child_can_broker_config,
             ],
-            access: AccessConfig {
-                users: BTreeMap::from([
+            access: AccessConfig::new(
+                BTreeMap::from([
                     ("admin".to_string(), User { password: Password::Plain("admin".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("broker".to_string(), User { password: Password::Plain("broker".into()), roles: vec!["su".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("user".to_string(), User { password: Password::Plain("user".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
@@ -617,7 +646,7 @@ impl Default for BrokerConfig {
                     ("child-broker".to_string(), User { password: Password::Plain("child-broker".into()), roles: vec!["child-broker".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                     ("tester".to_string(), User { password: Password::Sha1("ab4d8d2a5f480a137067da17100271cd176607a1".into()), roles: vec!["tester".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
                 ]),
-                roles: BTreeMap::from([
+                BTreeMap::from([
                     ("su".to_string(), Role {
                         roles: vec![],
                         access: vec![
@@ -680,11 +709,11 @@ impl Default for BrokerConfig {
                         profile: None,
                     }),
                 ]),
-                mounts: BTreeMap::from([
+                BTreeMap::from([
                     ("test-device".into(), Mount{ mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() }),
                     ("test-child-broker".into(), Mount{ mount_point: "test/child-broker".to_string(), description: "Testing child broker mount-point".to_string() }),
                 ]),
-            },
+            ).expect("Default broker config contains invalid access rules"),
             policies: Policies::default(),
             tunnelling: TunnellingConfig::default(),
             azure: None,

@@ -280,6 +280,7 @@ pub(crate) enum Mount {
     Node,
 }
 
+#[derive(Debug, Clone)]
 pub struct ParsedAccessRule {
     pub(crate) glob: shvrpc::rpc::Glob,
     // Needed in order to pass 'dot_local' in 'Access' meta-attribute
@@ -709,7 +710,6 @@ impl LastLogin {
         Ok(self.0.insert(id.to_string(), timestamp))
     }
 }
-pub type ParsedAccessRules = HashMap<String, Vec<ParsedAccessRule>>;
 
 pub struct BrokerImpl {
     config: SharedBrokerConfig,
@@ -718,7 +718,6 @@ pub struct BrokerImpl {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     mounts: BTreeMap<String, Mount>,
     access: Arc<RwLock<AccessConfig>>,
-    role_access_rules: Arc<RwLock<ParsedAccessRules>>,
 
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
 
@@ -975,7 +974,6 @@ impl BrokerImpl {
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
-        role_access_rules: ParsedAccessRules,
         last_login: LastLogin,
         policies: Policies,
         command_sender: UnboundedSender<BrokerCommand>,
@@ -986,7 +984,6 @@ impl BrokerImpl {
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = BTreeMap::default();
         let mut mounts: BTreeMap<String, Mount> = BTreeMap::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
-        let role_access_rules = Arc::new(RwLock::new(role_access_rules));
         let access = Arc::new(RwLock::new(access));
         let oauth2_user_groups = Arc::new(RwLock::new(BTreeMap::default()));
         let last_login = Arc::new(RwLock::new(last_login));
@@ -1003,10 +1000,10 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), role_access_rules.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone())));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
-            Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone(), role_access_rules.clone())),
+            Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_MOUNTS,
@@ -1018,7 +1015,7 @@ impl BrokerImpl {
         );
         add_node(
             DIR_BROKER_ACCESS_ROLES,
-            Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
+            Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone())),
         );
         add_node(
             DIR_BROKER_ACCESS_POLICIES,
@@ -1043,7 +1040,7 @@ impl BrokerImpl {
             );
             add_node(
                 DIR_SHV2_BROKER_ETC_ACL_ROLES,
-                Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone(), role_access_rules.clone())),
+                Box::new(BrokerAccessRolesNode::new(sql_connection.clone(), access.clone())),
             );
         }
 
@@ -1055,7 +1052,6 @@ impl BrokerImpl {
             peers,
             mounts,
             access,
-            role_access_rules,
             oauth2_user_groups,
             subscr_cmd_sender,
             sql_connection,
@@ -1091,7 +1087,6 @@ impl BrokerImpl {
             let response_meta = RpcFrame::prepare_response_meta(&frame.meta)?;
             let access = Self::access_level_for_request_params(
                 &self.peers,
-                &self.role_access_rules,
                 &self.oauth2_user_groups,
                 &self.access,
                 peer_id,
@@ -1579,10 +1574,8 @@ impl BrokerImpl {
             .and_then(|peer| peer.mount_point.clone())
     }
 
-    #[expect(clippy::too_many_arguments, reason = "It's fine for now, might fix this later")]
     pub(crate) async fn access_level_for_request_params(
         peers: &RwLock<BTreeMap<PeerId, Peer>>,
-        role_access_rules: &RwLock<HashMap<String, Vec<ParsedAccessRule>>>,
         oauth2_user_groups: &RwLock<BTreeMap<PeerId, Vec<String>>>,
         access: &RwLock<AccessConfig>,
         peer_id: PeerId,
@@ -1607,11 +1600,18 @@ impl BrokerImpl {
         };
         log!(target: "Access", Level::Debug, "SHV RI: {ri}");
 
+        let oauth2_user_groups = oauth2_user_groups.read().await;
+        let access_config = access.read().await;
+        let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
+        // request from logged-in user,
+        // it can be client, device, child broker or parent broker as client
+        let flatten_roles = access_config.flatten_roles(user_roles.as_slice());
+        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.kind.user());
+
         let access_level_from_flatten_roles = async |flatten_roles: Vec<String>| {
-            let access_roles = role_access_rules.read().await;
             let found_grant = flatten_roles
                 .into_iter()
-                .filter_map(|role_name| access_roles.get(&role_name)
+                .filter_map(|role_name| access_config.role_access_rules().get(&role_name)
                     .inspect(|_| log!(target: "Access", Level::Debug, "----------- access for role: {role_name}"))
                 )
                 .find_map(|rules| {
@@ -1633,13 +1633,6 @@ impl BrokerImpl {
                 ),
             }
         };
-        let oauth2_user_groups = oauth2_user_groups.read().await;
-        let access_config = access.read().await;
-        let user_roles = user_base_roles(&oauth2_user_groups, &access_config, peer);
-        // request from logged-in user,
-        // it can be client, device, child broker or parent broker as client
-        let flatten_roles = access_config.flatten_roles(user_roles.as_slice());
-        log!(target: "Access", Level::Debug, "User: '{user}', flatten roles: {:?}", flatten_roles, user = peer.kind.user());
         // client (especially parent broker) can set access level for its request
         // cap it to the maximum level allowed by its access rights configured in the broker
         let mut max_level = access_level_from_flatten_roles(flatten_roles).await;
@@ -1858,7 +1851,7 @@ mod test {
     use crate::brokerimpl::BrokerImpl;
     use crate::config::AccessConfig;
     use crate::config::Password;
-    use crate::config::{BrokerConfig, SharedBrokerConfig, parse_config_roles};
+    use crate::config::{BrokerConfig, SharedBrokerConfig};
 
     smol_macros::test! {
         async fn test_broker() {
@@ -1907,7 +1900,7 @@ mod test {
                 allowed_mounts: vec![],
             });
             let policies = Policies::new(policies_map);
-            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone());
+            let access = AccessConfig::new(users, access.roles().clone(), access.mounts().clone()).unwrap();
 
             for ((user, password, ip_addr), expected_result) in [
                 (("viewer", "viewer", None), true),
@@ -1921,8 +1914,7 @@ mod test {
             ] {
                 let (command_sender, _) = unbounded();
                 let access = access.clone();
-                let role_access_rules = parse_config_roles(access.roles());
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, role_access_rules, LastLogin::default(), policies.clone(), command_sender, None);
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, LastLogin::default(), policies.clone(), command_sender, None);
 
                 let peer = Peer {
                     id: 0,

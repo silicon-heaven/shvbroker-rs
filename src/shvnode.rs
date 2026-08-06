@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::format;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use futures::channel::mpsc::UnboundedSender;
-use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, ParsedAccessRule, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
+use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
 use crate::config::{AccessConfig, Policies, Policy, SharedBrokerConfig, upsert_config};
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
@@ -389,19 +389,17 @@ pub(crate) struct BrokerNode {
     peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>,
     config: SharedBrokerConfig,
     sql_connection: Option<async_sqlite::Client>,
-    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
     access: Arc<RwLock<AccessConfig>>,
     policies: Arc<RwLock<Policies>>,
 }
 
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>) -> Self {
         Self {
             peers,
             config,
             sql_connection,
-            role_access_rules,
             oauth2_user_groups,
             access,
             policies,
@@ -478,7 +476,7 @@ impl ShvNode for BrokerNode {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into());
                 };
-                upsert_config(&mut *self.access.write().await, &self.config.access, &mut *self.role_access_rules.write().await, &mut *self.policies.write().await, &self.config.policies, sql_connection).await?;
+                upsert_config(&mut *self.access.write().await, &self.config.access, &mut *self.policies.write().await, &self.config.policies, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(true.into()))
             }
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
@@ -505,7 +503,6 @@ impl ShvNode for BrokerNode {
 
                 let access_level = BrokerImpl::access_level_for_request_params(
                     &self.peers,
-                    &self.role_access_rules,
                     &self.oauth2_user_groups,
                     &self.access,
                     peer_id,
@@ -562,7 +559,6 @@ pub(crate) struct BrokerCurrentClientNode {
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
-    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 }
 impl BrokerCurrentClientNode {
     pub(crate) fn new(
@@ -571,7 +567,6 @@ impl BrokerCurrentClientNode {
         sql_connection: Option<async_sqlite::Client>,
         access: Arc<RwLock<AccessConfig>>,
         oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
-        role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
     ) -> Self {
         Self {
             peers,
@@ -579,7 +574,6 @@ impl BrokerCurrentClientNode {
             sql_connection,
             access,
             oauth2_user_groups,
-            role_access_rules,
         }
     }
 }
@@ -825,7 +819,6 @@ impl ShvNode for BrokerCurrentClientNode {
 
                 let access_level = BrokerImpl::access_level_for_request_params(
                         &self.peers,
-                        &self.role_access_rules,
                         &self.oauth2_user_groups,
                         &self.access,
                         ctx.peer_id,
@@ -1091,14 +1084,12 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
 pub(crate) struct BrokerAccessRolesNode {
     sql_connection: Option<async_sqlite::Client>,
     access: Arc<RwLock<AccessConfig>>,
-    role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>,
 }
 impl crate::shvnode::BrokerAccessRolesNode {
-    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>, role_access_rules: Arc<RwLock<HashMap<String, Vec<ParsedAccessRule>>>>) -> Self {
+    pub(crate) fn new(sql_connection: Option<async_sqlite::Client>, access: Arc<RwLock<AccessConfig>>) -> Self {
         Self {
             sql_connection,
             access,
-            role_access_rules,
         }
     }
 }
@@ -1147,7 +1138,7 @@ impl ShvNode for BrokerAccessRolesNode {
                     Some(Ok(role)) => {Some(role)}
                     Some(Err(e)) => { return Err(e.into() )}
                 };
-                let res = self.access.write().await.set_access_role(key.as_str(), role, &mut *self.role_access_rules.write().await, sql_connection).await?;
+                let res = self.access.write().await.set_access_role(key.as_str(), role, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

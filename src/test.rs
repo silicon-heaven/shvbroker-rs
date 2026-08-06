@@ -12,7 +12,7 @@ use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
-use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User, parse_config_roles};
+use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
 use crate::shvnode::{METH_APPLY_ACCESS_CONFIG_TO_DATABASE, METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx {
@@ -70,10 +70,10 @@ fn test_broker_loop_as_user() {
 }
 async fn test_broker_loop_as_user_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, role_access_rules, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -156,7 +156,7 @@ fn test_broker_loop_as_admin() {
 }
 async fn test_broker_loop_as_admin_async() {
     let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, role_access_rules, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+    let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
 
     policies.set_policy("su", Some(Policy {
         allowed_ip: None,
@@ -166,7 +166,7 @@ async fn test_broker_loop_as_admin_async() {
 
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, role_access_rules, last_login, policies, broker_sender.clone(), Some(sql_connection));
+    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -417,11 +417,10 @@ fn test_update_access_database_from_config_file_without_access_db() {
 async fn test_update_access_database_from_config_file_without_access_db_async() {
     let config = BrokerConfig::default();
     let access = config.access.clone();
-    let role_access_rules = parse_config_roles(access.roles());
     let policies = config.policies.clone();
     let config = SharedBrokerConfig::new(config);
     let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access, role_access_rules, LastLogin::default(), policies, broker_sender.clone(), None);
+    let broker = BrokerImpl::new(config, access, LastLogin::default(), policies, broker_sender.clone(), None);
     let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
     let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -453,9 +452,8 @@ smol_macros::test! {
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
-        let role_access_rules = parse_config_roles(access.roles());
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, role_access_rules, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
         let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
