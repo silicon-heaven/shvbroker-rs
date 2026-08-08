@@ -1,10 +1,12 @@
 #![expect(clippy::print_stdout, reason = "Fine for a binary")]
 use std::path::Path;
+use async_signal::{Signal, Signals};
+use futures::StreamExt;
 use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
-use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
+use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{BrokerConfig, SharedBrokerConfig}, sql::{self}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -44,16 +46,7 @@ struct CliOpts {
     verbose: Option<String>,
 }
 
-pub(crate) fn main() -> shvrpc::Result<()> {
-    const SMOL_THREADS: &str = "SMOL_THREADS";
-    if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
-        && let Ok(num_threads) = std::thread::available_parallelism() {
-        unsafe {
-            // Safety: the program is still single-threaded by this point.
-            std::env::set_var(SMOL_THREADS, num_threads.to_string());
-        }
-    }
-
+pub(crate) async fn impl_main() -> shvrpc::Result<()> {
     let cli_opts = CliOpts::parse();
 
     if cli_opts.version {
@@ -102,6 +95,12 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
+
+    if cli_opts.print_config {
+        print_config(&config)?;
+        return Ok(());
+    }
+
     let (access, policies, last_login, sql_connection) = if config.use_access_db {
         let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
         info!("Data directory: {data_dir}");
@@ -111,10 +110,6 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     } else {
         (config.access.clone(), config.policies.clone(), LastLogin::default(), None)
     };
-    if cli_opts.print_config {
-        print_config(&config, &access)?;
-        return Ok(());
-    }
     info!("-----------------------------------------------------");
     #[cfg(not(feature = "google-auth"))]
     if config.google_auth.is_some() {
@@ -122,16 +117,38 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
     let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection);
-    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
+    let (exit_sender, exit_receiver) = futures::channel::oneshot::channel();
+
+    smol::spawn(async move {
+        let mut signals = match Signals::new([
+            Signal::Term,
+            Signal::Int,
+        ]) {
+            Ok(signals) => signals,
+            Err(err) => {
+                log::error!("Failed to install signal handler: {err}");
+                return;
+            },
+        };
+
+        signals.next().await;
+        if exit_sender.send(()).is_err() {
+            log::error!("exit_receiver closed before receiving a message");
+        }
+
+    }).detach();
+
+    shvbroker::brokerimpl::run_broker(broker_impl, command_receiver, exit_receiver).await
 }
 
-fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
-    // info!("Writing config to file: {file}");
-    // if let Some(path) = Path::new(file).parent() {
-    //     fs::create_dir_all(path)?;
-    // }
-    let mut config = config.clone();
-    config.access = access.clone();
+// main2 is used because LSP doesn't work in the macro.
+smol_macros::main! {
+    async fn main(ex: &smol::Executor<'_>) -> shvrpc::Result<()> {
+        ex.spawn(async { impl_main().await }).await
+    }
+}
+
+fn print_config(config: &BrokerConfig) -> shvrpc::Result<()> {
     println!("{}", serde_yaml::to_string(&config)?);
     Ok(())
 }
