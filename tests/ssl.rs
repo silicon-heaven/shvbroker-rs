@@ -36,7 +36,8 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     let broker_config = Arc::new(broker_config);
     smol::spawn(async {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
+        let (_exit_sender, exit_receiver) = futures::channel::oneshot::channel();
+        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver, exit_receiver)
             .await
             .expect("broker accept_loop failed");
     }).detach();
