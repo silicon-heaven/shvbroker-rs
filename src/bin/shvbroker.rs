@@ -4,7 +4,7 @@ use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
-use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
+use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{BrokerConfig, SharedBrokerConfig}, sql::{self}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -93,6 +93,12 @@ pub(crate) async fn impl_main() -> shvrpc::Result<()> {
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
     }
+
+    if cli_opts.print_config {
+        print_config(&config)?;
+        return Ok(());
+    }
+
     let (access, policies, last_login, sql_connection) = if config.use_access_db {
         let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
         info!("Data directory: {data_dir}");
@@ -102,10 +108,6 @@ pub(crate) async fn impl_main() -> shvrpc::Result<()> {
     } else {
         (config.access.clone(), config.policies.clone(), LastLogin::default(), None)
     };
-    if cli_opts.print_config {
-        print_config(&config, &access)?;
-        return Ok(());
-    }
     info!("-----------------------------------------------------");
     #[cfg(not(feature = "google-auth"))]
     if config.google_auth.is_some() {
@@ -123,9 +125,7 @@ smol_macros::main! {
     }
 }
 
-fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
-    let mut config = config.clone();
-    config.access = access.clone();
+fn print_config(config: &BrokerConfig) -> shvrpc::Result<()> {
     println!("{}", serde_yaml::to_string(&config)?);
     Ok(())
 }
