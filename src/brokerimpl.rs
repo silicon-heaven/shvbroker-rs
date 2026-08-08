@@ -545,7 +545,6 @@ pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedRece
         spawn_and_log_error(peer::can_interface_task(can_interface_config, broker_sender.clone(), broker_config.clone()));
     }
 
-    drop(broker_sender);
     broker_task.await;
     Ok(())
 }
