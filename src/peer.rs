@@ -597,9 +597,8 @@ pub(crate) async fn server_peer_loop(
                     fut_receive_frame = Box::pin(frame_reader.receive_frame().or(frame_read_timeout(idle_watchdog_timeout)).fuse());
                 }
                 event = fut_receive_broker_event => match event {
-                    Err(e) => {
-                        // Broker should always disconnect us via DisconnectByBroker.
-                        peer_log!(error, "BrokerToPeer channel closed unexpectedly: {e}");
+                    Err(err) => {
+                        peer_log!(debug, "BrokerToPeer channel closed unexpectedly, broker must be exiting: {err}");
                         drop(frames_tx);
                         frame_writer_task.await.ok();
                         break 'session_loop;

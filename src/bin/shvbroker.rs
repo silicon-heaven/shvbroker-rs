@@ -1,5 +1,7 @@
 #![expect(clippy::print_stdout, reason = "Fine for a binary")]
 use std::path::Path;
+use async_signal::{Signal, Signals};
+use futures::StreamExt;
 use log::{info, LevelFilter};
 use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
@@ -115,7 +117,28 @@ pub(crate) async fn impl_main() -> shvrpc::Result<()> {
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
     let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection);
-    shvbroker::brokerimpl::run_broker(broker_impl, command_receiver).await
+    let (exit_sender, exit_receiver) = futures::channel::oneshot::channel();
+
+    smol::spawn(async move {
+        let mut signals = match Signals::new([
+            Signal::Term,
+            Signal::Int,
+        ]) {
+            Ok(signals) => signals,
+            Err(err) => {
+                log::error!("Failed to install signal handler: {err}");
+                return;
+            },
+        };
+
+        signals.next().await;
+        if exit_sender.send(()).is_err() {
+            log::error!("exit_receiver closed before receiving a message");
+        }
+
+    }).detach();
+
+    shvbroker::brokerimpl::run_broker(broker_impl, command_receiver, exit_receiver).await
 }
 
 // main2 is used because LSP doesn't work in the macro.
