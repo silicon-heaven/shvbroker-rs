@@ -472,7 +472,7 @@ async fn server_accept_loop(
             Box::new(stream)
         };
 
-        spawn_and_log_error(peer::try_server_peer_loop(peer_id, peer_addr, server_mode, broker_sender.clone(), stream, broker_config.clone())).detach();
+        spawn_and_log_error(peer::try_peer_loop(peer_id, peer_addr, server_mode, broker_sender.clone(), stream, broker_config.clone())).detach();
     }
     Ok(())
 }
