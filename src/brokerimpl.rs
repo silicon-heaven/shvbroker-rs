@@ -377,19 +377,9 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
         })
     };
 
-    loop {
-        select! {
-            command = command_receiver.recv().fuse() => match command {
-                Ok(command) => {
-                    if let Err(err) = broker.process_broker_command(command).await {
-                        warn!("Process broker command error: {err}");
-                    }
-                }
-                Err(err) => {
-                    warn!("Receive broker command error: {err}");
-                }
-            },
-            complete => break,
+    while let Some(command) = command_receiver.next().await {
+        if let Err(err) = broker.process_broker_command(command).await {
+            warn!("Process broker command error: {err}");
         }
     }
 
