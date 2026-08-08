@@ -44,16 +44,7 @@ struct CliOpts {
     verbose: Option<String>,
 }
 
-pub(crate) fn main() -> shvrpc::Result<()> {
-    const SMOL_THREADS: &str = "SMOL_THREADS";
-    if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
-        && let Ok(num_threads) = std::thread::available_parallelism() {
-        unsafe {
-            // Safety: the program is still single-threaded by this point.
-            std::env::set_var(SMOL_THREADS, num_threads.to_string());
-        }
-    }
-
+pub(crate) async fn impl_main() -> shvrpc::Result<()> {
     let cli_opts = CliOpts::parse();
 
     if cli_opts.version {
@@ -122,7 +113,14 @@ pub(crate) fn main() -> shvrpc::Result<()> {
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
     let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection);
-    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver))
+    shvbroker::brokerimpl::run_broker(broker_impl, command_receiver).await
+}
+
+// main2 is used because LSP doesn't work in the macro.
+smol_macros::main! {
+    async fn main(ex: &smol::Executor<'_>) -> shvrpc::Result<()> {
+        ex.spawn(async { impl_main().await }).await
+    }
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
