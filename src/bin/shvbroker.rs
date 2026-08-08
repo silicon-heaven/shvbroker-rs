@@ -124,10 +124,6 @@ smol_macros::main! {
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
-    // info!("Writing config to file: {file}");
-    // if let Some(path) = Path::new(file).parent() {
-    //     fs::create_dir_all(path)?;
-    // }
     let mut config = config.clone();
     config.access = access.clone();
     println!("{}", serde_yaml::to_string(&config)?);
