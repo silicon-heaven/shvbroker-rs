@@ -368,21 +368,15 @@ pub(crate) async fn last_tunnel_activity(active_tunnels: &RwLock<BTreeMap<Tunnel
 
 pub(crate) fn tunnel_close_handler(active_tunnels: Arc<RwLock<BTreeMap<TunnelId, ActiveTunnel>>>, peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, tunid: TunnelId) {
     smol::spawn(async move {
-        let closed = {
-            let active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>> = &active_tunnels;
-            let tunid = tunid;
-            debug!(target: "Tunnel", "close_tunnel: {tunid}");
-            active_tunnels.write().await.remove(&tunid).map(|tun| {
-                let sender = tun.sender;
-                smol::spawn(async move {
-                    sender.unbounded_send(ToRemoteMsg::DestroyConnection).ok();
-                })
-                .detach();
-                tun.last_activity.is_some()
-            })
-        };
+        let active_tunnels: &RwLock<BTreeMap<TunnelId, ActiveTunnel>> = &active_tunnels;
+        let tunid = tunid;
+        debug!(target: "Tunnel", "close_tunnel: {tunid}");
+        let had_activity = active_tunnels.write().await.remove(&tunid).map(|tun| {
+            tun.sender.unbounded_send(ToRemoteMsg::DestroyConnection).ok();
+            tun.last_activity.is_some()
+        });
 
-        if closed == Some(true) {
+        if had_activity == Some(true) {
             let msg = RpcMessage::new_signal_with_source(format!(".app/tunnel/{tunid}"), SIG_LSMOD, METH_LS)
                 .with_param(Map::from([(format!("{tunid}"), false.into())]));
             match msg.to_frame() {
