@@ -13,11 +13,11 @@ pub mod spawn {
     use log::error;
     use std::future::Future;
 
-    pub fn spawn_and_log_error<F>(fut: F) -> smol::Task<()>
+    pub fn spawn_and_log_error<F>(ex: &smol::Executor<'static>, fut: F) -> smol::Task<()>
     where
         F: Future<Output = shvrpc::Result<()>> + Send + 'static,
     {
-        smol::spawn(async move {
+        ex.spawn(async move {
             if let Err(e) = fut.await {
                 error!("Task finished with error: {e}");
             }

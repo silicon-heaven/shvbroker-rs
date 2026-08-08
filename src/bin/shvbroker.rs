@@ -1,5 +1,5 @@
 #![expect(clippy::print_stdout, reason = "Fine for a binary")]
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 use async_signal::{Signal, Signals};
 use futures::StreamExt;
 use log::{info, LevelFilter};
@@ -46,16 +46,7 @@ struct CliOpts {
     verbose: Option<String>,
 }
 
-pub(crate) fn main() -> shvrpc::Result<()> {
-    const SMOL_THREADS: &str = "SMOL_THREADS";
-    if std::env::var(SMOL_THREADS).is_err_and(|e| matches!(e, std::env::VarError::NotPresent))
-        && let Ok(num_threads) = std::thread::available_parallelism() {
-        unsafe {
-            // Safety: the program is still single-threaded by this point.
-            std::env::set_var(SMOL_THREADS, num_threads.to_string());
-        }
-    }
-
+pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Result<()> {
     let cli_opts = CliOpts::parse();
 
     if cli_opts.version {
@@ -123,10 +114,10 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         return Err("Googgle auth is configured but not part of this build!".into());
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
-    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection);
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection, ex.clone());
     let (exit_sender, exit_receiver) = futures::channel::oneshot::channel();
 
-    smol::spawn(async move {
+    ex.spawn(async move {
         let mut signals = match Signals::new([
             Signal::Term,
             Signal::Int,
@@ -144,7 +135,15 @@ pub(crate) fn main() -> shvrpc::Result<()> {
         }
 
     }).detach();
-    smol::block_on(shvbroker::brokerimpl::run_broker(broker_impl, command_receiver, exit_receiver))
+
+    shvbroker::brokerimpl::run_broker(broker_impl, command_receiver, exit_receiver, ex).await
+}
+
+// impl_main is used because LSP doesn't work in the macro.
+smol_macros::main! {
+    async fn main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Result<()> {
+        impl_main(ex).await
+    }
 }
 
 fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
