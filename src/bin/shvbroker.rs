@@ -16,9 +16,9 @@ struct CliOpts {
     /// Config file path
     #[arg(short, long)]
     config: Option<String>,
-    /// Print current config to stdout
+    /// Print the config to be used by the broker after applying all CLI options, and database data
     #[arg(long)]
-    print_config: bool,
+    print_effective_config: bool,
     /// Runtime data directory, for storing the access database
     #[arg(short, long)]
     data_directory: Option<String>,
@@ -104,8 +104,8 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
     } else {
         (config.access.clone(), config.policies.clone(), LastLogin::default(), None)
     };
-    if cli_opts.print_config {
-        print_config(&config, &access)?;
+    if cli_opts.print_effective_config {
+        print_effective_config(&config, &access)?;
         return Ok(());
     }
     info!("-----------------------------------------------------");
@@ -146,7 +146,7 @@ smol_macros::main! {
     }
 }
 
-fn print_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
+fn print_effective_config(config: &BrokerConfig, access: &AccessConfig) -> shvrpc::Result<()> {
     let mut config = config.clone();
     config.access = access.clone();
     println!("{}", serde_yaml::to_string(&config)?);
