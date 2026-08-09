@@ -220,7 +220,7 @@ pub(crate) async fn peer_loop(
                 },
                 "workflows" => {
                     peer_log!(peer_id, debug, "workflows received");
-                    #[cfg_attr(not(feature = "entra-id"), allow(unused_mut))]
+                    #[cfg_attr(not(feature = "entra-id"), expect(unused_mut, reason = "Only with entra-id we modify the var"))]
                     let mut workflows = make_list!(
                         "PLAIN",
                         "SHA1",
