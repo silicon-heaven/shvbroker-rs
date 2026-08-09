@@ -172,9 +172,8 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
     (parent_broker_config, child_broker_config)
 }
 
-#[test]
-fn ssl() {
-    smol::block_on(async {
+smol_macros::test!{
+    async fn ssl() {
         simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Debug)
             .init()
@@ -207,5 +206,5 @@ fn ssl() {
             .exec(&client_cmd)
             .await;
         assert!(res.unwrap());
-    });
+    }
 }
