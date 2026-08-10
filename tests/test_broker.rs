@@ -182,7 +182,7 @@ fn test_broker() -> shvrpc::Result<()> {
     assert_eq!(shv_call_parent("test/child-broker/device/state/number", "set", "27")?, ().into());
     assert_eq!(shv_call_parent("test/child-broker/device/state/number", "get", "")?, 27.into());
     println!("---broker---: .broker:clients()");
-    assert!(!shv_call_child(".broker", "clients", "")?.as_list().is_empty());
+    assert_ne!(shv_call_child(".broker", "clients", "")?.as_list().as_slice(), []);
 
     println!("---broker---: .broker:mounts()");
     assert_eq!(shv_call_child(".broker", "mounts", "")?, vec![RpcValue::from("test/device")].into());

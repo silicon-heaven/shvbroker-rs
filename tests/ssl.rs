@@ -199,7 +199,7 @@ fn ssl() {
             .exec_full(&client_cmd)
             .await;
         info!("test/child-broker/.app:dir:\n{res:?}");
-        assert!(!res.unwrap().is_empty());
+        assert_ne!(res.unwrap(), []);
 
         let res = RpcCallDirExists::new("test/child-broker/.broker/currentClient", "subscriptions")
             .timeout(Duration::from_secs(3))
