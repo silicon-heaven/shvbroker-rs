@@ -558,7 +558,7 @@ smol_macros::test! {
         assert!(res.as_bool());
 
         let res = call(".app/tunnel", "ls", None, &mut call_ctx).await.unwrap();
-        assert!(res.as_list().is_empty());
+        assert_eq!(res.as_list().as_slice(), []);
 
         broker_task.cancel().await;
     }

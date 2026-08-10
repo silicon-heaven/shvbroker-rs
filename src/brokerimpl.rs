@@ -1305,7 +1305,7 @@ impl BrokerImpl {
         response_frame: RpcFrame,
     ) -> shvrpc::Result<()> {
         assert!(response_frame.is_response());
-        assert!(response_frame.caller_ids().is_empty());
+        assert_eq!(response_frame.caller_ids().as_slice(), [] as [i64; 0]);
         let rqid = response_frame
             .request_id()
             .ok_or("Request ID must be set.")?;

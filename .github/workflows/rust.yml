@@ -35,27 +35,33 @@ jobs:
             features: --all-features
             filename_suffix: amd64
             additional_arguments: "--glibc-version 2.38"
+            cargo_cross_additional_arguments: ''
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            features: --all-features
+            # can does not work on nightly, waiting for socketcan@4
+            features: --features entra-id,google-auth
             filename_suffix: amd64
             toolchain: nightly
             additional_arguments: "--glibc-version 2.38"
+            cargo_cross_additional_arguments: '+nightly'
           - os: ubuntu-22.04
             target: armv7-unknown-linux-gnueabihf
             features: --all-features
             filename_suffix: armv7
             additional_arguments: ''
+            cargo_cross_additional_arguments: ''
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             features: --all-features
             filename_suffix: arm64
             additional_arguments: ''
+            cargo_cross_additional_arguments: ''
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             features: --features entra-id,google-auth
             filename_suffix: win
             additional_arguments: ''
+            cargo_cross_additional_arguments: ''
     runs-on: ${{ matrix.os }}
     name: Build (${{matrix.target}}, ${{matrix.toolchain}})
 
@@ -67,13 +73,16 @@ jobs:
         command: setup
         toolchain: ${{matrix.toolchain}}
         cross-args: --target ${{matrix.target}}
+    - name: Install nightly clippy
+      if: matrix.toolchain == 'nightly'
+      run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu clippy
     - name: Clippy
-      run: cargo cross clippy ${{matrix.additional_arguments}} --release --all-targets ${{matrix.features}} --target ${{matrix.target}} -- --deny warnings
+      run: cargo cross ${{matrix.cargo_cross_additional_arguments}} clippy ${{matrix.additional_arguments}} --release --all-targets ${{matrix.features}} --target ${{matrix.target}} -- --deny warnings
     - name: Build
-      run: cargo cross build ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
+      run: cargo cross ${{matrix.cargo_cross_additional_arguments}} build ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
     - name: Run tests
       if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo cross test ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
+      run: cargo cross ${{matrix.cargo_cross_additional_arguments}} test ${{matrix.additional_arguments}} --release ${{matrix.features}} --target ${{matrix.target}}
 
     - name: Get version from Cargo.toml
       id: get-version
