@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.32.2"
+version = "3.32.3"
 edition = "2024"
 default-run = "shvbroker"
 
@@ -67,6 +67,7 @@ uuid = { version = "1.23.2", features = ["v4"] }
 #shvrpc = { path = "../libshvrpc-rs" }
 [patch.crates-io]
 simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", branch = "main" }
+cargo-run-bin = { git = "https://github.com/syyyr/cargo-run-bin", rev = "be2db6c4fee67f683d06aa1ca6f7268d5aa4fcb6" }
 
 [[bin]]
 name = "shvbroker"
