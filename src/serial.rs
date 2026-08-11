@@ -11,6 +11,7 @@ use smol::io::BufReader;
 use crate::brokerimpl::BrokerCommand;
 use crate::config::SharedBrokerConfig;
 use crate::peer::server_peer_loop;
+use crate::peer::peer_log;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
     info!("Opening serial port: {port_name}");
@@ -35,13 +36,13 @@ pub(crate) async fn try_serial_peer_loop(
     port_name: String,
     broker_config: SharedBrokerConfig
 ) -> shvrpc::Result<()> {
-    info!("Entering serial peer loop peer ID: {peer_id}, port: {port_name}.");
+    peer_log!(peer_id, info, "Entering serial peer loop, port: {port_name}.");
     match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config).await {
         Ok(()) => {
-            info!("Serial peer loop exit OK, peer id: {peer_id}");
+            peer_log!(peer_id, info, "Serial peer loop exit OK");
         }
         Err(e) => {
-            error!("Serial peer loop exit ERROR, peer id: {peer_id}, error: {e}");
+            peer_log!(peer_id, error, "Serial peer loop exit ERROR, error: {e}");
         }
     }
     broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;

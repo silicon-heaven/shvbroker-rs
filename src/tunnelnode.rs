@@ -8,6 +8,7 @@ pub type TunnelId = u64;
 use crate::brokerimpl::{
     BrokerImpl, NodeRequestContext, Peer
 };
+use crate::peer::peer_log;
 use crate::shvnode::{self, RequestedGranted, SIG_LSMOD};
 use crate::shvnode::{
     is_request_granted_methods, ProcessRequestRetval, ShvNode, META_METHOD_PUBLIC_DIR, METH_DIR,
@@ -228,7 +229,7 @@ pub(crate) async fn tunnel_task(
                                 write_request_id = Some(rqid);
                                 response_meta.set_request_id(rqid);
                                 if !response_buff.is_empty() {
-                                    trace!(target: "Tunnel", "to_broker_sender send: {} bytes to {peer_id}", response_buff.len());
+                                    peer_log!(peer_id, trace, target: "Tunnel", "to_broker_sender send: {} bytes", response_buff.len());
                                     BrokerImpl::send_response(&peers, peer_id, response_meta.clone(), Ok(std::mem::take(&mut response_buff).into())).await?;
                                 }
                             }
