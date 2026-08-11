@@ -1223,13 +1223,22 @@ async fn broker_as_client_peer_loop(
     }).detach();
 
     let mut fut_timeout = make_timeout();
+    let mut peer_communicated = false;
+    let mut we_communicated = false;
     loop {
+        if peer_communicated && we_communicated {
+            peer_communicated = false;
+            we_communicated = false;
+            fut_timeout = make_timeout();
+        }
         select! {
             _ = fut_timeout => {
                 // send heartbeat
                 let msg = RpcMessage::new_request(".app", METH_PING);
                 debug!("sending ping");
                 frames_tx.unbounded_send(msg.to_frame()?)?;
+                we_communicated = true;
+                peer_communicated = false;
                 fut_timeout = make_timeout();
             },
             res_frame = frames_stream.select_next_some() => match res_frame {
@@ -1244,6 +1253,7 @@ async fn broker_as_client_peer_loop(
                         return Err("The peer sent 'Login required' error message".into());
                     }
                     process_broker_client_peer_frame(peer_id, frame, &connection_settings.exported_shv_root, &broker_writer)?;
+                    peer_communicated = true;
                 }
                 Err(err) => {
                     let (meta, rpc_error) = match &err {
@@ -1295,7 +1305,7 @@ async fn broker_as_client_peer_loop(
                             }
                             debug!("Sending rpc frame");
                             frames_tx.unbounded_send(frame)?;
-                            fut_timeout = make_timeout();
+                            we_communicated = true;
                         }
                     }
                     fut_receive_broker_event = Box::pin(broker_to_peer_receiver.recv()).fuse();
