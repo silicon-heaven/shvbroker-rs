@@ -1544,13 +1544,13 @@ impl BrokerImpl {
                     .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?
                     .sender
                     .clone();
+                sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
                 self.pending_rpc_calls.push(PendingRpcCall {
                     peer_id,
                     request_meta,
                     response_sender,
                     started: Instant::now(),
                 });
-                sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
             }
         }
         Ok(())
