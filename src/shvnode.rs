@@ -393,10 +393,11 @@ pub(crate) struct BrokerNode {
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
     access: Arc<RwLock<AccessConfig>>,
     policies: Arc<RwLock<Policies>>,
+    ex: Arc<smol::Executor<'static>>,
 }
 
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>) -> Self {
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>, ex: Arc<smol::Executor<'static>>) -> Self {
         Self {
             peers,
             config,
@@ -404,6 +405,7 @@ impl BrokerNode {
             oauth2_user_groups,
             access,
             policies,
+            ex,
         }
     }
 }
@@ -464,7 +466,8 @@ impl ShvNode for BrokerNode {
                 let peer_id: PeerId = rq.param().unwrap_or_default().try_into()?;
                 self.peers.read().await.get(&peer_id).map_or_else(|| Err(format!("Disconnect client error - peer {peer_id} not found.").into()), |peer| {
                     let peer_sender = peer.sender.clone();
-                    smol::spawn(async move {
+                    let ex = self.ex.clone();
+                    ex.spawn(async move {
                         peer_sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: Some(format!("Disconnected by .broker:{METH_DISCONNECT_CLIENT}"))}).ok();
                     }).detach();
                     Ok(ProcessRequestRetval::Retval(().into()))

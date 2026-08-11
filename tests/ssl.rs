@@ -13,6 +13,7 @@ use shvbroker::config::{BrokerConfig, BrokerConnectionConfig, ConnectionMountSet
 use shvclient::clientapi::{RpcCallDirExists, RpcCallDirList};
 use shvclient::{ClientCommandSender, ClientEvent, ClientEventsReceiver};
 use shvrpc::client::ClientConfig;
+use smol::Executor;
 use smol_timeout::TimeoutExt;
 use tempfile::TempDir;
 use url::Url;
@@ -30,13 +31,14 @@ const CHILD_BROKER_LISTEN_URL: &str = formatcp!("tcp://{CHILD_BROKER_ADDRESS}");
 
 // client === TCP ===> parent_broker <=== SSL === child_broker
 
-async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
+async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str], ex: Arc<Executor<'static>>) {
     let access_config = broker_config.access.clone();
     let policies = broker_config.policies.clone();
     let broker_config = Arc::new(broker_config);
-    smol::spawn(async {
+    ex.clone().spawn(async move {
         let (broker_sender, broker_receiver) = unbounded();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None), broker_receiver)
+        let (_exit_sender, exit_receiver) = futures::channel::oneshot::channel();
+        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None, ex.clone()), broker_receiver, exit_receiver, ex)
             .await
             .expect("broker accept_loop failed");
     }).detach();
@@ -53,9 +55,9 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str]) {
     }
 }
 
-async fn start_client() -> Option<(ClientCommandSender, ClientEventsReceiver)> {
+async fn start_client(ex: Arc<Executor<'_>>) -> Option<(ClientCommandSender, ClientEventsReceiver)> {
     let (tx, rx) = futures::channel::oneshot::channel();
-    smol::spawn(async {
+    ex.spawn(async {
         let client_config = shvclient::shvrpc::client::ClientConfig {
             url: Url::parse(PARENT_BROKER_CONNNECT_URL).expect("URL must be valid"),
             device_id: None,
@@ -171,23 +173,22 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
     (parent_broker_config, child_broker_config)
 }
 
-#[test]
-fn ssl() {
-    smol::block_on(async {
+smol_macros::test!{
+    async fn ssl(ex: Arc<Executor<'_>>) {
         simple_logger::SimpleLogger::new()
             .with_level(log::LevelFilter::Debug)
             .init()
             .unwrap();
 
         let (parent_broker_config, child_broker_config) = create_broker_configs();
-        start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL]).await;
-        start_broker(child_broker_config, &[CHILD_BROKER_ADDRESS]).await;
+        start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL], ex.clone()).await;
+        start_broker(child_broker_config, &[CHILD_BROKER_ADDRESS], ex.clone()).await;
         // We need to wait at least 1 second, because the parent broker waits 1 second, before
         // accepting another connection. Then wait a little bit more (here, 1 second), so that the
         // child broker has enough time, to make the connection to the parent broker.
         smol::Timer::after(std::time::Duration::from_secs(2)).await;
 
-        let (client_cmd, mut client_events) = start_client().await.expect("Client start");
+        let (client_cmd, mut client_events) = start_client(ex).await.expect("Client start");
         match client_events.wait_for_event().timeout(Duration::from_secs(5)).await {
             Some(Ok(ClientEvent::Connected(..))) => { },
             Some(_evt) => panic!("Client connection to broker error"),
@@ -206,5 +207,5 @@ fn ssl() {
             .exec(&client_cmd)
             .await;
         assert!(res.unwrap());
-    });
+    }
 }

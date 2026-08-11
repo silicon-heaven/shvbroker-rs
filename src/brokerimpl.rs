@@ -297,11 +297,11 @@ pub(crate) struct PendingRpcCall {
     pub(crate) started: Instant,
 }
 
-pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>) {
+pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: UnboundedReceiver<BrokerCommand>, ex: Arc<smol::Executor<'static>>) {
     let session_token_expiration_task = {
         let session_tokens = broker.session_tokens.clone();
 
-        smol::spawn(async move {
+        ex.spawn(async move {
             loop {
                 let mut interval = futures::FutureExt::fuse(smol::Timer::interval(Duration::from_hours(1)));
                 select! {
@@ -326,7 +326,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
         let last_login = broker.last_login.clone();
         let sql_connection = broker.sql_connection.clone();
 
-        smol::spawn(async move {
+        ex.spawn(async move {
             let start = Instant::now();
             let mut interval = futures::FutureExt::fuse(smol::Timer::interval_at(start, Duration::from_hours(24)));
             loop {
@@ -377,19 +377,9 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
         })
     };
 
-    loop {
-        select! {
-            command = command_receiver.recv().fuse() => match command {
-                Ok(command) => {
-                    if let Err(err) = broker.process_broker_command(command).await {
-                        warn!("Process broker command error: {err}");
-                    }
-                }
-                Err(err) => {
-                    warn!("Receive broker command error: {err}");
-                }
-            },
-            complete => break,
+    while let Some(command) = command_receiver.next().await {
+        if let Err(err) = broker.process_broker_command(command, &ex).await {
+            warn!("Process broker command error: {err}");
         }
     }
 
@@ -429,6 +419,8 @@ async fn server_accept_loop(
     server_mode: ServerMode,
     broker_sender: UnboundedSender<BrokerCommand>,
     broker_config: SharedBrokerConfig,
+    valve: stream_cancel::Valve,
+    ex: Arc<smol::Executor<'static>>,
 ) -> shvrpc::Result<()> {
     let listener = smol::net::TcpListener::bind(&address)
         .await
@@ -450,7 +442,7 @@ async fn server_accept_loop(
         None
     };
 
-    let mut incoming = listener.incoming();
+    let mut incoming = valve.wrap(listener.incoming());
     while let Some(stream) = incoming.next().await {
         let stream = match stream {
             Ok(stream) => stream,
@@ -481,15 +473,17 @@ async fn server_accept_loop(
             Box::new(stream)
         };
 
-        spawn_and_log_error(peer::try_server_peer_loop(peer_id, peer_addr, server_mode, broker_sender.clone(), stream, broker_config.clone()));
+        spawn_and_log_error(&ex, peer::try_peer_loop(peer_id, peer_addr, server_mode, broker_sender.clone(), stream, broker_config.clone(), ex.clone())).detach();
     }
     Ok(())
 }
 
-pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedReceiver<BrokerCommand>) -> shvrpc::Result<()> {
+pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedReceiver<BrokerCommand>, exit_receiver: oneshot::Receiver<()>, ex: Arc<smol::Executor<'static>>) -> shvrpc::Result<()> {
     let broker_sender = broker_impl.command_sender.clone();
     let broker_config = broker_impl.config.clone();
-    let broker_task = smol::spawn(broker_loop(broker_impl, command_receiver));
+    let broker_task = ex.spawn(broker_loop(broker_impl, command_receiver, ex.clone()));
+    let (trigger, valve) = stream_cancel::Valve::new();
+    let mut listen_tasks = vec![];
     for Listen { url } in &broker_config.listen {
         let address_string = |url: &Url| {
             format!("{host}:{port}",
@@ -522,14 +516,15 @@ pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedRece
             })
         };
 
-        match url.scheme() {
-            "tcp" => spawn_and_log_error(server_accept_loop(address_string(url), None, ServerMode::Tcp, broker_sender.clone(), broker_config.clone())),
-            "ssl" => spawn_and_log_error(server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::Tcp, broker_sender.clone(), broker_config.clone())),
-            "ws" => spawn_and_log_error(server_accept_loop(address_string(url), None, ServerMode::WebSocket, broker_sender.clone(), broker_config.clone())),
-            "wss" => spawn_and_log_error(server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::WebSocket, broker_sender.clone(), broker_config.clone())),
-            "serial" | "tty" => spawn_and_log_error(serial::try_serial_peer_loop(next_peer_id(), broker_sender.clone(), url.path().into(), broker_config.clone())),
-            _ => { }
-        }
+        let task = match url.scheme() {
+            "tcp" => spawn_and_log_error(&ex, server_accept_loop(address_string(url), None, ServerMode::Tcp, broker_sender.clone(), broker_config.clone(), valve.clone(), ex.clone())),
+            "ssl" => spawn_and_log_error(&ex, server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::Tcp, broker_sender.clone(), broker_config.clone(), valve.clone(), ex.clone())),
+            "ws" => spawn_and_log_error(&ex, server_accept_loop(address_string(url), None, ServerMode::WebSocket, broker_sender.clone(), broker_config.clone(), valve.clone(), ex.clone())),
+            "wss" => spawn_and_log_error(&ex, server_accept_loop(address_string(url), Some(tls_config(url)?), ServerMode::WebSocket, broker_sender.clone(), broker_config.clone(), valve.clone(), ex.clone())),
+            "serial" | "tty" => spawn_and_log_error(&ex, serial::try_serial_peer_loop(next_peer_id(), broker_sender.clone(), url.path().into(), broker_config.clone(), ex.clone())),
+            _ => { spawn_and_log_error(&ex, async move { Ok(()) })}
+        };
+        listen_tasks.push(task);
     }
 
     let broker_peers = &broker_config.connections;
@@ -547,16 +542,27 @@ pub async fn run_broker(broker_impl: BrokerImpl, command_receiver: UnboundedRece
             continue
         }
         let peer_id = next_peer_id();
-        spawn_and_log_error(peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone()));
+        spawn_and_log_error(&ex, peer::broker_as_client_peer_loop_with_reconnect(peer_id, peer_config.clone(), broker_sender.clone(), ex.clone())).detach();
     }
 
     #[cfg(feature = "can")]
     for can_interface_config in can_interfaces_config(&broker_config) {
-        spawn_and_log_error(peer::can_interface_task(can_interface_config, broker_sender.clone(), broker_config.clone()));
+        spawn_and_log_error(&ex, peer::can_interface_task(can_interface_config, broker_sender.clone(), broker_config.clone(), ex.clone())).detach();
     }
 
-    drop(broker_sender);
+    ex.spawn(async move {
+        if let Err(err) = exit_receiver.await {
+            info!("exit_receiver cancelled: {err}");
+        }
+        broker_sender.close_channel();
+        drop(trigger);
+    }).detach();
+
     broker_task.await;
+
+    for task in listen_tasks {
+        task.await;
+    }
     Ok(())
 }
 
@@ -979,9 +985,10 @@ impl BrokerImpl {
         policies: Policies,
         command_sender: UnboundedSender<BrokerCommand>,
         sql_connection: Option<async_sqlite::Client>,
+        ex: Arc<smol::Executor<'static>>
     ) -> Self {
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
-        spawn_and_log_error(forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone()));
+        spawn_and_log_error(&ex, forward_subscriptions_task(subscr_cmd_receiver, command_sender.clone())).detach();
         let mut nodes: BTreeMap<String, Box<dyn ShvNode>> = BTreeMap::default();
         let mut mounts: BTreeMap<String, Mount> = BTreeMap::default();
         let peers = Arc::<RwLock<BTreeMap<PeerId, Peer>>>::default();
@@ -996,12 +1003,12 @@ impl BrokerImpl {
         };
         add_node(DIR_APP, Box::new(AppNode::new()));
         if config.tunnelling.enabled {
-            add_node(".app/tunnel", Box::new(TunnelNode::new(peers.clone())));
+            add_node(".app/tunnel", Box::new(TunnelNode::new(peers.clone(), ex.clone())));
             if let Some(tsub_dir) = &config.tunnelling.tsub_dir {
-                add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone())));
+                add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone(), ex.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone())));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone(), ex)));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
             Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone())),
@@ -1369,7 +1376,7 @@ impl BrokerImpl {
         SessionToken(format!("{SESSION_TOKEN_PREFIX}{token}"))
     }
 
-    async fn process_broker_command(&mut self, broker_command: BrokerCommand) -> shvrpc::Result<()> {
+    async fn process_broker_command(&mut self, broker_command: BrokerCommand, ex: &smol::Executor<'static>) -> shvrpc::Result<()> {
         match broker_command {
             BrokerCommand::FrameReceived {
                 peer_id,
@@ -1414,7 +1421,7 @@ impl BrokerImpl {
                     let command_sender = self.command_sender.clone();
                     let subscr_cmd_sender = self.subscr_cmd_sender.clone();
 
-                    spawn_and_log_error(async move {
+                    spawn_and_log_error(ex, async move {
                         if check_subscribe_api(peers.as_ref(), command_sender, new_peer_id).await?.is_none() {
                             return Ok(());
                         }
@@ -1433,7 +1440,7 @@ impl BrokerImpl {
                                 }
                         }
                         Ok(())
-                    });
+                    }).detach();
                 }
             }
             BrokerCommand::PeerGone { peer_id } => {
@@ -1874,7 +1881,7 @@ mod test {
     }
 
     smol_macros::test! {
-        async fn test_check_auth() {
+        async fn test_check_auth(ex: std::sync::Arc<smol::Executor<'static>>) {
             let config = BrokerConfig::default();
             let access = config.access.clone();
             let mut users = access.users().clone();
@@ -1915,7 +1922,7 @@ mod test {
             ] {
                 let (command_sender, _) = unbounded();
                 let access = access.clone();
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, LastLogin::default(), policies.clone(), command_sender, None);
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, LastLogin::default(), policies.clone(), command_sender, None, ex.clone());
 
                 let peer = Peer {
                     id: 0,
@@ -1939,7 +1946,7 @@ mod test {
                     user: user.to_string(),
                     password: password.to_string(),
                     login_type: "PLAIN".to_string()
-                }).await.expect("Sending commands must work");
+                }, &ex).await.expect("Sending commands must work");
 
                 let resp = reader.try_recv().expect("Receiving responses must work").expect("We need to have a value");
                 assert_eq!(resp.is_some(), expected_result);

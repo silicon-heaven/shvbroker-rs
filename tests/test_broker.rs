@@ -274,6 +274,7 @@ fn run_testing_device(url: Url, mount_point: &str) {
 
     let state = Arc::new(State{ number: 0.into(), text: "".to_string().into() });
 
+    #[expect(clippy::disallowed_methods, reason = "The test is not async, and it's a hassle to set the executor up")]
     smol::spawn(async move {
         shvclient::Client::new()
             .app(DotAppNode::new("shvbrokertestingdevice"))

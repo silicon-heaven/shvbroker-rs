@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy};
 use crate::sql;
@@ -11,6 +12,7 @@ use shvrpc::{RpcMessage, RpcMessageMetaTags};
 use shvrpc::rpc::{ShvRI, SubscriptionParam};
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
+use smol::Executor;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
 use crate::shvnode::{METH_APPLY_ACCESS_CONFIG_TO_DATABASE, METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
@@ -64,397 +66,391 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
     ret.map(|(_rqid, val)| val )
 }
 
-#[test]
-fn test_broker_loop_as_user() {
-    smol::block_on(test_broker_loop_as_user_async());
-}
-async fn test_broker_loop_as_user_async() {
-    let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
-    let config = SharedBrokerConfig::new(config);
-    let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
-    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
+smol_macros::test! {
+    async fn test_broker_loop_as_user_async(ex: Arc<Executor<'_>>) {
+        let config = BrokerConfig { use_access_db: true, ..Default::default() };
+        let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+        let config = SharedBrokerConfig::new(config);
+        let (broker_sender, broker_receiver) = unbounded();
+        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), ex.clone());
+        let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
 
-    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-    let peer_id = 2;
+        let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
+        let peer_id = 2;
 
-    let mut call_ctx = CallCtx {
-        writer: broker_sender.clone(),
-        reader: peer_reader,
-        peer_id,
-    };
+        let mut call_ctx = CallCtx {
+            writer: broker_sender.clone(),
+            reader: peer_reader,
+            peer_id,
+        };
 
-    // login
-    let user = "user";
-    //let password = "admin";
-    broker_sender.unbounded_send(BrokerCommand::NewPeer {
-        peer_id,
-        peer_kind: PeerKind::Device{
-            user: user.to_string(),
-            device_id: None,
-            mount_point: None,
-        },
-        sender: peer_writer.clone() })
-        .unwrap();
+        // login
+        let user = "user";
+        //let password = "admin";
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id,
+            peer_kind: PeerKind::Device{
+                user: user.to_string(),
+                device_id: None,
+                mount_point: None,
+            },
+            sender: peer_writer.clone() })
+            .unwrap();
 
-    let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
-    assert_eq!(resp, RpcValue::from(true));
-    let resp = call(".broker/access/users", "ls", None, &mut call_ctx).await;
-    // viewer cannot list users
-    assert!(resp.is_err());
-
-    // test current client info
-    let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
-    let m = resp.as_map();
-    assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
-    assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from(""));
-    assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
-    assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
-
-    // subscriptions
-    let subs_ri = "shv/**:*";
-    let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
-    {
-        // subscribe
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
-        assert!(result.as_bool());
-        // cannot subscribe the same twice
-        let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
-        assert!(!result.as_bool());
-        let resp = call(".broker/currentClient", "subscriptions", None, &mut call_ctx).await.unwrap();
-        let subs_map = resp.as_map();
-        // let s = format!("{:?}", subs_map);
-        assert_eq!(subs_map.len(), 1);
-        assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
-    }
-    {
-        call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
-        let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
-        let subs = resp.as_map().get("subscriptions").unwrap();
-        let subs_map = subs.as_map();
-        assert_eq!(subs_map.len(), 0);
-    }
-    {
-        // change password success
-        let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
-        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await.unwrap();
-        assert_eq!(resp.as_int(), 1);
-
-        // change password wrong password
-        let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
-        let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await;
+        let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
+        assert_eq!(resp, RpcValue::from(true));
+        let resp = call(".broker/access/users", "ls", None, &mut call_ctx).await;
+        // viewer cannot list users
         assert!(resp.is_err());
+
+        // test current client info
+        let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
+        let m = resp.as_map();
+        assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
+        assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from(""));
+        assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
+        assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
+
+        // subscriptions
+        let subs_ri = "shv/**:*";
+        let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
+        {
+            // subscribe
+            let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
+            assert!(result.as_bool());
+            // cannot subscribe the same twice
+            let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
+            assert!(!result.as_bool());
+            let resp = call(".broker/currentClient", "subscriptions", None, &mut call_ctx).await.unwrap();
+            let subs_map = resp.as_map();
+            // let s = format!("{:?}", subs_map);
+            assert_eq!(subs_map.len(), 1);
+            assert_eq!(subs_map.first_key_value().unwrap().0, subs_ri);
+        }
+        {
+            call(".broker/currentClient", METH_UNSUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
+            let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
+            let subs = resp.as_map().get("subscriptions").unwrap();
+            let subs_map = subs.as_map();
+            assert_eq!(subs_map.len(), 0);
+        }
+        {
+            // change password success
+            let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
+            let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await.unwrap();
+            assert_eq!(resp.as_int(), 1);
+
+            // change password wrong password
+            let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
+            let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await;
+            assert!(resp.is_err());
+        }
+
+        broker_task.cancel().await;
     }
-
-    broker_task.cancel().await;
-}
-
-#[test]
-fn test_broker_loop_as_admin() {
-    smol::block_on(test_broker_loop_as_admin_async());
-}
-async fn test_broker_loop_as_admin_async() {
-    let config = BrokerConfig { use_access_db: true, ..Default::default() };
-    let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
-
-    policies.set_policy("su", Some(Policy {
-        allowed_ip: None,
-        allowed_mounts: vec!["test/device".to_string()],
-        can_mount_via_device_id: true,
-    }), &sql_connection).await.unwrap();
-
-    let config = SharedBrokerConfig::new(config);
-    let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection));
-    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
-
-    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-    let peer_id = 2;
-
-    let mut call_ctx = CallCtx {
-        writer: broker_sender.clone(),
-        reader: peer_reader,
-        peer_id,
-    };
-
-    // login
-    let user = "admin";
-    //let password = "admin";
-    broker_sender.unbounded_send(BrokerCommand::NewPeer {
-        peer_id,
-        peer_kind: PeerKind::Device{
-            user: user.to_string(),
-            device_id: None,
-            mount_point: Some("test/device".to_string()),
-        },
-        sender: peer_writer.clone() }).unwrap();
-    /*
-    lsmod cannot be received because it is not subscribed
-    loop {
-        if let BrokerToPeerMessage::SendFrame(frame) = call_ctx.reader.recv().await.unwrap() {
-            if frame.method() == Some(SIG_LSMOD) {
-                assert_eq!(frame.shv_path(), Some("test"));
-                assert_eq!(frame.source(), Some("ls"));
-                let msg = frame.to_rpcmesage().unwrap();
-                assert_eq!(msg.param().unwrap().as_map(), &Map::from([("device".to_string(), true.into())]));
-                break
-            }
-        }
-    }
-    */
-    let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
-    assert_eq!(resp, RpcValue::from(true));
-    let resp = call(".broker/access", "ls", None, &mut call_ctx).await.unwrap();
-    assert!(resp.is_list());
-    assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
-    let resp = call(".broker/acce", "ls", None, &mut call_ctx).await;
-    assert!(resp.is_err());
-
-    // device should be mounted as 'shv/dev/test'
-    let resp = call("test", "ls", Some("device".into()), &mut call_ctx).await.unwrap();
-    assert_eq!(resp, RpcValue::from(true));
-
-    // test current client info
-    let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
-    let m = resp.as_map();
-    assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
-    assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
-    assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
-    assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
-
-    let config = BrokerConfig::default();
-    let users: Vec<_> = config.access.users().keys().map(ToString::to_string).collect();
-    let roles: Vec<_> = config.access.roles().keys().map(ToString::to_string).collect();
-    // access/mounts
-    {
-        let path = ".broker/access/mounts";
-        {
-            let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-            let list = resp.as_list();
-            assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let mount1 = Mount::try_from(&resp).unwrap();
-            let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
-            assert_eq!(mount1, mount2);
-        }
-        {
-            let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&mount).unwrap()].into()), &mut call_ctx).await.unwrap();
-            let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-            let list = resp.as_list();
-            assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
-            let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            assert_eq!(mount, Mount::try_from(&resp).unwrap());
-        }
-
-        // access/users
-        {
-            let path = ".broker/access/users";
-            {
-                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-                let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(users.clone()).as_list());
-                let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let user = User::try_from(&resp).unwrap();
-                let expected = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
-                assert_eq!(user, expected);
-            }
-            {
-                let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false, expires: None, deactivated_reason: None };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&user).unwrap()].into()), &mut call_ctx).await.unwrap();
-                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-                let list = resp.as_list();
-                let mut users = users;
-                users.push("baz".to_string());
-                users.sort();
-                assert_eq!(list, RpcValue::from(users).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                assert_eq!(user, User::try_from(&resp).unwrap());
-            }
-        }
-
-        // access/roles
-        {
-            let path = ".broker/access/roles";
-            {
-                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-                let list = resp.as_list();
-                assert_eq!(list, RpcValue::from(roles.clone()).as_list());
-                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                let role = Role::try_from(&resp).unwrap();
-                let expected = config.access.access_role("tester").unwrap();
-                assert_eq!(&role, expected);
-            }
-            {
-                let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
-                call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&role).unwrap()].into()), &mut call_ctx).await.unwrap();
-                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
-                let list = resp.as_list();
-                let mut roles = roles;
-                roles.push("baz".to_string());
-                roles.sort();
-                assert_eq!(list, RpcValue::from(roles).as_list());
-                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-                assert_eq!(role, Role::try_from(&resp).unwrap());
-            }
-        }
-
-        {
-            let path = ".broker/access/users";
-            let updated_user = User { password: Password::Plain("updated-test-password".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
-            call(path, METH_SET_VALUE, Some(vec!["test".into(), shvproto::to_rpcvalue(&updated_user).unwrap()].into()), &mut call_ctx).await.unwrap();
-            call(path, METH_SET_VALUE, Some(vec!["viewer".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
-            let extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
-            call(path, METH_SET_VALUE, Some(vec!["extra-user".into(), shvproto::to_rpcvalue(&extra_user).unwrap()].into()), &mut call_ctx).await.unwrap();
-        }
-
-        {
-            let path = ".broker/access/roles";
-            let updated_role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "foo/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
-            call(path, METH_SET_VALUE, Some(vec!["tester".into(), shvproto::to_rpcvalue(&updated_role).unwrap()].into()), &mut call_ctx).await.unwrap();
-            let extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
-            call(path, METH_SET_VALUE, Some(vec!["extra-role".into(), shvproto::to_rpcvalue(&extra_role).unwrap()].into()), &mut call_ctx).await.unwrap();
-        }
-
-        {
-            let path = ".broker/access/mounts";
-            let updated_mount = Mount{ mount_point: "foo/updated-test-device".to_string(), description: "updated test mount".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["test-device".into(), shvproto::to_rpcvalue(&updated_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
-            let extra_mount = Mount{ mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
-            call(path, METH_SET_VALUE, Some(vec!["extra-mount".into(), shvproto::to_rpcvalue(&extra_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
-        }
-
-        {
-            let path = ".broker/access/policies";
-            call(path, METH_SET_VALUE, Some(vec!["client".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
-            let extra_policy = Policy {
-                allowed_ip: None,
-                allowed_mounts: vec!["extra/mount".to_string()],
-                can_mount_via_device_id: false,
-            };
-            let extra_policy_rv = shvproto::to_rpcvalue(&extra_policy).unwrap();
-            call(path, METH_SET_VALUE, Some(vec!["extra-policy".into(), extra_policy_rv].into()), &mut call_ctx).await.unwrap();
-        }
-
-        let updated_rows = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await.unwrap();
-        assert!(updated_rows.as_bool());
-
-        {
-            let path = ".broker/access/users";
-            let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let test_user = User::try_from(&resp).unwrap();
-            let expected_test_user = config.access.access_user("test").unwrap();
-            assert_eq!(&test_user, expected_test_user);
-
-            let resp = call(&join_path(path, "viewer"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let viewer_user = User::try_from(&resp).unwrap();
-            let expected_viewer_user = config.access.access_user("viewer").unwrap();
-            assert_eq!(&viewer_user, expected_viewer_user);
-
-            let resp = call(&join_path(path, "extra-user"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let extra_user = User::try_from(&resp).unwrap();
-            let expected_extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
-            assert_eq!(extra_user, expected_extra_user);
-        }
-
-        {
-            let path = ".broker/access/roles";
-            let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let tester_role = Role::try_from(&resp).unwrap();
-            let expected_tester_role = config.access.access_role("tester").unwrap();
-            assert_eq!(&tester_role, expected_tester_role);
-
-            let resp = call(&join_path(path, "extra-role"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let extra_role = Role::try_from(&resp).unwrap();
-            let expected_extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
-            assert_eq!(extra_role, expected_extra_role);
-        }
-
-        {
-            let path = ".broker/access/mounts";
-            let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let test_mount = Mount::try_from(&resp).unwrap();
-            let expected_test_mount = config.access.access_mount("test-device").unwrap();
-            assert_eq!(&test_mount, expected_test_mount);
-
-            let resp = call(&join_path(path, "extra-mount"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let extra_mount = Mount::try_from(&resp).unwrap();
-            let expected_extra_mount = Mount { mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
-            assert_eq!(extra_mount, expected_extra_mount);
-        }
-
-        {
-            let path = ".broker/access/policies";
-            let resp = call(&join_path(path, "su"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let su_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
-            let expected_su_policy = config.policies.access_policy("su").unwrap();
-            assert_eq!(&su_policy, expected_su_policy);
-
-            let resp = call(&join_path(path, "client"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let client_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
-            let expected_client_policy = config.policies.access_policy("client").unwrap();
-            assert_eq!(&client_policy, expected_client_policy);
-
-            let resp = call(&join_path(path, "extra-policy"), METH_VALUE, None, &mut call_ctx).await.unwrap();
-            let extra_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
-            let expected_extra_policy = Policy {
-                allowed_ip: None,
-                allowed_mounts: vec!["extra/mount".to_string()],
-                can_mount_via_device_id: false,
-            };
-            assert_eq!(extra_policy, expected_extra_policy);
-        }
-    }
-    broker_task.cancel().await;
-}
-
-#[test]
-fn test_update_access_database_from_config_file_without_access_db() {
-    smol::block_on(test_update_access_database_from_config_file_without_access_db_async());
-}
-
-async fn test_update_access_database_from_config_file_without_access_db_async() {
-    let config = BrokerConfig::default();
-    let access = config.access.clone();
-    let policies = config.policies.clone();
-    let config = SharedBrokerConfig::new(config);
-    let (broker_sender, broker_receiver) = unbounded();
-    let broker = BrokerImpl::new(config, access, LastLogin::default(), policies, broker_sender.clone(), None);
-    let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
-
-    let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
-    let peer_id = 3;
-
-    let mut call_ctx = CallCtx {
-        writer: broker_sender.clone(),
-        reader: peer_reader,
-        peer_id,
-    };
-
-    broker_sender.unbounded_send(BrokerCommand::NewPeer {
-        peer_id,
-        peer_kind: PeerKind::Client{
-            user: "admin".to_string(),
-        },
-        sender: peer_writer.clone() })
-        .unwrap();
-
-    let resp = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await;
-    assert!(resp.is_err());
-
-    broker_task.cancel().await;
 }
 
 smol_macros::test! {
-    async fn test_tunnel_loop_async() {
+    async fn test_broker_loop_as_admin_async(ex: Arc<Executor<'_>>) {
+        let config = BrokerConfig { use_access_db: true, ..Default::default() };
+        let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+
+        policies.set_policy("su", Some(Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/device".to_string()],
+            can_mount_via_device_id: true,
+        }), &sql_connection).await.unwrap();
+
+        let config = SharedBrokerConfig::new(config);
+        let (broker_sender, broker_receiver) = unbounded();
+        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), ex.clone());
+        let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
+
+        let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
+        let peer_id = 2;
+
+        let mut call_ctx = CallCtx {
+            writer: broker_sender.clone(),
+            reader: peer_reader,
+            peer_id,
+        };
+
+        // login
+        let user = "admin";
+        //let password = "admin";
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id,
+            peer_kind: PeerKind::Device{
+                user: user.to_string(),
+                device_id: None,
+                mount_point: Some("test/device".to_string()),
+            },
+            sender: peer_writer.clone() }).unwrap();
+        /*
+        lsmod cannot be received because it is not subscribed
+        loop {
+            if let BrokerToPeerMessage::SendFrame(frame) = call_ctx.reader.recv().await.unwrap() {
+                if frame.method() == Some(SIG_LSMOD) {
+                    assert_eq!(frame.shv_path(), Some("test"));
+                    assert_eq!(frame.source(), Some("ls"));
+                    let msg = frame.to_rpcmesage().unwrap();
+                    assert_eq!(msg.param().unwrap().as_map(), &Map::from([("device".to_string(), true.into())]));
+                    break
+                }
+            }
+        }
+        */
+        let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
+        assert_eq!(resp, RpcValue::from(true));
+        let resp = call(".broker/access", "ls", None, &mut call_ctx).await.unwrap();
+        assert!(resp.is_list());
+        assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
+        let resp = call(".broker/acce", "ls", None, &mut call_ctx).await;
+        assert!(resp.is_err());
+
+        // device should be mounted as 'shv/dev/test'
+        let resp = call("test", "ls", Some("device".into()), &mut call_ctx).await.unwrap();
+        assert_eq!(resp, RpcValue::from(true));
+
+        // test current client info
+        let resp = call(".broker/currentClient", "info", None, &mut call_ctx).await.unwrap();
+        let m = resp.as_map();
+        assert_eq!(m.get("clientId").unwrap(), &RpcValue::from(2));
+        assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from("test/device"));
+        assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
+        assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
+
+        let config = BrokerConfig::default();
+        let users: Vec<_> = config.access.users().keys().map(ToString::to_string).collect();
+        let roles: Vec<_> = config.access.roles().keys().map(ToString::to_string).collect();
+        // access/mounts
+        {
+            let path = ".broker/access/mounts";
+            {
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["test-child-broker","test-device"].to_vec()).as_list());
+                let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let mount1 = Mount::try_from(&resp).unwrap();
+                let mount2 = Mount { mount_point: "test/device".to_string(), description: "Testing device mount-point".to_string() };
+                assert_eq!(mount1, mount2);
+            }
+            {
+                let mount = Mount{ mount_point: "foo".to_string(), description: "bar".to_string() };
+                call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&mount).unwrap()].into()), &mut call_ctx).await.unwrap();
+                let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                let list = resp.as_list();
+                assert_eq!(list, RpcValue::from(["baz", "test-child-broker","test-device"].to_vec()).as_list());
+                let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                assert_eq!(mount, Mount::try_from(&resp).unwrap());
+            }
+
+            // access/users
+            {
+                let path = ".broker/access/users";
+                {
+                    let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                    let list = resp.as_list();
+                    assert_eq!(list, RpcValue::from(users.clone()).as_list());
+                    let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                    let user = User::try_from(&resp).unwrap();
+                    let expected = User { password: Password::Plain("test".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
+                    assert_eq!(user, expected);
+                }
+                {
+                    let user = User { password: Password::Plain("foo".into()), roles: vec!["bar".into()], deactivated: false, expires: None, deactivated_reason: None };
+                    call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&user).unwrap()].into()), &mut call_ctx).await.unwrap();
+                    let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                    let list = resp.as_list();
+                    let mut users = users;
+                    users.push("baz".to_string());
+                    users.sort();
+                    assert_eq!(list, RpcValue::from(users).as_list());
+                    let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                    assert_eq!(user, User::try_from(&resp).unwrap());
+                }
+            }
+
+            // access/roles
+            {
+                let path = ".broker/access/roles";
+                {
+                    let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                    let list = resp.as_list();
+                    assert_eq!(list, RpcValue::from(roles.clone()).as_list());
+                    let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                    let role = Role::try_from(&resp).unwrap();
+                    let expected = config.access.access_role("tester").unwrap();
+                    assert_eq!(&role, expected);
+                }
+                {
+                    let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
+                    call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&role).unwrap()].into()), &mut call_ctx).await.unwrap();
+                    let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
+                    let list = resp.as_list();
+                    let mut roles = roles;
+                    roles.push("baz".to_string());
+                    roles.sort();
+                    assert_eq!(list, RpcValue::from(roles).as_list());
+                    let resp = call(&join_path(path, "baz"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                    assert_eq!(role, Role::try_from(&resp).unwrap());
+                }
+            }
+
+            {
+                let path = ".broker/access/users";
+                let updated_user = User { password: Password::Plain("updated-test-password".into()), roles: vec!["tester".into()], deactivated: false, expires: None, deactivated_reason: None };
+                call(path, METH_SET_VALUE, Some(vec!["test".into(), shvproto::to_rpcvalue(&updated_user).unwrap()].into()), &mut call_ctx).await.unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["viewer".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
+                let extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
+                call(path, METH_SET_VALUE, Some(vec!["extra-user".into(), shvproto::to_rpcvalue(&extra_user).unwrap()].into()), &mut call_ctx).await.unwrap();
+            }
+
+            {
+                let path = ".broker/access/roles";
+                let updated_role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "foo/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
+                call(path, METH_SET_VALUE, Some(vec!["tester".into(), shvproto::to_rpcvalue(&updated_role).unwrap()].into()), &mut call_ctx).await.unwrap();
+                let extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
+                call(path, METH_SET_VALUE, Some(vec!["extra-role".into(), shvproto::to_rpcvalue(&extra_role).unwrap()].into()), &mut call_ctx).await.unwrap();
+            }
+
+            {
+                let path = ".broker/access/mounts";
+                let updated_mount = Mount{ mount_point: "foo/updated-test-device".to_string(), description: "updated test mount".to_string() };
+                call(path, METH_SET_VALUE, Some(vec!["test-device".into(), shvproto::to_rpcvalue(&updated_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
+                let extra_mount = Mount{ mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
+                call(path, METH_SET_VALUE, Some(vec!["extra-mount".into(), shvproto::to_rpcvalue(&extra_mount).unwrap()].into()), &mut call_ctx).await.unwrap();
+            }
+
+            {
+                let path = ".broker/access/policies";
+                call(path, METH_SET_VALUE, Some(vec!["client".into(), RpcValue::null()].into()), &mut call_ctx).await.unwrap();
+                let extra_policy = Policy {
+                    allowed_ip: None,
+                    allowed_mounts: vec!["extra/mount".to_string()],
+                    can_mount_via_device_id: false,
+                };
+                let extra_policy_rv = shvproto::to_rpcvalue(&extra_policy).unwrap();
+                call(path, METH_SET_VALUE, Some(vec!["extra-policy".into(), extra_policy_rv].into()), &mut call_ctx).await.unwrap();
+            }
+
+            let updated_rows = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await.unwrap();
+            assert!(updated_rows.as_bool());
+
+            {
+                let path = ".broker/access/users";
+                let resp = call(&join_path(path, "test"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let test_user = User::try_from(&resp).unwrap();
+                let expected_test_user = config.access.access_user("test").unwrap();
+                assert_eq!(&test_user, expected_test_user);
+
+                let resp = call(&join_path(path, "viewer"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let viewer_user = User::try_from(&resp).unwrap();
+                let expected_viewer_user = config.access.access_user("viewer").unwrap();
+                assert_eq!(&viewer_user, expected_viewer_user);
+
+                let resp = call(&join_path(path, "extra-user"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let extra_user = User::try_from(&resp).unwrap();
+                let expected_extra_user = User { password: Password::Plain("extra-user-password".into()), roles: vec!["client".into()], deactivated: false, expires: None, deactivated_reason: None };
+                assert_eq!(extra_user, expected_extra_user);
+            }
+
+            {
+                let path = ".broker/access/roles";
+                let resp = call(&join_path(path, "tester"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let tester_role = Role::try_from(&resp).unwrap();
+                let expected_tester_role = config.access.access_role("tester").unwrap();
+                assert_eq!(&tester_role, expected_tester_role);
+
+                let resp = call(&join_path(path, "extra-role"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let extra_role = Role::try_from(&resp).unwrap();
+                let expected_extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
+                assert_eq!(extra_role, expected_extra_role);
+            }
+
+            {
+                let path = ".broker/access/mounts";
+                let resp = call(&join_path(path, "test-device"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let test_mount = Mount::try_from(&resp).unwrap();
+                let expected_test_mount = config.access.access_mount("test-device").unwrap();
+                assert_eq!(&test_mount, expected_test_mount);
+
+                let resp = call(&join_path(path, "extra-mount"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let extra_mount = Mount::try_from(&resp).unwrap();
+                let expected_extra_mount = Mount { mount_point: "extra/mount".to_string(), description: "extra mount".to_string() };
+                assert_eq!(extra_mount, expected_extra_mount);
+            }
+
+            {
+                let path = ".broker/access/policies";
+                let resp = call(&join_path(path, "su"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let su_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+                let expected_su_policy = config.policies.access_policy("su").unwrap();
+                assert_eq!(&su_policy, expected_su_policy);
+
+                let resp = call(&join_path(path, "client"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let client_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+                let expected_client_policy = config.policies.access_policy("client").unwrap();
+                assert_eq!(&client_policy, expected_client_policy);
+
+                let resp = call(&join_path(path, "extra-policy"), METH_VALUE, None, &mut call_ctx).await.unwrap();
+                let extra_policy: Policy = shvproto::from_rpcvalue(&resp).unwrap();
+                let expected_extra_policy = Policy {
+                    allowed_ip: None,
+                    allowed_mounts: vec!["extra/mount".to_string()],
+                    can_mount_via_device_id: false,
+                };
+                assert_eq!(extra_policy, expected_extra_policy);
+            }
+        }
+        broker_task.cancel().await;
+    }
+
+}
+
+smol_macros::test! {
+    async fn test_update_access_database_from_config_file_without_access_db_async(ex: Arc<Executor<'_>>) {
+        let config = BrokerConfig::default();
+        let access = config.access.clone();
+        let policies = config.policies.clone();
+        let config = SharedBrokerConfig::new(config);
+        let (broker_sender, broker_receiver) = unbounded();
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), policies, broker_sender.clone(), None, ex.clone());
+        let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
+
+        let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
+        let peer_id = 3;
+
+        let mut call_ctx = CallCtx {
+            writer: broker_sender.clone(),
+            reader: peer_reader,
+            peer_id,
+        };
+
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id,
+            peer_kind: PeerKind::Client{
+                user: "admin".to_string(),
+            },
+            sender: peer_writer.clone() })
+            .unwrap();
+
+        let resp = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await;
+        assert!(resp.is_err());
+
+        broker_task.cancel().await;
+    }
+}
+
+smol_macros::test! {
+    async fn test_tunnel_loop_async(ex: Arc<Executor<'_>>) {
         let mut config = BrokerConfig::default();
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None);
-        let broker_task = smol::spawn(crate::brokerimpl::broker_loop(broker, broker_receiver));
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None, ex.clone());
+        let broker_task = ex.spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex.clone()));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
         let peer_id = 3;
@@ -484,7 +480,7 @@ smol_macros::test! {
 
         // echo loop
         const ECHO_LOOP_ADDRESS: &str = "localhost:8888";
-        smol::spawn(async move {
+        ex.clone().spawn(async move {
             let listener = smol::net::TcpListener::bind(ECHO_LOOP_ADDRESS).await.unwrap();
             println!("Echo server is listening on {}", listener.local_addr().unwrap());
 
@@ -494,7 +490,7 @@ smol_macros::test! {
                         let addr = socket.peer_addr().unwrap();
                         println!("New connection from: {addr}");
 
-                        smol::spawn(async move {
+                        ex.spawn(async move {
                             let mut buffer = vec![0; 1024];
 
                             loop {

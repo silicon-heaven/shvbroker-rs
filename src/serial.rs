@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 use futures::channel::mpsc::UnboundedSender;
 use futures::io::BufWriter;
@@ -10,7 +11,7 @@ use smol::Unblock;
 use smol::io::BufReader;
 use crate::brokerimpl::BrokerCommand;
 use crate::config::SharedBrokerConfig;
-use crate::peer::server_peer_loop;
+use crate::peer::peer_loop;
 use crate::peer::peer_log;
 
 fn open_serial(port_name: &str) -> shvrpc::Result<(Box<dyn SerialPort>, Box<dyn SerialPort>)> {
@@ -34,10 +35,11 @@ pub(crate) async fn try_serial_peer_loop(
     peer_id: PeerId,
     broker_writer: UnboundedSender<BrokerCommand>,
     port_name: String,
-    broker_config: SharedBrokerConfig
+    broker_config: SharedBrokerConfig,
+    ex: Arc<smol::Executor<'static>>,
 ) -> shvrpc::Result<()> {
     peer_log!(peer_id, info, "Entering serial peer loop, port: {port_name}.");
-    match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config).await {
+    match serial_peer_loop(peer_id, broker_writer.clone(), &port_name, broker_config, &ex).await {
         Ok(()) => {
             peer_log!(peer_id, info, "Serial peer loop exit OK");
         }
@@ -52,10 +54,11 @@ async fn serial_peer_loop(
     peer_id: PeerId,
     broker_writer: UnboundedSender<BrokerCommand>,
     port_name: &str,
-    broker_config: SharedBrokerConfig
+    broker_config: SharedBrokerConfig,
+    ex: &smol::Executor<'static>,
 ) -> shvrpc::Result<()> {
     let (frame_reader, frame_writer) = create_serial_frame_reader_writer(port_name, peer_id)?;
-    server_peer_loop(peer_id, None, broker_writer, frame_reader, frame_writer, broker_config).await
+    peer_loop(peer_id, None, broker_writer, frame_reader, frame_writer, broker_config, ex).await
 }
 
 pub(crate) fn create_serial_frame_reader_writer(port_name: &str, peer_id: PeerId) -> shvrpc::Result<(impl FrameReader + use<>, impl FrameWriter + use<>)> {

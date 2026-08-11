@@ -1,3 +1,7 @@
+disallowed-methods = [
+    # The global executor is forbidden.
+    "smol::spawn"
+]
 allow-expect-in-consts = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
