@@ -1288,25 +1288,6 @@ impl BrokerImpl {
         Ok(())
     }
 
-    async fn start_broker_rpc_call(
-        &mut self,
-        request: RpcMessage,
-        pending_call: PendingRpcCall,
-    ) -> shvrpc::Result<()> {
-        let sender = self
-            .peers
-            .read()
-            .await
-            .get(&pending_call.peer_id)
-            .ok_or_else(|| format!("Invalid peer ID: {}", pending_call.peer_id))?
-            .sender
-            .clone();
-        // let rqid = data.request.request_id().ok_or("Missing request ID")?;
-        self.pending_rpc_calls.push(pending_call);
-        sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
-        Ok(())
-    }
-
     fn process_pending_broker_rpc_call(
         &mut self,
         peer_id: PeerId,
@@ -1555,15 +1536,21 @@ impl BrokerImpl {
                 let request_meta = request.meta().clone();
                 // broker calls can have any access level, set 'su' to bypass client access control
                 request.set_access_level(AccessLevel::Superuser);
-                self.start_broker_rpc_call(
-                    request,
-                    PendingRpcCall {
-                        peer_id,
-                        request_meta,
-                        response_sender,
-                        started: Instant::now(),
-                    },
-                ).await?;
+                let sender = self
+                    .peers
+                    .read()
+                    .await
+                    .get(&peer_id)
+                    .ok_or_else(|| format!("Invalid peer ID: {peer_id}"))?
+                    .sender
+                    .clone();
+                self.pending_rpc_calls.push(PendingRpcCall {
+                    peer_id,
+                    request_meta,
+                    response_sender,
+                    started: Instant::now(),
+                });
+                sender.unbounded_send(BrokerToPeerMessage::SendFrame(request.to_frame()?))?;
             }
         }
         Ok(())
