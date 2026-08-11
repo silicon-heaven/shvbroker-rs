@@ -1549,15 +1549,14 @@ impl BrokerImpl {
             }
             BrokerCommand::RpcCall {
                 peer_id,
-                request,
+                mut request,
                 response_sender,
             } => {
                 let request_meta = request.meta().clone();
-                let mut rq2 = request;
                 // broker calls can have any access level, set 'su' to bypass client access control
-                rq2.set_access_level(AccessLevel::Superuser);
+                request.set_access_level(AccessLevel::Superuser);
                 self.start_broker_rpc_call(
-                    rq2,
+                    request,
                     PendingRpcCall {
                         peer_id,
                         request_meta,
