@@ -1325,14 +1325,10 @@ impl BrokerImpl {
             let pending_call = self.pending_rpc_calls.remove(ix);
             pending_call.response_sender.unbounded_send(response_frame)?;
         }
-        Self::gc_pending_rpc_calls(&mut self.pending_rpc_calls)?;
-        Ok(())
-    }
 
-    fn gc_pending_rpc_calls(pending_rpc_calls: &mut Vec<PendingRpcCall>) -> shvrpc::Result<()> {
         let now = Instant::now();
         const TIMEOUT: Duration = Duration::from_mins(1);
-        let timed_out = pending_rpc_calls
+        let timed_out = self.pending_rpc_calls
             .extract_if(.., |pending_call| now.duration_since(pending_call.started) > TIMEOUT);
         for timed_out_pending_call in timed_out {
             let mut msg = RpcMessage::from_meta(timed_out_pending_call.request_meta.clone());
