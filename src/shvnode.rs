@@ -13,7 +13,7 @@ use shvrpc::rpcframe::RpcFrame;
 use shvrpc::rpcmessage::{PeerId, RpcError, RpcErrorCode};
 use futures::channel::mpsc::UnboundedSender;
 use crate::brokerimpl::{BrokerImpl, BrokerToPeerMessage, LastLogin, Peer, PeerKind, Subscription, SubscriptionCommand, user_base_roles};
-use crate::config::{AccessConfig, Policies, Policy, SharedBrokerConfig, upsert_config};
+use crate::config::{AccessConfig, Policies, SharedBrokerConfig, upsert_config};
 use crate::peer::peer_log;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
@@ -486,20 +486,14 @@ impl ShvNode for BrokerNode {
             METH_USER_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<username>", "<shv_path>", "<method>"]"#;
                 let rq = &frame.to_rpcmesage()?;
-                let params = rq
-                    .param()
-                    .ok_or_else(|| WRONG_FORMAT_ERR.into())
-                    .and_then(|rv| Vec::<String>::try_from(rv)
-                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?;
-
-                let [username, shv_path, method] = params.as_slice() else {
+                let Some(param) = rq.param() else {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
+                let (username, shv_path, method): (&str, &str, &str) = param.try_into().map_err(|err| format!("{err}, {WRONG_FORMAT_ERR}"))?;
                 let Some(peer_id) = self.peers.read().await
                     .iter()
                     .find_map(|(peer_id, peer)| match &peer.kind {
-                        crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if user == username => Some(*peer_id),
+                        crate::brokerimpl::PeerKind::Client { user } | crate::brokerimpl::PeerKind::Device { user , ..} if *user == username => Some(*peer_id),
                         _ => None,
                     }) else {
                         return Err("Couldn't determine access level".into());
@@ -762,16 +756,10 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Cannot change password, access database is not available.".into());
                 };
                 let rq = &frame.to_rpcmesage()?;
-                let params = rq
-                    .param()
-                    .ok_or_else(|| WRONG_FORMAT_ERR.to_string())
-                    .and_then(|rv| Vec::<String>::try_from(rv)
-                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?;
-
-                let [old_password, new_password] = params.as_slice() else {
+                let Some(param) = rq.param() else {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
+                let (old_password, new_password): (&str, &str) = param.try_into().map_err(|err| format!("{err}, {WRONG_FORMAT_ERR}"))?;
 
                 if old_password.is_empty() || new_password.is_empty() {
                     return Err("Both old and new password mustn't be empty.".into());
@@ -810,16 +798,10 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_ACCESS_LEVEL_FOR_METHOD_CALL => {
                 const WRONG_FORMAT_ERR: &str = r#"Expected params format: ["<shv_path>", "<method>"]"#;
                 let rq = &frame.to_rpcmesage()?;
-                let params = rq
-                    .param()
-                    .ok_or_else(|| WRONG_FORMAT_ERR.into())
-                    .and_then(|rv| Vec::<String>::try_from(rv)
-                        .map_err(|e| format!("{WRONG_FORMAT_ERR}. Error: {e}"))
-                    )?;
-
-                let [shv_path, method] = params.as_slice() else {
+                let Some(param) = rq.param() else {
                     return Err(WRONG_FORMAT_ERR.into());
                 };
+                let (shv_path, method): (&str, &str) = param.try_into().map_err(|err| format!("{err}, {WRONG_FORMAT_ERR}"))?;
 
                 let access_level = BrokerImpl::access_level_for_request_params(
                         &self.peers,
@@ -946,17 +928,10 @@ impl ShvNode for BrokerAccessMountsNode {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
-                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
-                let param = param.as_list();
-                let key = param.first().ok_or("Key is missing")?;
-                let mount = param.get(1).filter(|&m| !m.is_null());
-                let mount = mount.map(crate::config::Mount::try_from);
-                let mount = match mount {
-                    None => None,
-                    Some(Ok(mount)) => {Some(mount)}
-                    Some(Err(e)) => { return Err(e.into() )}
-                };
-                let res = self.access.write().await.set_access_mount(key.as_str(), mount, sql_connection).await?;
+                let rq = &frame.to_rpcmesage()?;
+                let param = rq.param().ok_or("Invalid params")?;
+                let (key, mount): (&str, Option<crate::config::Mount>) = param.try_into()?;
+                let res = self.access.write().await.set_access_mount(key, mount, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -1043,15 +1018,8 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 match user {
                     None => Err(format!("Invalid node key: {}", ctx.node_path).into()),
                     Some(mut user) => {
-                        let param = frame.to_rpcmesage()?.param().cloned().unwrap_or_else(RpcValue::null);
-                        if param.is_null() {
-                            user.expires = None;
-                        } else {
-                            match shvproto::DateTime::try_from(param) {
-                                Ok(dt) => user.expires = Some(dt),
-                                Err(err) => return Err(format!("Invalid param: {err}").into()),
-                            }
-                        }
+                        let param: Option<shvproto::DateTime> = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.try_into()?;
+                        user.expires = param;
                         access.set_access_user(&ctx.node_path, Some(user), sql_connection).await?;
                         Ok(ProcessRequestRetval::Retval(RpcValue::from(())))
                     }
@@ -1061,21 +1029,10 @@ impl ShvNode for crate::shvnode::BrokerAccessUsersNode {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
-                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
-                let param = param.as_list();
-                let key = param.first().ok_or("Key is missing")?;
-                let rv = param.get(1).filter(|&m| !m.is_null());
-                let user = if let Some(rv) = rv {
-                    match crate::config::User::try_from(rv) {
-                        Ok(user) => { Some(user) }
-                        Err(e) => {
-                            return Err(e.into())
-                        }
-                    }
-                } else {
-                    None
-                };
-                let res = self.access.write().await.set_access_user(key.as_str(), user, sql_connection).await?;
+                let rq = &frame.to_rpcmesage()?;
+                let param = rq.param().ok_or("Invalid params")?;
+                let (key, user): (&str, Option<crate::config::User>) = param.try_into()?;
+                let res = self.access.write().await.set_access_user(key, user, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -1132,17 +1089,10 @@ impl ShvNode for BrokerAccessRolesNode {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
-                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
-                let param = param.as_list();
-                let key = param.first().ok_or("Key is missing")?.clone();
-                let rv = param.get(1).filter(|&m| !m.is_null());
-                let role = rv.map(crate::config::Role::try_from);
-                let role = match role {
-                    None => None,
-                    Some(Ok(role)) => {Some(role)}
-                    Some(Err(e)) => { return Err(e.into() )}
-                };
-                let res = self.access.write().await.set_access_role(key.as_str(), role, sql_connection).await?;
+                let rq = &frame.to_rpcmesage()?;
+                let param = rq.param().ok_or("Invalid params")?;
+                let (key, role): (&str, Option<crate::config::Role>) = param.try_into()?;
+                let res = self.access.write().await.set_access_role(key, role, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {
@@ -1199,20 +1149,10 @@ impl ShvNode for BrokerAccessPoliciesNode {
                 let Some(sql_connection) = &self.sql_connection else {
                     return Err(make_access_ro_error().into())
                 };
-                let param = frame.to_rpcmesage()?.param().ok_or("Invalid params")?.clone();
-                let param = param.as_list();
-                let key = param.first().ok_or("Key is missing")?;
-                let policy = param.get(1).filter(|&m| !m.is_null());
-                let policy: Option<Result<Policy,_>> = policy
-                    .map(|val| {
-                        shvproto::from_rpcvalue(val).map_err(|e| e.to_string())
-                    });
-                let policy  = match policy {
-                    None => None,
-                    Some(Ok(policy)) => {Some(policy)}
-                    Some(Err(e)) => { return Err(e.into() )}
-                };
-                let res = self.policies.write().await.set_policy(key.as_str(), policy, sql_connection).await?;
+                let rq = &frame.to_rpcmesage()?;
+                let param = rq.param().ok_or("Invalid params")?;
+                let (key, policy): (&str, Option<crate::config::Policy>) = param.try_into()?;
+                let res = self.policies.write().await.set_policy(key, policy, sql_connection).await?;
                 Ok(ProcessRequestRetval::Retval(res))
             }
             _ => {

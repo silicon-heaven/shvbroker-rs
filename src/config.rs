@@ -306,6 +306,13 @@ pub struct Policy {
     pub allowed_mounts: Vec<String>,
 }
 
+impl TryFrom<&RpcValue> for Policy {
+    type Error = String;
+    fn try_from(value: &RpcValue) -> Result<Self, Self::Error> {
+        shvproto::from_rpcvalue(value).map_err(|e| e.to_string())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Policies(BTreeMap<String, Policy>);
 
