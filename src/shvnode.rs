@@ -801,6 +801,10 @@ impl ShvNode for BrokerCurrentClientNode {
                     return Err("Old password does not match.".into());
                 }
 
+                if new_password.len() < 15 {
+                    return Err("New password needs to be at least 15 characters long.".into());
+                }
+
                 let new_password_sha1 = shvrpc::util::sha1_hash(new_password.as_bytes());
                 let mut user = user.clone();
                 user.password = crate::config::Password::Sha1(new_password_sha1);
