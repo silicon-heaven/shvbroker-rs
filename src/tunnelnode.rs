@@ -65,10 +65,6 @@ impl TunnelNode {
         }
     }
 
-    pub(crate) async fn last_tunnel_activity(&self, tunid: TunnelId) -> Option<Instant> {
-        self.active_tunnels.read().await.get(&tunid).and_then(|tun| tun.last_activity)
-    }
-
     pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> RequestedGranted {
         let Ok(tunid) = tunid.parse::<TunnelId>() else {
             return RequestedGranted::NotFound;
@@ -309,7 +305,7 @@ impl ShvNode for TunnelNode {
                     Ok(ProcessRequestRetval::RetvalDeferred)
                 }
                 METH_CLOSE => {
-                    let is_active = self.last_tunnel_activity(tunid).await.is_some();
+                    let is_active = last_tunnel_activity(&self.active_tunnels, tunid).await.is_some();
                     tunnel_close_handler(self.active_tunnels.clone(), self.peers.clone(), tunid, self.ex.clone()).await;
                     Ok(ProcessRequestRetval::Retval(is_active.into()))
                 }
