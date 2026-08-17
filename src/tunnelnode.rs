@@ -69,16 +69,6 @@ impl TunnelNode {
         self.active_tunnels.read().await.get(&tunid).and_then(|tun| tun.last_activity)
     }
 
-    pub(crate) async fn active_tunnel_ids(&self) -> Vec<TunnelId> {
-        self.active_tunnels
-            .read()
-            .await
-            .iter()
-            .filter(|(_id, tun)| tun.last_activity.is_some())
-            .map(|(id, _tun)| *id)
-            .collect()
-    }
-
     pub(crate) async fn is_request_granted_tunnel(&self, tunid: &str, frame: &RpcFrame) -> RequestedGranted {
         let Ok(tunid) = tunid.parse::<TunnelId>() else {
             return RequestedGranted::NotFound;
@@ -273,10 +263,12 @@ impl ShvNode for TunnelNode {
         }
     }
     async fn children(&self, shv_path: &str) -> Option<Vec<String>> {
-        let tunnels = self.active_tunnel_ids()
+        let tunnels = self.active_tunnels
+            .read()
             .await
             .iter()
-            .map(|id| format!("{}", *id))
+            .filter(|(_id, tun)| tun.last_activity.is_some())
+            .map(|(id, _tun)| id.to_string())
             .collect();
         if shv_path.is_empty() {
             Some(tunnels)
