@@ -1676,6 +1676,8 @@ impl BrokerImpl {
                 }
             true
         });
+
+        self.oauth2_user_groups.write().await.remove(&peer_id);
         Ok(mount_point)
     }
 
