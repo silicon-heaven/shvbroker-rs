@@ -685,6 +685,7 @@ pub(crate) struct Session {
     last_activity: DateTime,
     user: String,
     token: String,
+    oauth2_user_groups: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1363,13 +1364,18 @@ impl BrokerImpl {
         true
     }
 
-    async fn get_or_create_token(&self, user: &str) -> SessionToken {
+    async fn get_or_create_token(&self, user: &str, oauth2_user_groups: Vec<String>) -> SessionToken {
         let mut session_tokens = self.session_tokens.write().await;
         let token = if let Some(Session { token, ..}) = session_tokens.iter().find(|session| session.user == user) {
             token.clone()
         } else {
             let token = uuid::Uuid::new_v4().to_string();
-            session_tokens.push(Session { last_activity: shvproto::DateTime::now().expect("Time must work"), user: user.to_string(), token: token.clone() });
+            session_tokens.push(Session {
+                last_activity: shvproto::DateTime::now().expect("Time must work"),
+                user: user.to_string(),
+                token: token.clone(),
+                oauth2_user_groups,
+            });
             token
         };
 
@@ -1472,7 +1478,7 @@ impl BrokerImpl {
             BrokerCommand::CheckToken { sender, peer_id, ip_addr, token } => {
                 let result = 'result: {
                     let mut session_tokens = self.session_tokens.write().await;
-                    let Some(Session { last_activity, user, ..}) = session_tokens.iter_mut().find(|session| session.token == token) else {
+                    let Some(Session { last_activity, user, oauth2_user_groups, ..}) = session_tokens.iter_mut().find(|session| session.token == token) else {
                         break 'result None;
                     };
 
@@ -1481,6 +1487,13 @@ impl BrokerImpl {
                     }
 
                     *last_activity = shvproto::DateTime::now().expect("Time must work");
+
+                    // Restore oauth2 groups associated with this session token to the new peer_id.
+                    self
+                        .oauth2_user_groups
+                        .write()
+                        .await
+                        .insert(peer_id, oauth2_user_groups.clone());
 
                     Some((user.clone(), SessionToken(token)))
                 };
@@ -1530,7 +1543,7 @@ impl BrokerImpl {
                 };
 
                 let result = if result {
-                    Some(self.get_or_create_token(&user).await)
+                    Some(self.get_or_create_token(&user, vec![]).await)
                 } else {
                     None
                 };
@@ -1544,9 +1557,9 @@ impl BrokerImpl {
                     .oauth2_user_groups
                     .write()
                     .await
-                    .insert(peer_id, groups);
+                    .insert(peer_id, groups.clone());
 
-                let session_token = self.get_or_create_token(&user).await;
+                let session_token = self.get_or_create_token(&user, groups).await;
                 if sender.send(session_token).is_err() {
                     debug!("SetOAuth2Groups receiver dropped before sending the response");
                 }
@@ -1676,6 +1689,8 @@ impl BrokerImpl {
                 }
             true
         });
+
+        self.oauth2_user_groups.write().await.remove(&peer_id);
         Ok(mount_point)
     }
 
