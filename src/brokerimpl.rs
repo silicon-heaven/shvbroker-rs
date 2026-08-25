@@ -308,7 +308,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                     _ = interval => {
                         let mut session_tokens = session_tokens.write().await;
                         const HOURS_BEFORE_EXPIRATION: i64 = 12;
-                        let threshold = shvproto::DateTime::now().expect("Time must work").add_hours(-HOURS_BEFORE_EXPIRATION).expect("Time must work");
+                        let threshold = shvproto::DateTime::now().add_hours(-HOURS_BEFORE_EXPIRATION);
                         session_tokens.retain(|session| {
                             session.last_activity >= threshold
                         });
@@ -336,7 +336,7 @@ pub(crate) async fn broker_loop(mut broker: BrokerImpl, mut command_receiver: Un
                         if deactivate_after_days == 0 {
                             continue;
                         }
-                        let threshold = shvproto::DateTime::now().expect("Time must work").add_days(-i64::from(deactivate_after_days)).expect("Time must work");
+                        let threshold = shvproto::DateTime::now().add_days(-i64::from(deactivate_after_days));
                         let last_login_map = last_login.read().await.get().clone();
                         let mut access = access.write().await;
                         let users_to_deactivate: Vec<_> = access.users().iter()
@@ -1371,7 +1371,7 @@ impl BrokerImpl {
         } else {
             let token = uuid::Uuid::new_v4().to_string();
             session_tokens.push(Session {
-                last_activity: shvproto::DateTime::now().expect("Time must work"),
+                last_activity: shvproto::DateTime::now(),
                 user: user.to_string(),
                 token: token.clone(),
                 oauth2_user_groups,
@@ -1399,7 +1399,7 @@ impl BrokerImpl {
             } => {
                 let user = peer_kind.user();
                 let previous_login = self.last_login.write().await
-                    .set_last_login(user, shvproto::DateTime::now().expect("Time must work"), self.sql_connection.as_ref())
+                    .set_last_login(user, shvproto::DateTime::now(), self.sql_connection.as_ref())
                     .await
                     .inspect_err(|err| log::error!("Unable to set last_login for {user}: {err}"))
                     .ok();
@@ -1486,7 +1486,7 @@ impl BrokerImpl {
                         break 'result None;
                     }
 
-                    *last_activity = shvproto::DateTime::now().expect("Time must work");
+                    *last_activity = shvproto::DateTime::now();
 
                     // Restore oauth2 groups associated with this session token to the new peer_id.
                     self
@@ -1783,7 +1783,7 @@ impl BrokerImpl {
 
     async fn user_expired(&self, user: &str) -> bool {
         self.access.read().await.access_user(user).is_some_and(|user| {
-            user.expires.is_some_and(|expires| DateTime::now().expect("Time must work") > expires)
+            user.expires.is_some_and(|expires| DateTime::now() > expires)
         })
     }
 
