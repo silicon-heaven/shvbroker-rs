@@ -136,12 +136,12 @@ smol_macros::test! {
         }
         {
             // change password success
-            let param: RpcValue = vec![RpcValue::from("user"), "good_password".into()].into();
+            let param: RpcValue = vec![RpcValue::from("user"), "even_better_password".into()].into();
             let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await.unwrap();
             assert_eq!(resp.as_int(), 1);
 
             // change password wrong password
-            let param: RpcValue = vec![RpcValue::from("user"), "better_password".into()].into();
+            let param: RpcValue = vec![RpcValue::from("user"), "the_best_password_ever".into()].into();
             let resp = call(".broker/currentClient", METH_CHANGE_PASSWORD, Some(param), &mut call_ctx).await;
             assert!(resp.is_err());
         }
