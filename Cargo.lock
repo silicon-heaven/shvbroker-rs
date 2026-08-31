@@ -3157,7 +3157,7 @@ dependencies = [
  "serialport",
  "shvclient",
  "shvproto 8.0.0",
- "shvrpc",
+ "shvrpc 21.0.0",
  "simple_logger",
  "smol 2.0.2",
  "smol-macros",
@@ -3187,7 +3187,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-platform-verifier",
  "shvproto 7.0.1",
- "shvrpc",
+ "shvrpc 20.0.0",
  "smol 2.0.2",
  "url",
 ]
@@ -3237,6 +3237,29 @@ dependencies = [
  "serde_yaml",
  "sha1",
  "shvproto 7.0.1",
+ "url",
+]
+
+[[package]]
+name = "shvrpc"
+version = "21.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1c2d9fa15784fab725d64340e1b5f2c677769935ec9c43710df615462a4aa3d"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitflags 2.13.1",
+ "crc",
+ "duration-str",
+ "futures",
+ "futures-time",
+ "glob",
+ "hex",
+ "log",
+ "serde",
+ "serde_yaml",
+ "sha1",
+ "shvproto 8.0.0",
  "socketcan",
  "thiserror",
  "tungstenite",
