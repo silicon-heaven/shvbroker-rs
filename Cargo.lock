@@ -2033,9 +2033,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lru-slab"
@@ -3082,9 +3082,9 @@ dependencies = [
 
 [[package]]
 name = "serialport"
-version = "4.9.0"
+version = "4.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d91116f97173694f1642263b2ff837f80d933aa837e2314969f6728f661df3"
+checksum = "6a2f4ac56b5d3af3c40fbbee17be96d532cba02fa5853926aacdb77d926272ab"
 dependencies = [
  "bitflags 2.13.1",
  "cfg-if",
@@ -3156,7 +3156,7 @@ dependencies = [
  "serde_yaml",
  "serialport",
  "shvclient",
- "shvproto",
+ "shvproto 8.0.0",
  "shvrpc",
  "simple_logger",
  "smol 2.0.2",
@@ -3186,7 +3186,7 @@ dependencies = [
  "macro_magic",
  "rustls-pemfile",
  "rustls-platform-verifier",
- "shvproto",
+ "shvproto 7.0.1",
  "shvrpc",
  "smol 2.0.2",
  "url",
@@ -3197,6 +3197,18 @@ name = "shvproto"
 version = "7.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29aa73004f008a26abefbbec0667bafdbc63a1206e105e2baaf34d85fbd47c00"
+dependencies = [
+ "chrono",
+ "hex",
+ "libshvproto-macros",
+ "log",
+]
+
+[[package]]
+name = "shvproto"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98ae2b7df702cfb762a690fedb67aeefb26a93f443f23cad3b244e4f3e943c0b"
 dependencies = [
  "chrono",
  "hex",
@@ -3224,7 +3236,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sha1",
- "shvproto",
+ "shvproto 7.0.1",
  "socketcan",
  "thiserror",
  "tungstenite",
@@ -3848,9 +3860,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.24.1"
+version = "1.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cefc03fd367c0c6d4305de1b312cf00248c4114f4a0418ce6a6af769e3b0bd9"
+checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",

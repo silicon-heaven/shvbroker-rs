@@ -31,7 +31,7 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-shvproto = { version = "7.0.0", features = [ "serde" ] }
+shvproto = { version = "8.0.0", features = [ "serde" ] }
 shvrpc = { version = "20.0.0", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
