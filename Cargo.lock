@@ -438,6 +438,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1602,7 +1608,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -1930,14 +1936,14 @@ version = "11.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "881733cbc631fc9e472e24447ce32a64bedf2da498d6d8570b08edc87de71f65"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "ed25519-dalek",
  "getrandom 0.2.17",
  "hmac",
  "js-sys",
  "p256",
  "p384",
- "pem",
+ "pem 3.0.6",
  "rand 0.8.7",
  "rsa",
  "serde",
@@ -2327,7 +2333,17 @@ version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
 dependencies = [
- "base64",
+ "base64 0.22.1",
+ "serde_core",
+]
+
+[[package]]
+name = "pem"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
+dependencies = [
+ "base64 0.23.1",
  "serde_core",
 ]
 
@@ -2654,11 +2670,11 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.14.9"
+version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091e7a8e7d86e6feb87a27ce8e2cba29d49eff9507afeebefab7eeb2ca667fb4"
+checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "pem",
+ "pem 4.0.0",
  "ring",
  "rustls-pki-types",
  "time",
@@ -2678,7 +2694,7 @@ version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "h2",
@@ -3156,8 +3172,8 @@ dependencies = [
  "serde_yaml",
  "serialport",
  "shvclient",
- "shvproto 8.0.0",
- "shvrpc 21.0.0",
+ "shvproto",
+ "shvrpc",
  "simple_logger",
  "smol 2.0.2",
  "smol-macros",
@@ -3171,9 +3187,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "10.0.0"
+version = "11.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "771c28c5f06127dc57559474f98fa2136416251616521aae70ecdbdde5e4c889"
+checksum = "99666cb144d7c55b63a4e96d2e75650aec6f15789492fe4c45dcaac54789c951"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -3186,58 +3202,23 @@ dependencies = [
  "macro_magic",
  "rustls-pemfile",
  "rustls-platform-verifier",
- "shvproto 7.0.1",
- "shvrpc 20.0.0",
+ "shvproto",
+ "shvrpc",
  "smol 2.0.2",
  "url",
 ]
 
 [[package]]
 name = "shvproto"
-version = "7.0.1"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29aa73004f008a26abefbbec0667bafdbc63a1206e105e2baaf34d85fbd47c00"
-dependencies = [
- "chrono",
- "hex",
- "libshvproto-macros",
- "log",
-]
-
-[[package]]
-name = "shvproto"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98ae2b7df702cfb762a690fedb67aeefb26a93f443f23cad3b244e4f3e943c0b"
+checksum = "168f82c4e669d50442ad77a22b9d68b12a689477669b9f366151301d8f9ff78e"
 dependencies = [
  "chrono",
  "hex",
  "libshvproto-macros",
  "log",
  "serde",
-]
-
-[[package]]
-name = "shvrpc"
-version = "20.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6395283abe88389b5cb6d421d9beb9dcbd9e3d1c2a18d9454d13fc167ccc349"
-dependencies = [
- "anyhow",
- "async-trait",
- "bitflags 2.13.1",
- "crc",
- "duration-str",
- "futures",
- "futures-time",
- "glob",
- "hex",
- "log",
- "serde",
- "serde_yaml",
- "sha1",
- "shvproto 7.0.1",
- "url",
 ]
 
 [[package]]
@@ -3259,7 +3240,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "sha1",
- "shvproto 8.0.0",
+ "shvproto",
  "socketcan",
  "thiserror",
  "tungstenite",
