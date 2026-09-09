@@ -640,9 +640,59 @@ pub(crate) async fn peer_loop(
     Ok(())
 }
 
-fn build_tls_connector(url: &url::Url) -> shvrpc::Result<futures_rustls::TlsConnector> {
+#[derive(Debug)]
+struct NoCertificateVerification {
+    supported_algorithms: futures_rustls::rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl futures_rustls::rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &futures_rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[futures_rustls::pki_types::CertificateDer<'_>],
+        _server_name: &futures_rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: futures_rustls::pki_types::UnixTime,
+    ) -> Result<futures_rustls::rustls::client::danger::ServerCertVerified, futures_rustls::rustls::Error> {
+        Ok(futures_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &futures_rustls::pki_types::CertificateDer<'_>,
+        dss: &futures_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<futures_rustls::rustls::client::danger::HandshakeSignatureValid, futures_rustls::rustls::Error> {
+        futures_rustls::rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &futures_rustls::pki_types::CertificateDer<'_>,
+        dss: &futures_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<futures_rustls::rustls::client::danger::HandshakeSignatureValid, futures_rustls::rustls::Error> {
+        futures_rustls::rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<futures_rustls::rustls::SignatureScheme> {
+        self.supported_algorithms.supported_schemes()
+    }
+}
+
+fn build_tls_connector(url: &url::Url, peer_verify: bool) -> shvrpc::Result<futures_rustls::TlsConnector> {
     let crypto_provider = Arc::new(futures_rustls::rustls::crypto::aws_lc_rs::default_provider());
-    if let Some((_, ca_path)) = url.query_pairs().find(|(k, _)| k == "ca") {
+    if !peer_verify {
+        let verifier = NoCertificateVerification {
+            supported_algorithms: crypto_provider.signature_verification_algorithms,
+        };
+        let client_config = TlsClientConfig::builder_with_provider(crypto_provider)
+            .with_safe_default_protocol_versions()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
+        Ok(futures_rustls::TlsConnector::from(Arc::new(client_config)))
+    } else if let Some((_, ca_path)) = url.query_pairs().find(|(k, _)| k == "ca") {
         let ca_certs = load_certs(&ca_path)?;
         let mut root_store = futures_rustls::rustls::RootCertStore::empty();
         root_store.add_parsable_certificates(ca_certs);
@@ -676,7 +726,7 @@ pub(crate) async fn broker_as_client_peer_loop_with_reconnect(
     info!("Reconnect interval set to: {reconnect_interval:?}");
 
     let tls = if config.client.url.scheme() == "ssl" {
-        Some((Arc::new(build_tls_connector(&config.client.url)?), futures_rustls::pki_types::ServerName::try_from(config.client.url.host_str().unwrap_or_default())?.to_owned()))
+        Some((Arc::new(build_tls_connector(&config.client.url, config.peer_verify)?), futures_rustls::pki_types::ServerName::try_from(config.client.url.host_str().unwrap_or_default())?.to_owned()))
     } else {
         None
     };

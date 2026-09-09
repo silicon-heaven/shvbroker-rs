@@ -475,6 +475,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 connections.push(BrokerConnectionConfig {
                     name,
                     enabled: mconn.enabled,
+                    peer_verify: mconn.server.as_ref().and_then(|server| server.peer_verify).unwrap_or(true),
                     connection_settings,
                     client,
                 });

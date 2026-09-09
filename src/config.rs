@@ -91,14 +91,32 @@ pub struct ConnectionMountSettings {
     pub exported_root_user: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BrokerConnectionConfig {
     pub name: String,
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default = "default_peer_verify")]
+    pub peer_verify: bool,
     #[serde(default)]
     pub connection_settings: ConnectionMountSettings,
     pub client: ClientConfig,
+}
+
+fn default_peer_verify() -> bool {
+    true
+}
+
+impl Default for BrokerConnectionConfig {
+    fn default() -> Self {
+        Self {
+            name: String::default(),
+            enabled: bool::default(),
+            peer_verify: default_peer_verify(),
+            connection_settings: ConnectionMountSettings::default(),
+            client: ClientConfig::default(),
+        }
+    }
 }
 
 type DeviceId = String;
@@ -604,6 +622,7 @@ impl Default for BrokerConfig {
         let child_serial_broker_config = BrokerConnectionConfig {
             name: "serial-to-child-broker".to_string(),
             enabled: false,
+            peer_verify: true,
             connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string(), exported_root_user: "broker".to_string() },
             client: ClientConfig {
                 url: Url::parse("serial:/dev/ttyACM0?user=test").expect("Serial default URL must be valid"),
@@ -613,6 +632,7 @@ impl Default for BrokerConfig {
         let child_can_broker_config = BrokerConnectionConfig {
             name: "CAN-to-child-broker".to_string(),
             enabled: false,
+            peer_verify: true,
             connection_settings: ConnectionMountSettings { exported_shv_root: "".to_string(), imported_shv_root: "".to_string(), mount_point: "test/serial-brc".to_string(), exported_root_user: "broker".to_string() },
             client: ClientConfig {
                 url: Url::parse("can:vcan0?local_address=1&peer_address=2&user=test").expect("CAN default URL must be valid"),
@@ -725,6 +745,31 @@ impl Default for BrokerConfig {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn broker_connection_peer_verify_defaults_to_true() {
+        let mut value = serde_yaml::to_value(BrokerConnectionConfig::default()).expect("Broker connection config should serialize");
+        value.as_mapping_mut().expect("Broker connection config should serialize as a mapping")
+            .remove(serde_yaml::Value::String("peer_verify".to_string()));
+
+        let config: BrokerConnectionConfig = serde_yaml::from_value(value).expect("Broker connection config should deserialize");
+
+        assert!(config.peer_verify);
+    }
+
+    #[test]
+    fn broker_connection_peer_verify_can_be_disabled() {
+        let config = BrokerConnectionConfig {
+            peer_verify: false,
+            ..BrokerConnectionConfig::default()
+        };
+        let value = serde_yaml::to_value(config).expect("Broker connection config should serialize");
+        let config: BrokerConnectionConfig = serde_yaml::from_value(value).expect("Broker connection config should deserialize");
+
+        assert!(!config.peer_verify);
+    }
+
     mod profile_value {
         use super::super::*;
 
