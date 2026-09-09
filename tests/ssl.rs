@@ -127,7 +127,7 @@ fn generate_test_cert_files() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
 }
 fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
-    let (ca_crt_path, server_crt_path, server_key_path) = generate_test_cert_files().expect("Cannot generate test certificates");
+    let (_ca_crt_path, server_crt_path, server_key_path) = generate_test_cert_files().expect("Cannot generate test certificates");
 
     let parent_broker_config = BrokerConfig {
         listen: vec![
@@ -157,13 +157,14 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
             BrokerConnectionConfig {
                 name: "to-parent-broker".into(),
                 enabled: true,
+                peer_verify: false,
                 connection_settings: ConnectionMountSettings { exported_shv_root: "".into(), imported_shv_root: "".into(), mount_point: "".into(), exported_root_user: "broker".to_string() },
                 client: ClientConfig {
                     device_id: Some("test-child-broker".into()),
                     mount: None,
                     heartbeat_interval: duration_str::parse("1m").expect("ClientConfig parse heartbeat interval should succeed"),
                     reconnect_interval: None,
-                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}?ca={ca}", ca = ca_crt_path.to_string_lossy())).expect("URL must be valid"),
+                    url: Url::parse(&format!("ssl://admin:admin@{PARENT_BROKER_ADDRESS_SSL}")).expect("URL must be valid"),
                 }
             }
         ],
