@@ -75,7 +75,8 @@ cargo-run-bin = { git = "https://github.com/syyyr/cargo-run-bin", rev = "be2db6c
 name = "shvbroker"
 
 [[bin]]
-name = "shvbroker_migrate_legacy"
+name = "shvbroker-migrate-legacy"
+path = "src/bin/shvbroker_migrate_legacy.rs"
 
 [[test]]
 name = "test_broker"

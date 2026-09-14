@@ -530,7 +530,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
 // Command-line arguments for the database converter.
 #[derive(clap::Parser, Debug)]
 #[command(
-    name = "migrate_legacy_data",
+    name = "shvbroker-migrate-legacy",
     about = "A tool for converting legacy C++ shvbroker config file and access database to the format used by shvbroker-rs"
 )]
 struct Args {
