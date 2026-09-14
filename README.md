@@ -29,7 +29,7 @@ Edit config, save config, run broker
 
 ### Overview
 
-`shvbroker_migrate_legacy` is a command-line tool used to convert legacy **C++ SHVBroker** configuration and access database files into the **YAML** and **SQLite** formats used by **shvbroker-rs**.
+`shvbroker-migrate-legacy` is a command-line tool used to convert legacy **C++ SHVBroker** configuration and access database files into the **YAML** and **SQLite** formats used by **shvbroker-rs**.
 
 This migration process includes:
 
@@ -42,7 +42,7 @@ This migration process includes:
 ### Usage
 
 ```bash
-shvbroker_migrate_legacy --legacy-config <LEGACY_CONFIG_PATH> [--result-config <RESULT_CONFIG_PATH>]
+shvbroker-migrate-legacy --legacy-config <LEGACY_CONFIG_PATH> [--result-config <RESULT_CONFIG_PATH>]
 ```
 
 #### Required Arguments
@@ -62,7 +62,7 @@ shvbroker_migrate_legacy --legacy-config <LEGACY_CONFIG_PATH> [--result-config <
 #### Convert a legacy config file in-place
 
 ``` bash
-shvbroker_migrate_legacy --legacy-config /etc/shvbroker/shvbroker.cfg
+shvbroker-migrate-legacy --legacy-config /etc/shvbroker/shvbroker.cfg
 ```
 
 What this does:
@@ -74,7 +74,7 @@ What this does:
 #### Specify a custom output path
 
 ``` bash
-shvbroker_migrate_legacy \
+shvbroker-migrate-legacy \
   --legacy-config /etc/shvbroker/shvbroker.cfg \
   --result-config /tmp/new_shvbroker.yml
 ```

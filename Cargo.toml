@@ -3,7 +3,7 @@ name = "shvbroker"
 description = "Rust implementation of the SHV broker"
 license = "MIT"
 repository = "https://github.com/silicon-heaven/shvbroker-rs"
-version = "3.32.13"
+version = "3.32.14"
 edition = "2024"
 default-run = "shvbroker"
 
@@ -32,7 +32,7 @@ panic = "abort"
 
 [dependencies]
 shvproto = { version = "8.0.0", features = [ "serde" ] }
-shvrpc = { version = "21.0.0", features = ["websocket"] }
+shvrpc = { version = "22.0.0", features = ["websocket"] }
 smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.32"
@@ -50,7 +50,7 @@ reqwest = { version = "0.13.4", features = ["json", "http2", "rustls"], default-
 serialport = { version = "4.7.1", default-features = false }
 async-tungstenite = "0.35.0"
 async-compat = { version = "0.2.4", optional = true }
-socketcan = { version = "3.5.0", features = ["smol"], optional = true }
+socketcan = { version = "4.0.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.7.0"
@@ -75,7 +75,8 @@ cargo-run-bin = { git = "https://github.com/syyyr/cargo-run-bin", rev = "be2db6c
 name = "shvbroker"
 
 [[bin]]
-name = "shvbroker_migrate_legacy"
+name = "shvbroker-migrate-legacy"
+path = "src/bin/shvbroker_migrate_legacy.rs"
 
 [[test]]
 name = "test_broker"
