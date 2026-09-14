@@ -50,7 +50,7 @@ reqwest = { version = "0.13.4", features = ["json", "http2", "rustls"], default-
 serialport = { version = "4.7.1", default-features = false }
 async-tungstenite = "0.35.0"
 async-compat = { version = "0.2.4", optional = true }
-socketcan = { version = "3.5.0", features = ["smol"], optional = true }
+socketcan = { version = "4.0.0", features = ["smol"], optional = true }
 futures-rustls = "0.26.0"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.7.0"
