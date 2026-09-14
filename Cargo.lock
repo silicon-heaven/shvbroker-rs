@@ -1586,7 +1586,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",
@@ -1759,15 +1759,6 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itoa"
@@ -2129,19 +2120,6 @@ dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
  "libc",
-]
-
-[[package]]
-name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags 2.13.1",
- "cfg-if",
- "cfg_aliases",
- "libc",
- "memoffset",
 ]
 
 [[package]]
@@ -2527,7 +2505,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.5",
+ "socket2",
  "thiserror",
  "tokio",
  "tracing",
@@ -2566,7 +2544,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -3129,12 +3107,12 @@ dependencies = [
  "serialport",
  "shvclient",
  "shvproto",
- "shvrpc",
+ "shvrpc 22.0.0",
  "simple_logger",
  "smol",
  "smol-macros",
  "smol-timeout",
- "socketcan 4.0.0",
+ "socketcan",
  "stream-cancel",
  "tempfile",
  "url",
@@ -3159,7 +3137,7 @@ dependencies = [
  "rustls-pemfile",
  "rustls-platform-verifier",
  "shvproto",
- "shvrpc",
+ "shvrpc 21.0.0",
  "smol",
  "url",
 ]
@@ -3197,7 +3175,30 @@ dependencies = [
  "serde_yaml",
  "sha1",
  "shvproto",
- "socketcan 3.6.2",
+ "url",
+]
+
+[[package]]
+name = "shvrpc"
+version = "22.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b42f4411e662d74a5ea04b1775eae1f6a8dea70450e18c811a664dd52fab4392"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bitflags 2.13.1",
+ "crc",
+ "duration-str",
+ "futures",
+ "futures-time",
+ "glob",
+ "hex",
+ "log",
+ "serde",
+ "serde_yaml",
+ "sha1",
+ "shvproto",
+ "socketcan",
  "thiserror",
  "tungstenite",
  "url",
@@ -3316,40 +3317,12 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
-dependencies = [
- "libc",
- "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "socketcan"
-version = "3.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea24328be148eea05f36bc3991b1c174c586853e04d1480b92429b2df6aea865"
-dependencies = [
- "bitflags 2.13.1",
- "embedded-can",
- "hex",
- "itertools",
- "libc",
- "log",
- "nb",
- "nix 0.29.0",
- "socket2 0.5.10",
- "thiserror",
 ]
 
 [[package]]
@@ -3369,7 +3342,7 @@ dependencies = [
  "nix 0.31.3",
  "smallvec",
  "smol",
- "socket2 0.6.5",
+ "socket2",
  "thiserror",
 ]
 
@@ -3588,7 +3561,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "socket2 0.6.5",
+ "socket2",
  "windows-sys 0.61.2",
 ]
 
