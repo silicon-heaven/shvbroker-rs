@@ -676,8 +676,7 @@ pub(crate) fn user_base_roles(oauth2_user_groups: &BTreeMap<PeerId, Vec<String>>
 
     access_config
         .access_user(peer.kind.user())
-        .map(|user| user.roles.clone())
-        .unwrap_or_default()
+        .map_or_default(|user| user.roles.clone())
 }
 
 #[derive(Debug)]
@@ -1086,8 +1085,7 @@ impl BrokerImpl {
                 }
 
                 let broker_id = self.config.name.as_ref()
-                    .map(|broker_id| format!(":{broker_id}"))
-                    .unwrap_or_default();
+                    .map_or_default(|broker_id| format!(":{broker_id}"));
                 let user_id_chain = format!("{req_user_id}{maybe_semicolon}{user}{broker_id}", maybe_semicolon = if !req_user_id.is_empty() {";"} else {""});
                 frame.set_user_id(&user_id_chain);
             }
@@ -1791,7 +1789,7 @@ impl BrokerImpl {
         let oauth2_user_groups = self.oauth2_user_groups.read().await;
         let access = self.access.read().await;
 
-        let user_roles = oauth2_user_groups.get(&peer_id).cloned().unwrap_or_else(|| access.access_user(user).map(|u| u.roles.clone()).unwrap_or_default());
+        let user_roles = oauth2_user_groups.get(&peer_id).cloned().unwrap_or_else(|| access.access_user(user).map_or_default(|u| u.roles.clone()));
         let flatten_roles = access.flatten_roles(&user_roles);
 
         let mut any_role_has_ip_policy = false;

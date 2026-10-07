@@ -1,4 +1,4 @@
-#![expect(clippy::panic, reason = "Fine for a test")]
+#![allow(clippy::panic, reason = "Fine for a test")]
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
