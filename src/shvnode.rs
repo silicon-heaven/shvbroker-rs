@@ -326,7 +326,7 @@ impl ShvNode for AppDeviceNode {
                 Ok(ProcessRequestRetval::Retval(self.version.into()))
             }
             METH_SERIAL_NUMBER => {
-                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map(ToString::to_string).unwrap_or_default().into()))
+                Ok(ProcessRequestRetval::Retval(self.serial_number.as_ref().map_or_default(ToString::to_string).into()))
             }
             METH_PING => {
                 Ok(ProcessRequestRetval::Retval(().into()))

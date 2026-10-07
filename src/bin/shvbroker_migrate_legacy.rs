@@ -496,8 +496,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
                 token_url: az.token_url,
                 scopes: az
                     .scopes
-                    .map(|s| s.split_whitespace().map(ToString::to_string).collect())
-                    .unwrap_or_default(),
+                    .map_or_default(|s| s.split_whitespace().map(ToString::to_string).collect()),
             }
         });
 
