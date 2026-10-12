@@ -147,7 +147,7 @@ pub enum PeerKind {
 impl PeerKind {
     pub fn user(&self) -> &str {
         match self {
-            PeerKind::Client { user, .. } | PeerKind::Device { user, .. } => user,
+            PeerKind::Client { user } | PeerKind::Device { user, .. } => user,
             PeerKind::Broker(connection_settings) => &connection_settings.exported_root_user,
         }
     }
