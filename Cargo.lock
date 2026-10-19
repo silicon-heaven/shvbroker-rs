@@ -2918,9 +2918,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
@@ -3033,9 +3033,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "12.0.2"
+version = "12.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a7c2ab9bd86e3b1f1b6383752da50c3821fd7a841d82fe8feea19807ea41e94"
+checksum = "33bef985cb8c45a1b5aa7055473eb3f24ab1d90a2ead81ca35fed66ad25533ab"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -3054,9 +3054,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "8.0.2"
+version = "8.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b8d7f5fb83fd018770c7faa84ff57f25e1c5695309dc08f5088d00a98155951"
+checksum = "e684198582ff9ece90433ed69e903358e2721360494026187a162cb12a1453a9"
 dependencies = [
  "chrono",
  "hex",
@@ -3651,9 +3651,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.27.0"
+version = "1.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
+checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
