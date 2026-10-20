@@ -1074,7 +1074,7 @@ impl BrokerImpl {
             let mut frame = frame;
             if let Some(mut req_user_id) = frame.user_id() {
                 let peers = self.peers.read().await;
-                let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
+                let peer = peers.get(&peer_id).ok_or_else(|| RpcError::new(RpcErrorCode::MethodNotFound, "Peer not found"))?;
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let flatten_roles = self.access.read().await.flatten_roles(user_roles.as_slice());
                 let user = peer.kind.user();
@@ -1612,7 +1612,7 @@ impl BrokerImpl {
         let peers = peers.read().await;
         let peer = peers
             .get(&peer_id)
-            .ok_or_else(|| RpcError::new(RpcErrorCode::InternalError, "Peer not found"))?;
+            .ok_or_else(|| RpcError::new(RpcErrorCode::MethodNotFound, "Peer not found"))?;
         let ri = match ShvRI::from_path_method_signal(shv_path, method, None) {
             Ok(ri) => ri,
             Err(e) => return Err(RpcError::new(RpcErrorCode::InvalidRequest, e)),
