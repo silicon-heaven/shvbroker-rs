@@ -9,7 +9,7 @@ use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
-use shvrpc::rpc::{ShvRI, SubscriptionParam};
+use shvrpc::rpc::SubscriptionParam;
 use shvrpc::rpcmessage::{PeerId, Response, RpcError, RpcErrorCode, RqId};
 use shvrpc::util::join_path;
 use smol::Executor;
@@ -113,7 +113,7 @@ smol_macros::test! {
 
         // subscriptions
         let subs_ri = "shv/**:*";
-        let subs = SubscriptionParam { ri: ShvRI::try_from(subs_ri).unwrap(), ttl: None };
+        let subs = SubscriptionParam { ri: subs_ri.parse().unwrap(), ttl: None };
         {
             // subscribe
             let result = call(".broker/currentClient", METH_SUBSCRIBE, Some(subs.to_rpcvalue()), &mut call_ctx).await.unwrap();
@@ -284,7 +284,7 @@ smol_macros::test! {
                     assert_eq!(&role, expected);
                 }
                 {
-                    let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
+                    let role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "bar/**:*".parse().unwrap(), grant: "cfg".into() }], profile: None };
                     call(path, METH_SET_VALUE, Some(vec!["baz".into(), shvproto::to_rpcvalue(&role).unwrap()].into()), &mut call_ctx).await.unwrap();
                     let resp = call(path, METH_LS, None, &mut call_ctx).await.unwrap();
                     let list = resp.as_list();
@@ -308,7 +308,7 @@ smol_macros::test! {
 
             {
                 let path = ".broker/access/roles";
-                let updated_role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "foo/**:*".try_into().unwrap(), grant: "cfg".into() }], profile: None };
+                let updated_role = Role { roles: vec!["foo".into()], access: vec![AccessRule{ shv_ri: "foo/**:*".parse().unwrap(), grant: "cfg".into() }], profile: None };
                 call(path, METH_SET_VALUE, Some(vec!["tester".into(), shvproto::to_rpcvalue(&updated_role).unwrap()].into()), &mut call_ctx).await.unwrap();
                 let extra_role = Role { roles: vec!["client".into()], access: vec![], profile: None };
                 call(path, METH_SET_VALUE, Some(vec!["extra-role".into(), shvproto::to_rpcvalue(&extra_role).unwrap()].into()), &mut call_ctx).await.unwrap();
