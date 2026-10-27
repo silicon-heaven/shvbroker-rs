@@ -847,7 +847,7 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_USER_PROFILE => {
                 let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
-                    return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
+                    return Err(RpcError::new(RpcErrorCode::MethodNotFound, "Peer must exist").into());
                 };
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
                 let access = self.access.read().await;
@@ -867,12 +867,12 @@ impl ShvNode for BrokerCurrentClientNode {
             METH_USER_ROLES => {
                 let peers = self.peers.read().await;
                 let Some(peer) = peers.get(&ctx.peer_id) else {
-                    return Err(RpcError::new(RpcErrorCode::InternalError, "Peer must exist").into());
+                    return Err(RpcError::new(RpcErrorCode::MethodNotFound, "Peer must exist").into());
                 };
                 let user_roles = user_base_roles(&*self.oauth2_user_groups.read().await, &*self.access.read().await, peer);
 
                 if user_roles.is_empty() {
-                    return Err(RpcError::new(RpcErrorCode::InternalError, "A user needs to have at least one role defined").into());
+                    return Err(RpcError::new(RpcErrorCode::MethodNotFound, "A user needs to have at least one role defined").into());
                 }
 
                 Ok(ProcessRequestRetval::Retval(self.access.read().await.flatten_roles(user_roles.as_slice()).into()))
