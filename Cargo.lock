@@ -622,9 +622,9 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "const_format"
-version = "0.2.36"
+version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4481a617ad9a412be3b97c5d403fef8ed023103368908b9c50af598ff467cc1e"
+checksum = "a3decb4d6965448659923544a634a0571ba44cede4e11ef15a5a317126840454"
 dependencies = [
  "const_format_proc_macros",
  "konst",
@@ -632,9 +632,9 @@ dependencies = [
 
 [[package]]
 name = "const_format_proc_macros"
-version = "0.2.34"
+version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d57c2eccfb16dbac1f4e61e206105db5820c9d26c3c472bc17c774259ef7744"
+checksum = "941b570269a642506f08cb5b688c04bfa6cfd41a26f8bcdc49db8fd00c0ab659"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3033,9 +3033,9 @@ dependencies = [
 
 [[package]]
 name = "shvclient"
-version = "13.0.0"
+version = "13.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08b1490456cf65d84e65fe1583b69e0f268359e4b071037f9b7636e4bb92ffaf"
+checksum = "94cbe7250605d0f3d1ebc3b44cc32aeb8f6cfbe097bdffc4594b66b612ba439b"
 dependencies = [
  "async-broadcast",
  "async-trait",
@@ -3054,9 +3054,9 @@ dependencies = [
 
 [[package]]
 name = "shvproto"
-version = "8.0.3"
+version = "8.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e684198582ff9ece90433ed69e903358e2721360494026187a162cb12a1453a9"
+checksum = "d076f0cc909a1741906b13ce83e5b0f3d515cbd81f69eb3d95c4c29d966148dd"
 dependencies = [
  "chrono",
  "hex",
@@ -3067,9 +3067,9 @@ dependencies = [
 
 [[package]]
 name = "shvrpc"
-version = "23.0.0"
+version = "23.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e682400d005ed35d60bb6ad7d380fb0e3c316b3327ae1378293bdb17a2d30648"
+checksum = "6ca0786b562bdc97cc7b731ab0b33dfbf55a837c44d223a5548ed119bf35c918"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3651,9 +3651,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.28.0"
+version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
+checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
