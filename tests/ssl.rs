@@ -176,10 +176,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
 smol_macros::test!{
     async fn ssl(ex: Arc<Executor<'_>>) {
-        simple_logger::SimpleLogger::new()
-            .with_level(log::LevelFilter::Debug)
-            .init()
-            .unwrap();
+        let _logger_handle = shvbroker::logging::start_logger(log::LevelFilter::Debug).unwrap();
 
         let (parent_broker_config, child_broker_config) = create_broker_configs();
         start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL], ex.clone()).await;

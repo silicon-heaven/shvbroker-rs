@@ -37,7 +37,7 @@ smol = "2"
 smol-timeout = "0.6"
 futures = "0.3.32"
 log = "0.4.32"
-simple_logger = { version = "5.0.0", features = ["stderr"] }
+flexi_logger = { features = ["colors"], version = "0.31.10" }
 duration-str = "0.21"
 rand = "0.10.1"
 url = "2.5"
@@ -68,7 +68,6 @@ async-signal = "0.2.14"
 #[patch."https://github.com/silicon-heaven/libshvrpc-rs"]
 #shvrpc = { path = "../libshvrpc-rs" }
 [patch.crates-io]
-simple_logger = { git = "https://github.com/fvacek/rust-simple_logger.git", branch = "main" }
 cargo-run-bin = { git = "https://github.com/syyyr/cargo-run-bin", rev = "be2db6c4fee67f683d06aa1ca6f7268d5aa4fcb6" }
 
 [[bin]]

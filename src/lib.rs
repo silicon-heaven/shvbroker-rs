@@ -1,4 +1,5 @@
 pub mod config;
+pub mod logging;
 pub mod shvnode;
 pub mod brokerimpl;
 mod peer;

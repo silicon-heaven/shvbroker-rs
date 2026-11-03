@@ -2,8 +2,8 @@
 use std::{path::Path, sync::Arc};
 use async_signal::{Signal, Signals};
 use futures::StreamExt;
+use flexi_logger::LogSpecification;
 use log::{info, LevelFilter};
-use simple_logger::SimpleLogger;
 use shvrpc::util::parse_log_verbosity;
 use clap::{Parser};
 use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
@@ -54,17 +54,19 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
         return Ok(());
     }
 
-    let mut logger = SimpleLogger::new().with_level(LevelFilter::Info);
+    let mut log_specification = LogSpecification::builder();
+    log_specification.default(LevelFilter::Info);
     if let Some(module_names) = cli_opts.verbose {
         for (module, level) in parse_log_verbosity(&module_names, module_path!()) {
             if let Some(module) = module {
-                logger = logger.with_module_level(module, level);
+                log_specification.module(module, level);
             } else {
-                logger = logger.with_level(level);
+                log_specification.default(level);
             }
         }
     }
-    logger.init().expect("Logger must work");
+    let _logger_handle = shvbroker::logging::start_logger(log_specification.build())
+        .expect("Logger must work");
 
     info!("=====================================================");
     info!("{} ver. {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
