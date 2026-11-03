@@ -15,6 +15,7 @@ use futures::{AsyncRead, AsyncWrite, FutureExt};
 use futures::StreamExt;
 use futures::select;
 use futures_rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use flexi_logger::LogSpecification;
 use log::Level;
 use log::{debug, error, info, log, warn};
 use shvproto::{DateTime, Map, MetaMap, RpcValue};
@@ -29,7 +30,7 @@ use smol_timeout::TimeoutExt;
 use url::Url;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use smol::lock::RwLock;
 use std::time::{Duration, Instant};
 use peer::SESSION_TOKEN_PREFIX;
@@ -978,6 +979,7 @@ async fn check_subscribe_api(peers: &RwLock<BTreeMap<PeerId, Peer>>, command_sen
 }
 
 impl BrokerImpl {
+    #[expect(clippy::too_many_arguments, reason = "It's fine.")]
     pub fn new(
         config: SharedBrokerConfig,
         access: AccessConfig,
@@ -985,6 +987,7 @@ impl BrokerImpl {
         policies: Policies,
         command_sender: UnboundedSender<BrokerCommand>,
         sql_connection: Option<async_sqlite::Client>,
+        log_specification: Arc<StdRwLock<LogSpecification>>,
         ex: Arc<smol::Executor<'static>>
     ) -> Self {
         let (subscr_cmd_sender, subscr_cmd_receiver) = futures::channel::mpsc::unbounded();
@@ -1008,7 +1011,7 @@ impl BrokerImpl {
                 add_node(tsub_dir, Box::new(TunnelNode::new(peers.clone(), ex.clone())));
             }
         }
-        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone(), ex)));
+        add_node(DIR_BROKER, Box::new(BrokerNode::new(peers.clone(), config.clone(), sql_connection.clone(), oauth2_user_groups.clone(), access.clone(), policies.clone(), log_specification, ex)));
         add_node(
             DIR_BROKER_CURRENT_CLIENT,
             Box::new(BrokerCurrentClientNode::new(peers.clone(), subscr_cmd_sender.clone(), sql_connection.clone(), access.clone(), oauth2_user_groups.clone())),
@@ -1935,7 +1938,7 @@ mod test {
             ] {
                 let (command_sender, _) = unbounded();
                 let access = access.clone();
-                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, LastLogin::default(), policies.clone(), command_sender, None, ex.clone());
+                let mut broker = BrokerImpl::new(SharedBrokerConfig::new(config.clone()), access, LastLogin::default(), policies.clone(), command_sender, None, std::sync::Arc::new(std::sync::RwLock::new(flexi_logger::LogSpecification::info())), ex.clone());
 
                 let peer = Peer {
                     id: 0,

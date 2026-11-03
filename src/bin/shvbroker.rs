@@ -2,11 +2,9 @@
 use std::{path::Path, sync::Arc};
 use async_signal::{Signal, Signals};
 use futures::StreamExt;
-use flexi_logger::LogSpecification;
-use log::{info, LevelFilter};
-use shvrpc::util::parse_log_verbosity;
+use log::info;
 use clap::{Parser};
-use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, sql::{self}};
+use shvbroker::{brokerimpl::{BrokerImpl, LastLogin}, config::{AccessConfig, BrokerConfig, SharedBrokerConfig}, logging::{log_specification_from_verbosity, start_logger}, sql::{self}};
 
 #[derive(Parser, Debug)]
 struct CliOpts {
@@ -54,18 +52,8 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
         return Ok(());
     }
 
-    let mut log_specification = LogSpecification::builder();
-    log_specification.default(LevelFilter::Info);
-    if let Some(module_names) = cli_opts.verbose {
-        for (module, level) in parse_log_verbosity(&module_names, module_path!()) {
-            if let Some(module) = module {
-                log_specification.module(module, level);
-            } else {
-                log_specification.default(level);
-            }
-        }
-    }
-    let _logger_handle = shvbroker::logging::start_logger(log_specification.build())
+    let log_specification = log_specification_from_verbosity(cli_opts.verbose.as_deref());
+    let (_logger_handle, log_specification) = start_logger(log_specification)
         .expect("Logger must work");
 
     info!("=====================================================");
@@ -116,7 +104,7 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
         return Err("Googgle auth is configured but not part of this build!".into());
     }
     let (command_sender, command_receiver) = futures::channel::mpsc::unbounded();
-    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection, ex.clone());
+    let broker_impl = BrokerImpl::new(SharedBrokerConfig::new(config), access, last_login, policies, command_sender, sql_connection, log_specification, ex.clone());
     let (exit_sender, exit_receiver) = futures::channel::oneshot::channel();
 
     ex.spawn(async move {

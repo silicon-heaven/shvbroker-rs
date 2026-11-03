@@ -1,24 +1,44 @@
-use flexi_logger::{AdaptiveFormat, FlexiLoggerError, LogSpecification, Logger, LoggerHandle};
+use std::sync::{Arc, RwLock};
+use flexi_logger::{AdaptiveFormat, FlexiLoggerError, LevelFilter, LogSpecification, Logger, LoggerHandle};
 use flexi_logger::DeferredNow;
 use flexi_logger::filter::{LogLineFilter, LogLineWriter};
+use shvrpc::util::parse_log_verbosity;
+
+pub fn log_specification_from_verbosity(verbosity: Option<&str>) -> LogSpecification {
+    let mut log_specification = LogSpecification::builder();
+    log_specification.default(LevelFilter::Info);
+    if let Some(verbosity) = verbosity {
+        for (module, level) in parse_log_verbosity(verbosity, env!("CARGO_PKG_NAME")) {
+            if let Some(module) = module {
+                log_specification.module(module, level);
+            } else {
+                log_specification.default(level);
+            }
+        }
+    }
+    log_specification.build()
+}
 
 pub fn start_logger(
     log_specification: impl Into<LogSpecification>,
-) -> Result<LoggerHandle, FlexiLoggerError> {
-    let log_specification = log_specification.into();
-    Logger::with(LogSpecification::trace())
-        .filter(Box::new(TopicLogFilter { log_specification }))
+) -> Result<(LoggerHandle, Arc<RwLock<LogSpecification>>), FlexiLoggerError> {
+    let log_specification = Arc::new(RwLock::new(log_specification.into()));
+    let logger_handle = Logger::with(LogSpecification::trace())
+        .filter(Box::new(TopicLogFilter {
+            log_specification: log_specification.clone(),
+        }))
         .set_palette("196;208;6;27;8".to_owned())
         .log_to_stderr()
         .adaptive_format_for_stderr(AdaptiveFormat::Custom(
             flexi_logger::detailed_format,
             detailed_format_color_level,
         ))
-        .start()
+        .start()?;
+    Ok((logger_handle, log_specification))
 }
 
 struct TopicLogFilter {
-    log_specification: LogSpecification,
+    log_specification: Arc<RwLock<LogSpecification>>,
 }
 
 impl LogLineFilter for TopicLogFilter {
@@ -28,11 +48,14 @@ impl LogLineFilter for TopicLogFilter {
         record: &log::Record,
         log_line_writer: &dyn LogLineWriter,
     ) -> std::io::Result<()> {
+        let log_specification = self.log_specification
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !should_write_log(
             record.level(),
             record.target(),
             record.module_path(),
-            &self.log_specification,
+            &log_specification,
         ) {
             return Ok(());
         }

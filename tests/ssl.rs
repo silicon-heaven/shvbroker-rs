@@ -1,10 +1,11 @@
 #![allow(clippy::panic, reason = "Fine for a test")]
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use std::time::Duration;
 
 use const_format::formatcp;
+use flexi_logger::LogSpecification;
 use futures::channel::mpsc::unbounded;
 use log::{error, info, warn};
 use rcgen::{BasicConstraints, CertificateParams, DnType, DnValue, IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, PKCS_ECDSA_P256_SHA256};
@@ -38,7 +39,7 @@ async fn start_broker(broker_config: BrokerConfig, broker_addresses: &[&str], ex
     ex.clone().spawn(async move {
         let (broker_sender, broker_receiver) = unbounded();
         let (_exit_sender, exit_receiver) = futures::channel::oneshot::channel();
-        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None, ex.clone()), broker_receiver, exit_receiver, ex)
+        run_broker(BrokerImpl::new(broker_config, access_config, LastLogin::default(), policies, broker_sender, None, Arc::new(RwLock::new(LogSpecification::info())), ex.clone()), broker_receiver, exit_receiver, ex)
             .await
             .expect("broker accept_loop failed");
     }).detach();
@@ -176,7 +177,7 @@ fn create_broker_configs() -> (BrokerConfig, BrokerConfig) {
 
 smol_macros::test!{
     async fn ssl(ex: Arc<Executor<'_>>) {
-        let _logger_handle = shvbroker::logging::start_logger(log::LevelFilter::Debug).unwrap();
+        let (_logger_handle, _log_specification) = shvbroker::logging::start_logger(log::LevelFilter::Debug).unwrap();
 
         let (parent_broker_config, child_broker_config) = create_broker_configs();
         start_broker(parent_broker_config, &[PARENT_BROKER_ADDRESS, PARENT_BROKER_ADDRESS_SSL], ex.clone()).await;

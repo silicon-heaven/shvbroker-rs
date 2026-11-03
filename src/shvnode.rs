@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::format;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
+use flexi_logger::LogSpecification;
 use log::{debug, warn};
 use shvrpc::metamethod::{Flags, MetaMethod};
 use shvrpc::util::{children_on_path, find_longest_path_prefix};
@@ -17,6 +18,7 @@ use crate::config::{AccessConfig, Policies, Policy, SharedBrokerConfig, upsert_c
 use crate::peer::peer_log;
 use smol::lock::RwLock;
 use crate::brokerimpl::NodeRequestContext;
+use crate::logging::log_specification_from_verbosity;
 
 pub const METH_DIR: &str = "dir";
 pub const METH_LS: &str = "ls";
@@ -358,6 +360,7 @@ pub const METH_MOUNTS: &str = "mounts";
 pub const METH_DISCONNECT_CLIENT: &str = "disconnectClient";
 pub const METH_BROKER_ID: &str = "brokerId";
 pub const METH_APPLY_ACCESS_CONFIG_TO_DATABASE: &str = "applyAccessConfigToDatabase";
+pub const METH_SET_VERBOSITY: &str = "setVerbosity";
 
 const META_METH_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "Int", "ClientInfo", &[], "");
 const META_METH_MOUNTED_CLIENT_INFO: MetaMethod = MetaMethod::new_static(METH_MOUNTED_CLIENT_INFO, Flags::empty(), AccessLevel::Service, "String", "ClientInfo", &[], "");
@@ -376,6 +379,7 @@ const META_METH_MOUNTS: MetaMethod = MetaMethod::new_static(METH_MOUNTS, Flags::
 const META_METH_DISCONNECT_CLIENT: MetaMethod = MetaMethod::new_static(METH_DISCONNECT_CLIENT, Flags::empty(), AccessLevel::SuperService, "Int", "void", &[], "");
 const META_METH_BROKER_ID: MetaMethod = MetaMethod::new_static(METH_BROKER_ID, Flags::IsGetter, AccessLevel::Service, "", "String", &[], "");
 const META_METH_APPLY_ACCESS_CONFIG_TO_DATABASE: MetaMethod = MetaMethod::new_static(METH_APPLY_ACCESS_CONFIG_TO_DATABASE, Flags::empty(), AccessLevel::Superuser, "void", "Bool", &[], "");
+const META_METH_SET_VERBOSITY: MetaMethod = MetaMethod::new_static(METH_SET_VERBOSITY, Flags::empty(), AccessLevel::Superuser, "String", "void", &[], "");
 
 pub const METH_INFO: &str = "info";
 pub const METH_SUBSCRIPTIONS: &str = "subscriptions";
@@ -393,11 +397,13 @@ pub(crate) struct BrokerNode {
     oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>,
     access: Arc<RwLock<AccessConfig>>,
     policies: Arc<RwLock<Policies>>,
+    log_specification: Arc<StdRwLock<LogSpecification>>,
     ex: Arc<smol::Executor<'static>>,
 }
 
 impl BrokerNode {
-    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>, ex: Arc<smol::Executor<'static>>) -> Self {
+    #[expect(clippy::too_many_arguments, reason = "It's fine.")]
+    pub(crate) fn new(peers: Arc<RwLock<BTreeMap<PeerId, Peer>>>, config: SharedBrokerConfig, sql_connection: Option<async_sqlite::Client>, oauth2_user_groups: Arc<RwLock<BTreeMap<PeerId, Vec<String>>>>, access: Arc<RwLock<AccessConfig>>, policies: Arc<RwLock<Policies>>, log_specification: Arc<StdRwLock<LogSpecification>>, ex: Arc<smol::Executor<'static>>) -> Self {
         Self {
             peers,
             config,
@@ -405,6 +411,7 @@ impl BrokerNode {
             oauth2_user_groups,
             access,
             policies,
+            log_specification,
             ex,
         }
     }
@@ -420,6 +427,7 @@ const BROKER_NODE_METHODS: &[&MetaMethod] = &[
     &META_METH_DISCONNECT_CLIENT,
     &META_METH_BROKER_ID,
     &META_METH_APPLY_ACCESS_CONFIG_TO_DATABASE,
+    &META_METH_SET_VERBOSITY,
 ];
 
 #[async_trait::async_trait]
@@ -475,6 +483,19 @@ impl ShvNode for BrokerNode {
             }
             METH_BROKER_ID => {
                 Ok(ProcessRequestRetval::Retval(self.config.name.clone().into()))
+            }
+            METH_SET_VERBOSITY => {
+                const WRONG_FORMAT_ERR: &str = "Expected a string log verbosity";
+                let rq = &frame.to_rpcmesage()?;
+                let Some(verbosity) = rq.param() else {
+                    return Err(WRONG_FORMAT_ERR.into());
+                };
+                if !verbosity.is_string() {
+                    return Err(WRONG_FORMAT_ERR.into());
+                }
+                let log_specification = log_specification_from_verbosity(Some(verbosity.as_str()));
+                *self.log_specification.write().unwrap_or_else(std::sync::PoisonError::into_inner) = log_specification;
+                Ok(ProcessRequestRetval::Retval(().into()))
             }
             METH_APPLY_ACCESS_CONFIG_TO_DATABASE => {
                 let Some(sql_connection) = &self.sql_connection else {
