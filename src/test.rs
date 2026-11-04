@@ -1,11 +1,12 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::brokerimpl::{BrokerImpl, LastLogin, Policies, Policy};
 use crate::sql;
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
+use flexi_logger::LogSpecification;
 use shvproto::{Map, RpcValue};
 use shvrpc::rpcframe::RpcFrame;
 use shvrpc::{RpcMessage, RpcMessageMetaTags};
@@ -15,7 +16,7 @@ use shvrpc::util::join_path;
 use smol::Executor;
 use crate::brokerimpl::{BrokerToPeerMessage, PeerKind, BrokerCommand};
 use crate::config::{AccessRule, BrokerConfig, Mount, Password, Role, SharedBrokerConfig, User};
-use crate::shvnode::{METH_APPLY_ACCESS_CONFIG_TO_DATABASE, METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
+use crate::shvnode::{METH_APPLY_ACCESS_CONFIG_TO_DATABASE, METH_CHANGE_PASSWORD, METH_LS, METH_SET_VALUE, METH_SET_VERBOSITY, METH_SUBSCRIBE, METH_UNSUBSCRIBE, METH_VALUE};
 
 struct CallCtx {
     writer: UnboundedSender<BrokerCommand>,
@@ -72,7 +73,7 @@ smol_macros::test! {
         let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
         let config = SharedBrokerConfig::new(config);
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), ex.clone());
+        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
         let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -110,6 +111,9 @@ smol_macros::test! {
         assert_eq!(m.get("mountPoint").unwrap(), &RpcValue::from(""));
         assert_eq!(m.get("userName").unwrap(), &RpcValue::from(user));
         assert_eq!(m.get("subscriptions").unwrap(), &RpcValue::from(shvproto::Map::new()));
+
+        let resp = call(".broker", METH_SET_VERBOSITY, Some("=D".into()), &mut call_ctx).await;
+        assert!(resp.is_err());
 
         // subscriptions
         let subs_ri = "shv/**:*";
@@ -163,7 +167,8 @@ smol_macros::test! {
 
         let config = SharedBrokerConfig::new(config);
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), ex.clone());
+        let log_specification = Arc::new(RwLock::new(LogSpecification::info()));
+        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), log_specification.clone(), ex.clone());
         let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -202,6 +207,13 @@ smol_macros::test! {
         */
         let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
         assert_eq!(resp, RpcValue::from(true));
+        let resp = call(".broker", METH_SET_VERBOSITY, Some(".=E,shvbroker::peer=D".into()), &mut call_ctx).await.unwrap();
+        assert_eq!(resp, RpcValue::null());
+        {
+            let log_specification = log_specification.read().unwrap();
+            assert!(log_specification.enabled(log::Level::Debug, "shvbroker::peer"));
+            assert!(!log_specification.enabled(log::Level::Debug, "shvbroker::brokerimpl"));
+        }
         let resp = call(".broker/access", "ls", None, &mut call_ctx).await.unwrap();
         assert!(resp.is_list());
         assert!(resp.as_list().iter().any(|s| s.as_str() == "mounts"));
@@ -415,7 +427,7 @@ smol_macros::test! {
         let policies = config.policies.clone();
         let config = SharedBrokerConfig::new(config);
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, LastLogin::default(), policies, broker_sender.clone(), None, ex.clone());
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), policies, broker_sender.clone(), None, Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
         let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
@@ -449,7 +461,7 @@ smol_macros::test! {
         let config = SharedBrokerConfig::new(config);
         let access = config.access.clone();
         let (broker_sender, broker_receiver) = unbounded();
-        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None, ex.clone());
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None, Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
         let broker_task = ex.spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex.clone()));
 
         let (peer_writer, peer_reader) = unbounded::<BrokerToPeerMessage>();
