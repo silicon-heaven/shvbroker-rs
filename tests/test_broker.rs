@@ -55,6 +55,7 @@ fn test_broker() -> shvrpc::Result<()> {
                 BrokerConnectionConfig {
                     name: "test1".to_string(),
                     enabled: true,
+                    peer_verify: true,
                     client: ClientConfig{
                         url: Url::parse("tcp://child-broker@localhost:3755?password=child-broker")?,
                         device_id: Some("test-child-broker".into()),
@@ -328,6 +329,7 @@ fn test_child_broker_as_client() -> shvrpc::Result<()> {
             BrokerConnectionConfig {
                 name: "test2".to_string(),
                 enabled: true,
+                peer_verify: true,
                 client: ClientConfig{
                     url: Url::parse("tcp://localhost:3755?user=test&password=test")?,
                     device_id: None,
