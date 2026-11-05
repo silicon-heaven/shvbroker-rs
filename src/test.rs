@@ -69,6 +69,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
 
 smol_macros::test! {
     async fn test_broker_loop_as_user_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
         let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
         let config = SharedBrokerConfig::new(config);
@@ -156,6 +157,7 @@ smol_macros::test! {
 
 smol_macros::test! {
     async fn test_broker_loop_as_admin_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
         let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
 
@@ -421,7 +423,71 @@ smol_macros::test! {
 }
 
 smol_macros::test! {
+    async fn test_child_broker_current_client_access_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
+        let config = BrokerConfig::default();
+        let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+
+        policies.set_policy("su", Some(Policy {
+            allowed_ip: None,
+            allowed_mounts: vec!["test/child-broker".to_string()],
+            can_mount_via_device_id: true,
+        }), &sql_connection).await.unwrap();
+
+        let config = SharedBrokerConfig::new(config);
+        let (broker_sender, broker_receiver) = unbounded();
+        let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
+        let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
+
+        let (child_writer, _child_reader) = unbounded::<BrokerToPeerMessage>();
+
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id: 1,
+            peer_kind: PeerKind::Device {
+                user: "broker".to_string(),
+                device_id: None,
+                mount_point: Some("test/child-broker".to_string()),
+            },
+            sender: child_writer,
+        }).unwrap();
+
+        let (orig_writer, orig_reader) = unbounded::<BrokerToPeerMessage>();
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id: 2,
+            peer_kind: PeerKind::Device {
+                user: "viewer".to_string(),
+                device_id: None,
+                mount_point: None,
+            },
+            sender: orig_writer,
+        }).unwrap();
+
+        let mut call_ctx = CallCtx {
+            writer: broker_sender.clone(),
+            reader: orig_reader,
+            peer_id: 2,
+        };
+
+        let subscription = SubscriptionParam {
+            ri: "test/**:*:chng".parse().unwrap(),
+            ttl: None,
+        };
+        for method in [METH_SUBSCRIBE, METH_UNSUBSCRIBE] {
+            let response = call(
+                "test/child-broker/.broker/currentClient",
+                method,
+                Some(subscription.to_rpcvalue()),
+                &mut call_ctx,
+            ).await;
+            assert_eq!(response.unwrap_err().code, RpcErrorCode::MethodNotFound.into());
+        }
+        broker_task.cancel().await;
+    }
+}
+
+smol_macros::test! {
     async fn test_update_access_database_from_config_file_without_access_db_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig::default();
         let access = config.access.clone();
         let policies = config.policies.clone();
@@ -456,6 +522,7 @@ smol_macros::test! {
 
 smol_macros::test! {
     async fn test_tunnel_loop_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let mut config = BrokerConfig::default();
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);

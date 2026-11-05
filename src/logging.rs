@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use flexi_logger::{AdaptiveFormat, FlexiLoggerError, LevelFilter, LogSpecification, Logger, LoggerHandle};
 use flexi_logger::DeferredNow;
 use flexi_logger::filter::{LogLineFilter, LogLineWriter};
@@ -22,6 +22,15 @@ pub fn log_specification_from_verbosity(verbosity: Option<&str>) -> LogSpecifica
 pub fn start_logger(
     log_specification: impl Into<LogSpecification>,
 ) -> Result<(LoggerHandle, Arc<RwLock<LogSpecification>>), FlexiLoggerError> {
+    // FIXME: Replace this with OnceLock::get_or_try_init once it is stable.
+    static LOGGER: Mutex<Option<(LoggerHandle, Arc<RwLock<LogSpecification>>)>> = Mutex::new(None);
+    let mut logger = LOGGER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((logger_handle, log_specification)) = logger.as_ref() {
+        return Ok((logger_handle.clone(), log_specification.clone()));
+    }
+
     let log_specification = Arc::new(RwLock::new(log_specification.into()));
     let logger_handle = Logger::with(LogSpecification::trace())
         .filter(Box::new(TopicLogFilter {
@@ -34,6 +43,7 @@ pub fn start_logger(
             detailed_format_color_level,
         ))
         .start()?;
+    *logger = Some((logger_handle.clone(), log_specification.clone()));
     Ok((logger_handle, log_specification))
 }
 

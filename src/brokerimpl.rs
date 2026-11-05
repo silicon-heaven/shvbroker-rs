@@ -1137,6 +1137,21 @@ impl BrokerImpl {
                     frame.set_tag(Tag::Access as i32, grant_access.map(RpcValue::from));
                     match self.mounts.get(mount_point).expect("Should be mounted") {
                         Mount::Peer(device_peer_id) => {
+                            if node_path == DIR_BROKER_CURRENT_CLIENT
+                                && (method == METH_SUBSCRIBE || method == METH_UNSUBSCRIBE)
+                                && grant_access_level.is_some_and(|access_level| {
+                                    access_level < AccessLevel::SuperService as i32
+                                })
+                            {
+                                Self::send_response(
+                                    &self.peers,
+                                    peer_id,
+                                    response_meta,
+                                    Err(RpcError::new(RpcErrorCode::MethodNotFound, "No access")),
+                                )
+                                .await?;
+                                return Ok(());
+                            }
                             let sender = self
                                 .peers
                                 .read()
