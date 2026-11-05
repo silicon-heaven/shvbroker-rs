@@ -69,6 +69,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
 
 smol_macros::test! {
     async fn test_broker_loop_as_user_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
         let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
         let config = SharedBrokerConfig::new(config);
@@ -156,6 +157,7 @@ smol_macros::test! {
 
 smol_macros::test! {
     async fn test_broker_loop_as_admin_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
         let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
 
@@ -422,6 +424,7 @@ smol_macros::test! {
 
 smol_macros::test! {
     async fn test_update_access_database_from_config_file_without_access_db_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let config = BrokerConfig::default();
         let access = config.access.clone();
         let policies = config.policies.clone();
@@ -456,6 +459,7 @@ smol_macros::test! {
 
 smol_macros::test! {
     async fn test_tunnel_loop_async(ex: Arc<Executor<'_>>) {
+        crate::logging::start_logger(crate::logging::log_specification_from_verbosity(Some("=D"))).expect("Logger must work");
         let mut config = BrokerConfig::default();
         config.tunnelling.enabled = true;
         let config = SharedBrokerConfig::new(config);
