@@ -104,7 +104,7 @@ pub(crate) async fn try_peer_loop(
             peer_log!(peer_id, info, "Client loop exit OK");
         }
         Err(e) => {
-            peer_log!(peer_id, warn, "Client loop exit ERROR, error: {e}");
+            peer_log!(peer_id, warn, "Client loop exit ERROR, error: {e}, ipAddress: '{ip_addr:?}'");
         }
     }
     broker_writer.unbounded_send(BrokerCommand::PeerGone { peer_id })?;
@@ -256,6 +256,7 @@ pub(crate) async fn peer_loop(
                         #[cfg(not(feature = "google-auth"))]
                         {
                             let _ = access_token;
+                            peer_log!(peer_id, warn, "Google login is not supported on this broker, ipAddress: '{ip_addr:?}'");
                             frame_writer.send_error(resp_meta, "Google login is not supported on this broker.").or(frame_write_timeout()).await?;
                             continue 'login_loop;
                         }
@@ -329,6 +330,7 @@ pub(crate) async fn peer_loop(
                             match verify_google_token(access_token, broker_config.clone()).await {
                                 Ok(claims) => {
                                     let Some(google_auth_config) = &broker_config.google_auth else {
+                                        peer_log!(peer_id, warn, "Google auth is not configured on this broker, ipAddress: '{ip_addr:?}'");
                                         frame_writer.send_error(resp_meta, "Google auth is not configured on this broker.").or(frame_write_timeout()).await?;
                                         continue 'login_loop;
                                     };
@@ -338,6 +340,7 @@ pub(crate) async fn peer_loop(
 
                                     let Some(broker_mapped_groups) = user_mapping.get(&user)
                                         .or_else(|| user_mapping.get("*")) else {
+                                            peer_log!(peer_id, warn, "no relevant Google user mapping found, user: {user}, ipAddress: '{ip_addr:?}'");
                                             frame_writer.send_error(resp_meta, "No relevant user mapping found.").or(frame_write_timeout()).await?;
                                             continue 'login_loop;
                                         };
@@ -350,6 +353,7 @@ pub(crate) async fn peer_loop(
                                     break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                                 }
                                 Err(e) => {
+                                    peer_log!(peer_id, warn, "Failed to verify Google token: {e}, ipAddress: '{ip_addr:?}'");
                                     frame_writer.send_error(resp_meta, &format!("Failed to verify Google token: {e}")).or(frame_write_timeout()).await?;
                                     continue 'login_loop;
                                 }
@@ -370,7 +374,7 @@ pub(crate) async fn peer_loop(
                             break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                         }
 
-                        peer_log!(peer_id, warn, "invalid token");
+                        peer_log!(peer_id, warn, "invalid token, ipAddress: '{ip_addr:?}'");
                         frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                         continue 'login_loop;
                     }
@@ -378,6 +382,7 @@ pub(crate) async fn peer_loop(
                     if login_type == "TOKEN" || login_type == "AZURE" {
                         #[cfg(not(feature = "entra-id"))]
                         {
+                            peer_log!(peer_id, warn, "Unsupported token type, ipAddress: '{ip_addr:?}'");
                             frame_writer.send_error(resp_meta, "Unsupported token type.").or(frame_write_timeout()).await?;
                             continue 'login_loop;
                         }
@@ -391,11 +396,13 @@ pub(crate) async fn peer_loop(
                             } else if let Some(access_token) = password.strip_prefix(AZURE_TOKEN_PREFIX) {
                                 access_token
                             } else {
+                                peer_log!(peer_id, warn, "Unsupported token type, ipAddress: '{ip_addr:?}'");
                                 frame_writer.send_error(resp_meta, "Unsupported token type.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             };
 
                             let Some(azure_config) = &broker_config.azure else {
+                                peer_log!(peer_id, warn, target: "Azure", "Azure is not configured on this broker, ipAddress: '{ip_addr:?}'");
                                 frame_writer.send_error(resp_meta, "Azure is not configured on this broker.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             };
@@ -451,7 +458,7 @@ pub(crate) async fn peer_loop(
 
 
                             if mapped_groups.is_empty() {
-                                peer_log!(peer_id, warn, target: "Azure", "no relevant groups in Azure");
+                                peer_log!(peer_id, warn, target: "Azure", "no relevant groups in Azure, ipAddress: '{ip_addr:?}'");
                                 frame_writer.send_error(resp_meta, "No relevant Azure groups found.").or(frame_write_timeout()).await?;
                                 continue 'login_loop;
                             }
@@ -484,10 +491,11 @@ pub(crate) async fn peer_loop(
                         break 'login_loop (user, params.get("options").cloned(), session_token, resp_meta);
                     }
 
-                    peer_log!(peer_id, warn, "invalid login credentials, user: {user}");
+                    peer_log!(peer_id, warn, "invalid login credentials, user: {user}, ipAddress: '{ip_addr:?}'");
                     frame_writer.send_error(resp_meta, "Invalid login credentials.").or(frame_write_timeout()).await?;
                 },
                 _ => {
+                    peer_log!(peer_id, warn, "Invalid login message, ipAddress: '{ip_addr:?}'");
                     frame_writer.send_error(resp_meta, "Invalid login message.").or(frame_write_timeout()).await?;
                 }
             }
@@ -511,7 +519,7 @@ pub(crate) async fn peer_loop(
 
         let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
         let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
-        peer_log!(peer_id, info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?})");
+        peer_log!(peer_id, info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?}, ipAddress: '{ip_addr:?}')");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),
