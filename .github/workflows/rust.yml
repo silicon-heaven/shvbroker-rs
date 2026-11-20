@@ -34,7 +34,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             features: --all-features
             filename_suffix: amd64
-            additional_arguments: "--glibc-version 2.38"
+            additional_arguments: --no-toolchain-setup
             cargo_cross_additional_arguments: ''
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -42,19 +42,21 @@ jobs:
             features: --features entra-id,google-auth
             filename_suffix: amd64
             toolchain: nightly
-            additional_arguments: "--glibc-version 2.38"
+            additional_arguments: --no-toolchain-setup
             cargo_cross_additional_arguments: '+nightly'
           - os: ubuntu-22.04
             target: armv7-unknown-linux-gnueabihf
             features: --all-features
             filename_suffix: armv7
-            additional_arguments: ''
+            additional_arguments: --no-toolchain-setup
+            cross_compiler_packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             cargo_cross_additional_arguments: ''
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
             features: --all-features
             filename_suffix: arm64
-            additional_arguments: ''
+            additional_arguments: --no-toolchain-setup
+            cross_compiler_packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             cargo_cross_additional_arguments: ''
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -64,14 +66,29 @@ jobs:
             cargo_cross_additional_arguments: ''
     runs-on: ${{ matrix.os }}
     name: Build (${{matrix.target}}, ${{matrix.toolchain}})
+    env:
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      AR_armv7_unknown_linux_gnueabihf: arm-linux-gnueabihf-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      CC_armv7_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
+      CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+      CXX_armv7_unknown_linux_gnueabihf: arm-linux-gnueabihf-g++
 
     steps:
     - uses: actions/checkout@v7
+    - name: Install Cross Compilers
+      if: matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'armv7-unknown-linux-gnueabihf'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ${{ matrix.cross_compiler_packages }}
     - name: Configure cross environment
       uses: zijiren233/cargo-cross@v1.6.0
       with:
         command: setup
         toolchain: ${{matrix.toolchain}}
+        no-toolchain-setup: ${{ matrix.os == 'ubuntu-22.04' }}
         cross-args: --target ${{matrix.target}}
     - name: Install nightly clippy
       if: matrix.toolchain == 'nightly'
