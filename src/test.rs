@@ -70,7 +70,7 @@ async fn call(shv_path: &str, method: &str, param: Option<RpcValue>, ctx: &mut C
 smol_macros::test! {
     async fn test_broker_loop_as_user_async(ex: Arc<Executor<'_>>) {
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
-        let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+        let (sql_connection, access_config, policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
         let config = SharedBrokerConfig::new(config);
         let (broker_sender, broker_receiver) = unbounded();
         let broker = BrokerImpl::new(config, access_config, last_login, policies, broker_sender.clone(), Some(sql_connection), Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
@@ -157,7 +157,7 @@ smol_macros::test! {
 smol_macros::test! {
     async fn test_broker_loop_as_admin_async(ex: Arc<Executor<'_>>) {
         let config = BrokerConfig { use_access_db: true, ..Default::default() };
-        let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies).await.unwrap();
+        let (sql_connection, access_config, mut policies, last_login) = sql::migrate_sqlite_connection(&Path::new(":memory:").to_path_buf(), &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
 
         policies.set_policy("su", Some(Policy {
             allowed_ip: None,
@@ -569,6 +569,73 @@ smol_macros::test! {
         assert_eq!(res.as_list().as_slice(), []);
 
         broker_task.cancel().await;
+    }
+}
+
+smol_macros::test! {
+    async fn test_sql_values_with_quotes_roundtrip_async() {
+        let db_dir = std::env::temp_dir().join(format!("shvbroker-test-quotes-{}", std::process::id()));
+        let db_file = db_dir.join("shvbroker.sqlite");
+        std::fs::remove_dir_all(&db_dir).ok();
+        let config = BrokerConfig { use_access_db: true, ..Default::default() };
+
+        let mount_id = "dev'ice";
+        let mount = Mount { mount_point: "test/it's".to_string(), description: "O'Brien's \"device\"; DROP TABLE mounts; --".to_string() };
+        {
+            let (sql_connection, mut access, _, _) = sql::migrate_sqlite_connection(&db_file, &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
+            access.set_access_mount(mount_id, Some(mount.clone()), &sql_connection).await.unwrap();
+            let mut mount2 = mount.clone();
+            mount2.description.push_str(" 'updated'");
+            access.set_access_mount(mount_id, Some(mount2), &sql_connection).await.unwrap();
+        }
+        {
+            let (sql_connection, mut access, _, _) = sql::migrate_sqlite_connection(&db_file, &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
+            let loaded = access.access_mount(mount_id).cloned().expect("mount should be persisted");
+            assert_eq!(loaded.mount_point, mount.mount_point);
+            assert_eq!(loaded.description, format!("{} 'updated'", mount.description));
+            access.set_access_mount(mount_id, None, &sql_connection).await.unwrap();
+        }
+        {
+            let (_, access, _, _) = sql::migrate_sqlite_connection(&db_file, &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
+            assert!(access.access_mount(mount_id).is_none());
+        }
+        std::fs::remove_dir_all(&db_dir).ok();
+    }
+}
+
+smol_macros::test! {
+    async fn test_skip_db_config_merge_async() {
+        let db_dir = std::env::temp_dir().join(format!("shvbroker-test-skip-merge-{}", std::process::id()));
+        let db_file = db_dir.join("shvbroker.sqlite");
+        std::fs::remove_dir_all(&db_dir).ok();
+        let config = BrokerConfig { use_access_db: true, ..Default::default() };
+        {
+            // first start, config is applied to an empty database
+            let (_, access, _, _) = sql::migrate_sqlite_connection(&db_file, &config.access, &config.policies, sql::ConfigMerge::Apply).await.unwrap();
+            assert_eq!(access.access_user("admin").unwrap().roles, vec!["su".to_string()]);
+        }
+        let mut changed_config = config.clone();
+        changed_config.access = crate::config::AccessConfig::new(
+            [("admin".to_string(), User { password: Password::Plain("changed".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None }),
+             ("newuser".to_string(), User { password: Password::Plain("new".into()), roles: vec!["client".to_string()], deactivated: false, expires: None, deactivated_reason: None })].into(),
+            std::collections::BTreeMap::default(),
+            std::collections::BTreeMap::default(),
+        ).unwrap();
+        changed_config.policies = Policies::new(std::collections::BTreeMap::default());
+        {
+            // merge skipped, database content is used as is
+            let (_, access, policies, _) = sql::migrate_sqlite_connection(&db_file, &changed_config.access, &changed_config.policies, sql::ConfigMerge::Skip).await.unwrap();
+            assert_eq!(access.access_user("admin").unwrap().roles, vec!["su".to_string()]);
+            assert!(access.access_user("newuser").is_none());
+            assert_eq!(policies.get().keys().collect::<Vec<_>>(), config.policies.get().keys().collect::<Vec<_>>());
+        }
+        {
+            // merge applied, config wins
+            let (_, access, _, _) = sql::migrate_sqlite_connection(&db_file, &changed_config.access, &changed_config.policies, sql::ConfigMerge::Apply).await.unwrap();
+            assert_eq!(access.access_user("admin").unwrap().roles, vec!["client".to_string()]);
+            assert!(access.access_user("newuser").is_some());
+        }
+        std::fs::remove_dir_all(&db_dir).ok();
     }
 }
 

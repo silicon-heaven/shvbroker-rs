@@ -26,6 +26,9 @@ struct CliOpts {
     /// Disable saving runtime data to an SQL database, takes precedence over --use-access-db
     #[arg(long)]
     no_use_access_db: bool,
+    /// Do not apply access and policies from the config file to the access database on broker start
+    #[arg(long)]
+    skip_db_config_merge: bool,
     /// Enable broker tunneling feature
     #[arg(long)]
     tunneling: bool,
@@ -81,6 +84,7 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
     config.tunnelling.enabled &= !cli_opts.no_tunneling;
     config.use_access_db |= cli_opts.use_access_db;
     config.use_access_db &= !cli_opts.no_use_access_db;
+    config.skip_db_config_merge |= cli_opts.skip_db_config_merge;
 
     if config.shv2_compatibility {
         info!("Running in SHV2 compatibility mode");
@@ -89,7 +93,8 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
         let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
         info!("Data directory: {data_dir}");
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
-        let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies))?;
+        let config_merge = if config.skip_db_config_merge { sql::ConfigMerge::Skip } else { sql::ConfigMerge::Apply };
+        let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies, config_merge))?;
         (access_config, policies, last_login, Some(sql_connection))
     } else {
         (config.access.clone(), config.policies.clone(), LastLogin::default(), None)

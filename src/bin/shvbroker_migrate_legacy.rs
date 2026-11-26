@@ -512,6 +512,7 @@ impl From<LegacyBrokerConfig> for BrokerConfig {
             name: Some(cfg.app.broker_id),
             listen,
             use_access_db: cfg.sqlconfig.as_ref().is_some_and(|s| s.enabled),
+            skip_db_config_merge: false,
             shv2_compatibility: false,
             time_broadcast: false,
             data_directory,

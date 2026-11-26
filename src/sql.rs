@@ -12,7 +12,16 @@ pub const TBL_ROLES: &str = "roles";
 pub const TBL_POLICIES: &str = "policies";
 pub const TBL_LAST_LOGIN: &str = "last_login";
 
-pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig, policies: &Policies) -> shvrpc::Result<(Client, AccessConfig, Policies, LastLogin)> {
+/// What to do with access and policies from the config file when the access database is opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigMerge {
+    /// Upsert config file access and policies into the database, config file wins.
+    Apply,
+    /// Use the database content as is.
+    Skip,
+}
+
+pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &AccessConfig, policies: &Policies, config_merge: ConfigMerge) -> shvrpc::Result<(Client, AccessConfig, Policies, LastLogin)> {
     info!("Opening SQLite access db file: {}", sql_config_file.to_str().expect("Valid path"));
     let sql_connection = if sql_config_file == ":memory:" {
         // In memoty database is the default.
@@ -40,7 +49,7 @@ pub async fn migrate_sqlite_connection(sql_config_file: &PathBuf, access: &Acces
 
         sql_connection
     };
-    let (access_config, policies, last_login) = load_access_sqlite(&sql_connection, access, policies).await?;
+    let (access_config, policies, last_login) = load_access_sqlite(&sql_connection, access, policies, config_merge).await?;
 
     Ok((sql_connection, access_config, policies, last_login))
 }
@@ -69,30 +78,36 @@ async fn ensure_table_exists(sql_conn: &Client, tbl_name: &'static str) -> shvrp
 }
 
 pub(crate) async fn update_sql(oper: Vec<UpdateSqlOperation<'_>>, sql_connection: &async_sqlite::Client) -> shvrpc::Result<RpcValue> {
-    let query = oper.into_iter().fold(String::new(), |mut acc, oper| {
+    // Table names are internal constants, ids and definitions are bound as parameters.
+    let statements = oper.into_iter().map(|oper| {
         match oper {
             UpdateSqlOperation::Insert { table, id, json } => {
-                acc += &format!("INSERT INTO {table} (id, def) VALUES ('{id}', '{json}');");
+                (format!("INSERT INTO {table} (id, def) VALUES (?1, ?2)"), vec![id.to_string(), json])
             }
             UpdateSqlOperation::Update { table, id, json } => {
-                acc += &format!("UPDATE {table} SET def = '{json}' WHERE id = '{id}';");
+                (format!("UPDATE {table} SET def = ?2 WHERE id = ?1"), vec![id.to_string(), json])
             }
             UpdateSqlOperation::Delete { table, id } => {
-                acc += &format!("DELETE FROM {table} WHERE id = '{id}';");
+                (format!("DELETE FROM {table} WHERE id = ?1"), vec![id.to_string()])
             }
         }
-        acc
-    });
+    }).collect::<Vec<_>>();
 
     #[expect(clippy::cast_possible_wrap, reason = "We hope the usize doesn't wrap around")]
-    sql_connection.conn(move |sql_connection| {
-        sql_connection.execute(&query, ())
+    sql_connection.conn_mut(move |sql_connection| {
+        let tx = sql_connection.transaction()?;
+        let mut changed = 0;
+        for (query, params) in &statements {
+            changed += tx.execute(query, async_sqlite::rusqlite::params_from_iter(params))?;
+        }
+        tx.commit()?;
+        Ok(changed)
     }).await
     .map(|v| RpcValue::from(v as i64))
         .map_err(|err| shvrpc::rpcmessage::RpcError::new(shvrpc::rpcmessage::RpcErrorCode::MethodCallException, err.to_string()).into())
 }
 
-async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, default_policies: &Policies) -> shvrpc::Result<(AccessConfig, Policies, LastLogin)> {
+async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, default_policies: &Policies, config_merge: ConfigMerge) -> shvrpc::Result<(AccessConfig, Policies, LastLogin)> {
     async fn load_table<TableElementType: serde::Serialize + for <'a> serde::Deserialize<'a> + 'static + Send>(sql_conn: &Client, table_name: &'static str) -> shvrpc::Result<BTreeMap<String, TableElementType>> {
         ensure_table_exists(sql_conn, table_name)
             .await
@@ -123,7 +138,13 @@ async fn load_access_sqlite(sql_conn: &Client, default_access: &AccessConfig, de
     )?;
 
     let mut policies = Policies::new(load_table(sql_conn, TBL_POLICIES).await?);
-    upsert_config(&mut access, default_access, &mut policies, default_policies, sql_conn).await?;
+    match config_merge {
+        ConfigMerge::Apply => {
+            info!("Applying access config to the access database");
+            upsert_config(&mut access, default_access, &mut policies, default_policies, sql_conn).await?;
+        }
+        ConfigMerge::Skip => info!("Skipping merge of access config to the access database"),
+    }
 
     let last_login = load_table(sql_conn, TBL_LAST_LOGIN).await?
         .into_iter()
