@@ -508,8 +508,6 @@ pub(crate) async fn peer_loop(
             RpcValue::null()
         };
 
-        frame_writer.send_result(resp_meta.clone(), result).or(frame_write_timeout()).await?;
-
         let device_options = options.and_then(|map| map.get("device"));
         let idle_watchdog_timeout = options
             .and_then(|options| options.get("idleWatchDogTimeOut"))
@@ -519,7 +517,7 @@ pub(crate) async fn peer_loop(
 
         let device_id = device_options.and_then(|device_options|device_options.get("deviceId")).map(|v| v.as_str().to_string());
         let mount_point = device_options.and_then(|device_options|device_options.get("mountPoint")).map(|v| v.as_str().to_string());
-        peer_log!(peer_id, info, "login success (username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?}, ipAddress: '{ip_addr:?}')");
+        let login_info = format!("username: '{user}', deviceId: '{device_id:?}', mountPoint: '{mount_point:?}', idle timeout: {idle_watchdog_timeout:?}, ipAddress: '{ip_addr:?}'");
         let peer_kind = if device_id.is_some() || mount_point.is_some() {
             PeerKind::Device {
                 user: user.clone(),
@@ -529,12 +527,23 @@ pub(crate) async fn peer_loop(
         } else {
             PeerKind::Client { user: user.clone() }
         };
+        let (result_sender, result_receiver) = oneshot::channel();
         broker_writer.unbounded_send(
             BrokerCommand::NewPeer {
                 peer_id,
                 peer_kind,
-                sender: peer_writer
+                sender: peer_writer,
+                result_sender: Some(result_sender),
             })?;
+        // Wait for the peer registration (mount point resolution) before the login is confirmed,
+        // so that registration errors can be reported as the login error response.
+        if let Err(err) = result_receiver.await? {
+            peer_log!(peer_id, warn, "login failed: {err} ({login_info})");
+            frame_writer.send_error(resp_meta, &err).or(frame_write_timeout()).await?;
+            return Ok(());
+        }
+        peer_log!(peer_id, info, "login success ({login_info})");
+        frame_writer.send_result(resp_meta.clone(), result).or(frame_write_timeout()).await?;
 
         let (frames_tx, mut frames_rx) = futures::channel::mpsc::unbounded();
         let frame_writer_task = ex.spawn(async move {
@@ -1278,6 +1287,7 @@ async fn broker_as_client_peer_loop(
         peer_id,
         peer_kind: PeerKind::Broker(connection_settings.clone()),
         sender: broker_to_peer_sender,
+        result_sender: None,
     })?;
 
     let mut frames_stream = pin!(futures::stream::unfold(frame_reader, async |mut reader| {
