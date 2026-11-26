@@ -91,6 +91,10 @@ pub enum BrokerCommand {
         peer_id: PeerId,
         peer_kind: PeerKind,
         sender: UnboundedSender<BrokerToPeerMessage>,
+        /// When set, the result of the peer registration is reported back through this channel
+        /// instead of disconnecting the peer with `DisconnectByBroker` on failure.
+        /// The error string is the message meant for the peer.
+        result_sender: Option<oneshot::Sender<Result<(), String>>>,
     },
     FrameReceived {
         peer_id: PeerId,
@@ -1397,6 +1401,7 @@ impl BrokerImpl {
                 peer_id: new_peer_id,
                 peer_kind,
                 sender,
+                result_sender,
             } => {
                 let user = peer_kind.user();
                 let previous_login = self.last_login.write().await
@@ -1406,9 +1411,19 @@ impl BrokerImpl {
                     .ok();
                 peer_log!(new_peer_id, debug, "New peer, user: {user:?}, last_login: {previous_login:?}");
                 let peer_add_result = self.add_peer(new_peer_id, peer_kind, sender.clone()).await;
-                if let Err(DisconnectPeerReason {msg, msg_for_peer}) = peer_add_result  {
-                    sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
-                    return Err(msg.into());
+                match (peer_add_result, result_sender) {
+                    (Err(DisconnectPeerReason {msg, msg_for_peer}), Some(result_sender)) => {
+                        result_sender.send(Err(msg_for_peer.unwrap_or_else(|| "Peer registration failed".to_string()))).ok();
+                        return Err(msg.into());
+                    }
+                    (Err(DisconnectPeerReason {msg, msg_for_peer}), None) => {
+                        sender.unbounded_send(BrokerToPeerMessage::DisconnectByBroker {reason: msg_for_peer})?;
+                        return Err(msg.into());
+                    }
+                    (Ok(()), Some(result_sender)) => {
+                        result_sender.send(Ok(())).ok();
+                    }
+                    (Ok(()), None) => {}
                 }
 
                 let mount_point = Self::mount_point(&self.peers, new_peer_id).await;
