@@ -20,6 +20,10 @@ pub struct BrokerConfig {
     pub listen: Vec<Listen>,
     #[serde(default)]
     pub use_access_db: bool,
+    /// Do not apply `access` and `policies` from the config file to the access database on broker start,
+    /// the database content is used as is. Config can still be applied later by `.broker:applyAccessConfigToDatabase`.
+    #[serde(default)]
+    pub skip_db_config_merge: bool,
     #[serde(default)]
     pub shv2_compatibility: bool,
     #[serde(default)]
@@ -643,6 +647,7 @@ impl Default for BrokerConfig {
             name: Some("foo".into()),
             listen: vec![Listen { url: Url::parse("tcp://localhost:3755").expect("TCP default URL should be valid") }],
             use_access_db: false,
+            skip_db_config_merge: false,
             shv2_compatibility: false,
             time_broadcast: false,
             data_directory: None,
