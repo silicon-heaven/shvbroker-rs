@@ -95,7 +95,7 @@ smol_macros::test! {
                 device_id: None,
                 mount_point: None,
             },
-            sender: peer_writer.clone() })
+            sender: peer_writer.clone(), result_sender: None })
             .unwrap();
 
         let resp = call(".broker", "ls", Some("access".into()), &mut call_ctx).await.unwrap();
@@ -190,7 +190,7 @@ smol_macros::test! {
                 device_id: None,
                 mount_point: Some("test/device".to_string()),
             },
-            sender: peer_writer.clone() }).unwrap();
+            sender: peer_writer.clone(), result_sender: None }).unwrap();
         /*
         lsmod cannot be received because it is not subscribed
         loop {
@@ -444,7 +444,7 @@ smol_macros::test! {
             peer_kind: PeerKind::Client{
                 user: "admin".to_string(),
             },
-            sender: peer_writer.clone() })
+            sender: peer_writer.clone(), result_sender: None })
             .unwrap();
 
         let resp = call(".broker", METH_APPLY_ACCESS_CONFIG_TO_DATABASE, None, &mut call_ctx).await;
@@ -479,7 +479,7 @@ smol_macros::test! {
         broker_sender.unbounded_send(BrokerCommand::NewPeer {
             peer_id,
             peer_kind: PeerKind::Client{ user: user.to_string() },
-            sender: peer_writer.clone() }).unwrap();
+            sender: peer_writer.clone(), result_sender: None }).unwrap();
 
         let tunid = call(".app/tunnel", "create", None, &mut call_ctx).await;
         // host param is missing
@@ -636,5 +636,35 @@ smol_macros::test! {
             assert!(access.access_user("newuser").is_some());
         }
         std::fs::remove_dir_all(&db_dir).ok();
+    }
+}
+
+smol_macros::test! {
+    async fn test_new_peer_unknown_device_id_reports_error(ex: Arc<Executor<'_>>) {
+        let config = SharedBrokerConfig::new(BrokerConfig::default());
+        let access = config.access.clone();
+        let (broker_sender, broker_receiver) = unbounded();
+        let broker = BrokerImpl::new(config, access, LastLogin::default(), Policies::default(), broker_sender.clone(), None, Arc::new(RwLock::new(LogSpecification::info())), ex.clone());
+        let broker_task = ex.clone().spawn(crate::brokerimpl::broker_loop(broker, broker_receiver, ex));
+
+        let (peer_writer, mut peer_reader) = unbounded::<BrokerToPeerMessage>();
+        let (result_sender, result_receiver) = futures::channel::oneshot::channel();
+        broker_sender.unbounded_send(BrokerCommand::NewPeer {
+            peer_id: 4,
+            peer_kind: PeerKind::Device {
+                user: "test".to_string(),
+                device_id: Some("unknown-device-id".to_string()),
+                mount_point: None,
+            },
+            sender: peer_writer,
+            result_sender: Some(result_sender),
+        }).unwrap();
+
+        let err = result_receiver.await.unwrap().unwrap_err();
+        assert_eq!(err, "Cannot find mount point for device ID: 'unknown-device-id'");
+        // registration error must not be reported as disconnectbybroker signal
+        assert!(peer_reader.try_recv().is_err());
+
+        broker_task.cancel().await;
     }
 }
