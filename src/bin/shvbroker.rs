@@ -93,7 +93,8 @@ pub(crate) async fn impl_main(ex: Arc<smol::Executor<'static>>) -> shvrpc::Resul
         let data_dir = config.data_directory.clone().unwrap_or_else(|| "/tmp/shvbroker/data".to_owned());
         info!("Data directory: {data_dir}");
         let sql_config_file = Path::new(&data_dir).join("shvbroker.sqlite");
-        let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies, !config.skip_db_config_merge))?;
+        let config_merge = if config.skip_db_config_merge { sql::ConfigMerge::Skip } else { sql::ConfigMerge::Apply };
+        let (sql_connection, access_config, policies, last_login) = smol::block_on( sql::migrate_sqlite_connection(&sql_config_file, &config.access, &config.policies, config_merge))?;
         (access_config, policies, last_login, Some(sql_connection))
     } else {
         (config.access.clone(), config.policies.clone(), LastLogin::default(), None)
